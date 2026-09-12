@@ -4,6 +4,87 @@
 
 **Designed & Engineered by Antonio Garcia**
 
+> **Public Edition**
+>
+> This repository is the portable public edition of Otacon. Antonio Garcia's private Otacon Keep contains additional production capabilities that are being generalized for public release.
+
+## Public Edition vs. the Full Otacon Keep
+
+This repository contains the public, portable edition of Otacon. It is based on the architecture and lessons learned from **Antonio Garcia's private Otacon Keep**, a significantly larger distributed AI environment used as the reference deployment for the project.
+
+The private Keep includes capabilities and infrastructure that are not yet part of the public release. The goal of the public project is not to copy that deployment file-for-file. Capabilities are being rebuilt as safe, configurable, hardware-independent modules for other users to install on their own systems.
+
+**The private Keep is the reference implementation. The public edition is the portable product.**
+
+## The Full Reference Deployment
+
+Antonio Garcia's private Otacon Keep is a distributed, multi-node AI environment rather than a single application on one computer. Conceptually it spans a primary compute host, a virtualization host, and a worker/offload VM, with multiple physical resources, Proxmox, virtual machines, Docker runtimes, GPU-backed workloads, persistent agents, local models, speech recognition, text-to-speech, resource arbitration, image and video generation, smart-home and messaging integrations, media integrations, automated health/recovery tooling, and backup/reporting infrastructure.
+
+```text
+              ANTONIO GARCIA'S OTACON KEEP
+                         │
+          ┌──────────────┼──────────────┐
+          │              │              │
+    Primary Host    Virtualization     Worker /
+                        Host          Offload VM
+          │              │              │
+       Docker         Proxmox         Docker
+          └──────────────┼──────────────┘
+                         │
+                 Capability Router
+                         │
+       LLM · STT · TTS · Image · Video
+                         │
+                   Agents / Memory
+```
+
+This is a conceptual, redacted representation. No private network identifiers or deployment state are included.
+
+## What You Get in the Public Edition
+
+The public repository contains the clean platform foundation: graphical installer, hardware discovery, deployment planning, agent creation, provider-neutral agent architecture, capability routing, persistent conversations, long-term memory, user and agent isolation, provider-neutral LLM and TTS interfaces, per-agent voices, per-voice synthesis profiles, voice preview/playback architecture, distributed topology/resource modeling, and public configuration/model/voice catalogs.
+
+| Capability | Antonio's Private Keep | Public Otacon |
+|---|---|---|
+| Agent chat | Production | Implemented; external runtime validation pending |
+| Persistent conversations | Production | Complete |
+| Long-term memory | Production | Complete |
+| Per-agent voices | Production | Complete |
+| Piper TTS | Production | Architecture complete; external validation pending |
+| Speech-to-text | Production | Next milestone |
+| Distributed compute | Production | Resource model complete; onboarding planned |
+| GPU/resource arbitration | Production | Planned |
+| Image/video generation | Production | Planned |
+| Smart-home, messaging, and media integrations | Production | Planned |
+| Recovery, updates, and backup workflows | Private tooling | Planned |
+| Public installer | Evolved manually | Primary public goal |
+
+## Why Isn't Everything From the Keep Here?
+
+The private Otacon Keep evolved as a real working AI environment with infrastructure specific to Antonio Garcia's hardware, network, services, agents, and workflows. Publishing it directly would expose private configuration and produce software that would be difficult for anyone else to install.
+
+The public version therefore extracts the architecture, removes machine-specific assumptions, replaces private addresses and service names with logical resources, separates secrets and runtime state from source code, and adds capabilities behind stable provider interfaces one at a time. The public version may temporarily have fewer capabilities, while remaining a real portable platform.
+
+**Capabilities proven in the private Keep are being generalized and migrated into the public edition over time.**
+
+## From the Keep to the Public Edition
+
+Public foundation ✅  · Chat ✅  · Persistent memory ✅  · Voice output ✅ architecture  · Speech input → next  · Wake word, resource arbitration, remote nodes, image/video, integrations, and operations tooling → later.
+
+Many roadmap items are demonstrated capabilities in the private reference deployment; they are being redesigned for safe public distribution rather than copied with private state.
+
+The public deployment model understands:
+
+```text
+Physical Host → VM → Container Runtime → Service → Capability
+```
+
+This allows a future installation on one computer to pair another computer and route workloads to its resources without changing agent identity.
+
+The reference voice system also demonstrated that each voice needs its own validated synthesis profile. Public Otacon therefore treats synthesis settings as per-voice configuration instead of applying one global profile to every voice.
+
+Otacon was designed and engineered by Antonio Garcia, based on architecture developed and operated in his private Otacon Keep reference environment.
+
 Otacon is intended to feel like consumer software: download, install, detect hardware, configure an agent, choose capabilities, and start talking without learning Docker, CUDA, Python environments, YAML, or model-server plumbing.
 
 ## Current status
