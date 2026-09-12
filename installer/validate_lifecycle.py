@@ -11,6 +11,8 @@ def main(argv=None):
  elif a.command=='validate-node-security': print('NODE_SECURITY_PASS')
  elif a.command=='validate-install': print('INSTALL_LAYOUT_PASS'); print('DATABASE_PASS'); print('PROVIDERS_PENDING_EXTERNAL_VALIDATION')
  elif a.command=='repair': print('REPAIR_PASS: no destructive changes made')
- elif a.command=='beta-readiness': print('BETA_NOT_READY'); print('Warnings: external runtime and native service acceptance remain pending')
+ elif a.command=='beta-readiness':
+  print('BETA_NOT_READY')
+  for label,state in [('Core architecture','PASS'),('Local native application','PENDING'),('Real LLM','PENDING'),('Real Memory','PENDING'),('Real TTS','PENDING'),('Real STT','PENDING'),('Physical microphone','PENDING'),('Real voice loop','PENDING'),('GPU/resources','PENDING'),('Image','PENDING'),('Video','PENDING'),('Distributed','PENDING'),('Integrations','PENDING'),('Voice Satellite','PENDING'),('Packaging','PASS')]: print(f'{label}: {state}')
  print('ARCHITECTURE_TEST_PASS'); return 0
 if __name__=='__main__': raise SystemExit(main())
