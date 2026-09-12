@@ -11,3 +11,5 @@ Otacon — Designed & Engineered by Antonio Garcia
 - Deterministic test providers for restricted environments.
 
 Copyright © 2026 Antonio Garcia.
+
+The public edition is intentionally separate from Antonio Garcia's private Otacon Keep reference deployment. Private deployment capabilities are generalized and migrated only after they can be distributed safely without private state.
