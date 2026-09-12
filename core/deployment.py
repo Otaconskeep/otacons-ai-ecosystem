@@ -68,6 +68,12 @@ def stt_service(*, service_id: str = 'service_stt_001', endpoint: str = 'local:/
         endpoints=[ServiceEndpoint(f'ep_{service_id}', service_id, 'http', endpoint)],
     )
 
+def image_service(*, service_id='service_image_001', endpoint='local://image', provider='stable_diffusion', model='image_standard', placement='host_local') -> Service:
+    return Service(id=service_id, service_type='image', placement_resource_id=placement,
+                   capabilities=['image_generation'], required_capabilities=['image_generation'],
+                   metadata={'endpoint': endpoint, 'provider': provider, 'model': model},
+                   endpoints=[ServiceEndpoint(f'ep_{service_id}', service_id, 'http', endpoint)])
+
 
 def local_deployment(
     *,
