@@ -11,6 +11,10 @@ class ArbiterTests(unittest.TestCase):
  def test_reclaim_idle_residency(self):
   self.a.resources['a'].used={'vram_gb':14}; self.a.residency=[Residency('a','svc','model',14)]
   self.assertEqual(self.a.reclaim_idle(10),14); self.assertEqual(self.a.resources['a'].used['vram_gb'],0)
+ def test_stale_lease_recovery(self):
+  from datetime import datetime, timezone, timedelta
+  x=self.a.request(WorkloadRequest('stale','INTERACTIVE_CHAT','llm',{'vram_gb':2},owner_id='o')); l=x['lease']; l.heartbeat_at=(datetime.now(timezone.utc)-timedelta(seconds=400)).isoformat(); l.ttl_seconds=10
+  self.assertIn(l.lease_id,self.a.recover_stale()); self.assertEqual(l.state,'EXPIRED')
  def test_circuit_breaker(self):
   for _ in range(3): result=self.a.record_failure('svc','same')
   self.assertEqual(result['state'],'CIRCUIT_OPEN')
