@@ -261,6 +261,37 @@ If the environment blocks the endpoint, treat as:
 PYTHONPATH=. python3 -m unittest discover -s tests -v
 ```
 
+## Support
+
+Installer issue, a question about self-hosting on your own hardware, or
+interested in Premium? One channel covers all of it:
+
+### 💬 [discord.gg/cZDeqECzX](https://discord.gg/cZDeqECzX)
+
+When reporting an install problem, include your OS/distro, the exact error
+text, and whether it happened during `install_otacon.sh` or after launch —
+that's usually enough to triage quickly.
+
+## About the Engineer
+
+**Antonio G. Garcia ("Otaconskeep")** designs and engineers distributed,
+local-first AI systems — the kind of infrastructure most teams either buy
+as a SaaS subscription or never build at all. Otacon's architecture reflects
+that: a provider-neutral capability router that treats LLM/TTS/STT backends
+as swappable resources rather than hardcoded vendors, a resource arbiter
+that leases CPU/RAM/GPU/VRAM across bare metal, VMs, and remote nodes without
+agents ever touching a device index, per-agent voice profiles instead of one
+global synthesis setting, and a native installer/updater with versioned
+state migration and manifest-based backup — the unglamorous plumbing that
+decides whether a platform survives contact with someone else's hardware.
+
+This public repository is the portable edition of a larger private
+reference deployment (the "Otacon Keep") spanning multiple physical hosts,
+Proxmox virtualization, and GPU-backed workloads in production use.
+
+Available for consulting on local-first AI architecture, resource
+orchestration, and voice-agent systems — reach out in Discord above.
+
 ## License
 
 Apache-2.0. Copyright © 2026 Antonio Garcia.
