@@ -1,0 +1,18 @@
+import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
+from core.models import recommend
+from core.topology import Deployment,Host,Service
+from core.agent_service import system_prompt
+from core.router import resolve
+
+class ChatTests(unittest.TestCase):
+ def test_conservative_model_when_gpu_inspection_errors(self):
+  h=SimpleNamespace(gpus=[],gpu_detection={'status':'error'}); self.assertEqual(recommend(h).id,'chat_small')
+ def test_capability_router_is_placement_independent(self):
+  d=Deployment('d',[Host('host_a')],services=[Service(id='svc',service_type='llm',placement_resource_id='host_a',capabilities=['conversational_llm'],metadata={'endpoint':'http://service','model':'chat_small'})])
+  a=resolve(d,'conversational_llm'); self.assertEqual(a.placement,'host_a'); self.assertEqual(a.endpoint,'http://service')
+ def test_identity_prompt_is_generic(self):
+  p=system_prompt({'id':'agent_001','display_name':'Billy'}); self.assertIn('Billy',p); self.assertNotIn('Otacon',p)
+
+if __name__=='__main__': unittest.main()
