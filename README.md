@@ -51,7 +51,8 @@ The public repository contains the clean platform foundation: graphical installe
 | Long-term memory | Production | Complete |
 | Per-agent voices | Production | Complete |
 | Piper TTS | Production | Architecture complete; external validation pending |
-| Speech-to-text | Production | Next milestone |
+| Speech-to-text | Production | Architecture complete; real provider validation pending |
+| Resource arbitration | Production | Architecture complete; real hardware validation pending |
 | Distributed compute | Production | Resource model complete; onboarding planned |
 | GPU/resource arbitration | Production | Planned |
 | Image/video generation | Production | Planned |
@@ -107,6 +108,19 @@ User → Agent (identity, memory, voice, preferences)
 ```
 
 Otacon — Designed & Engineered by Antonio Garcia
+
+## Resource arbitration
+
+Milestone 8 adds a provider-neutral resource arbiter beneath capability routing. Workloads request logical CPU, RAM, GPU, or VRAM resources and receive leases that respect placement, runtime exposure, priority, and health. Idle model residency can be reclaimed gracefully; active non-preemptible work is protected. This supports bare metal, virtual machines, containers, and future remote workers without making agents aware of device indexes or network addresses.
+
+Validate the architecture without launching heavy workloads:
+
+```bash
+PYTHONPATH=. python3 installer/backend_entry.py validate-resources
+PYTHONPATH=. python3 installer/backend_entry.py validate-arbiter
+```
+
+Real hardware telemetry remains `REAL_RESOURCE_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT` where the execution environment cannot expose accelerators.
 
 Clean public foundation for a hardware-aware local AI setup wizard with provider-neutral Chat and TTS.
 
