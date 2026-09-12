@@ -42,7 +42,7 @@ class Handler(BaseHTTPRequestHandler):
   elif self.path=='/api/conversation/delete': MEMORY.delete_conversation(data['id'],data.get('user_id','local_user'),data.get('agent_id','agent_001')); self.send_json({'ok':True})
   elif self.path=='/api/memory': MEMORY.remember(data.get('user_id','local_user'),data.get('agent_id','agent_001'),data.get('content','')); self.send_json({'ok':True})
   elif self.path in ('/api/synthesize_agent_speech','/api/preview_voice'):
-   agent=data.get('agent',{'id':data.get('agent_id','agent_001'),'display_name':data.get('display_name','Billy'),'voice_id':data.get('voice_id','voice_001')}); p=profile_for(agent.get('voice_id','voice_001')); r=synthesize(agent,data.get('text','Hello, I am '+agent.get('display_name','Billy')),TestTTSProvider()); r['audio_base64']=base64.b64encode(r.pop('bytes')).decode(); r['profile_id']=profile_hash(p); r['status']='READY'; self.send_json(r)
+   agent=data.get('agent',{'id':data.get('agent_id','agent_001'),'display_name':data.get('display_name','Billy'),'voice_id':data.get('voice_id','voice_001')}); p=profile_for(agent.get('voice_id','voice_001')); r=synthesize(agent,data.get('text','Hello, I am '+agent.get('display_name','Billy')),TestTTSProvider()); r['audio_base64']=base64.b64encode(r.pop('bytes')).decode(); r['profile_id']=profile_hash(p); r['service_id']='service_tts_test'; r['status']='READY'; self.send_json(r)
   elif self.path=='/api/memories': self.send_json(MEMORY.list_memories(data.get('user_id','local_user'),data.get('agent_id','agent_001')))
   elif self.path=='/api/memory/delete': MEMORY.delete_memory(data['id'],data.get('user_id','local_user'),data.get('agent_id','agent_001')); self.send_json({'ok':True})
   else: self.send_json({'error':'not found'},404)

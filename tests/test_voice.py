@@ -10,3 +10,4 @@ class VoiceTests(unittest.TestCase):
   with self.assertRaises(LookupError): synthesize({'voice_id':'missing'},'x')
  def test_piper_endpoint_is_configured(self):
   p=PiperProvider('http://voice-service'); self.assertEqual(p.endpoint,'http://voice-service')
+ def test_profile_identity_is_stable(self): self.assertEqual(profile_hash(profile_for('voice_001')),profile_hash(profile_for('voice_001')))
