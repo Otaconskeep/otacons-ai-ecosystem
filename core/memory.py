@@ -8,6 +8,10 @@ class MemoryStore:
  def create_conversation(self,user,agent,title='New conversation'):
   import uuid; cid=str(uuid.uuid4()); self.db.execute('INSERT INTO conversations VALUES(?,?,?,?,?)',(cid,user,agent,title,time.time())); self.db.commit(); return cid
  def append(self,cid,user,agent,role,content): self.db.execute('INSERT INTO messages(conversation_id,user_id,agent_id,role,content,created_at) VALUES(?,?,?,?,?,?)',(cid,user,agent,role,content,time.time())); self.db.commit()
+ def list_conversations(self,user,agent): return [dict(x) for x in self.db.execute('SELECT * FROM conversations WHERE user_id=? AND agent_id=? ORDER BY created_at DESC',(user,agent))]
+ def get_conversation(self,cid,user,agent):
+  row=self.db.execute('SELECT * FROM conversations WHERE id=? AND user_id=? AND agent_id=?',(cid,user,agent)).fetchone(); return {'conversation':dict(row) if row else None,'messages':self.messages(cid)}
+ def delete_conversation(self,cid,user,agent): self.db.execute('DELETE FROM messages WHERE conversation_id=? AND user_id=? AND agent_id=?',(cid,user,agent)); self.db.execute('DELETE FROM conversations WHERE id=? AND user_id=? AND agent_id=?',(cid,user,agent)); self.db.commit()
  def messages(self,cid,limit=20): return [dict(x) for x in self.db.execute('SELECT * FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT ?', (cid,limit)).fetchall()][::-1]
  def remember(self,user,agent,content,source=None): self.db.execute('INSERT INTO memories(user_id,agent_id,content,source_conversation_id,created_at,updated_at) VALUES(?,?,?,?,?,?)',(user,agent,content,source,time.time(),time.time())); self.db.commit()
  def retrieve(self,user,agent,query,limit=5):

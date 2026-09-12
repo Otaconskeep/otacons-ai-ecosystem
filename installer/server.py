@@ -8,6 +8,8 @@ from core.storage import volumes,recommended_volume
 from core.topology import Deployment,Host,Service
 from core.agent_service import chat
 from core.providers import TestProvider
+from core.memory import MemoryStore
+MEMORY=MemoryStore(Path.home()/'.config/otacon/runtime/memory.sqlite')
 class Handler(BaseHTTPRequestHandler):
  def send_json(self,data,status=200):
   b=json.dumps(data).encode(); self.send_response(status); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b)
@@ -29,8 +31,16 @@ class Handler(BaseHTTPRequestHandler):
    agent=data.get('agent',{'id':data.get('agent_id','agent_001'),'display_name':data.get('display_name','Billy')})
    svc=Service(id='service_llm_test',service_type='llm',placement_resource_id='host_local',capabilities=['conversational_llm'],metadata={'endpoint':'test://','model':'chat_small'})
    d=Deployment('deployment_local',[Host('host_local')],services=[svc])
-   try: self.send_json(chat(d,agent,data.get('message',''),data.get('conversation_id','default'),provider=TestProvider()))
+   cid=data.get('conversation_id') or MEMORY.create_conversation(data.get('user_id','local_user'),agent['id'])
+   try: self.send_json(chat(d,agent,data.get('message',''),cid,provider=TestProvider(),memory=MEMORY,user_id=data.get('user_id','local_user')))
    except Exception as e: self.send_json({'error':{'code':'CHAT_UNAVAILABLE','message':'Your AI service is unavailable.','technical':str(e)}},503)
+  elif self.path=='/api/conversation': self.send_json({'id':MEMORY.create_conversation(data.get('user_id','local_user'),data.get('agent_id','agent_001'),data.get('title','New conversation'))})
+  elif self.path=='/api/conversations': self.send_json(MEMORY.list_conversations(data.get('user_id','local_user'),data.get('agent_id','agent_001')))
+  elif self.path=='/api/conversation/get': self.send_json(MEMORY.get_conversation(data['id'],data.get('user_id','local_user'),data.get('agent_id','agent_001')))
+  elif self.path=='/api/conversation/delete': MEMORY.delete_conversation(data['id'],data.get('user_id','local_user'),data.get('agent_id','agent_001')); self.send_json({'ok':True})
+  elif self.path=='/api/memory': MEMORY.remember(data.get('user_id','local_user'),data.get('agent_id','agent_001'),data.get('content','')); self.send_json({'ok':True})
+  elif self.path=='/api/memories': self.send_json(MEMORY.list_memories(data.get('user_id','local_user'),data.get('agent_id','agent_001')))
+  elif self.path=='/api/memory/delete': MEMORY.delete_memory(data['id'],data.get('user_id','local_user'),data.get('agent_id','agent_001')); self.send_json({'ok':True})
   else: self.send_json({'error':'not found'},404)
  def serve(self):
   p=Path(__file__).parent.parent/'ui'/self.path.lstrip('/')
