@@ -2,11 +2,84 @@
 
 **A local-first platform for building persistent, voice-enabled AI agents.**
 
-**Designed & Engineered by Antonio Garcia**
+**Designed & Engineered by Antonio Garcia (Otaconskeep)**
 
-> **Public Edition**
+**💬 Join the community: [discord.gg/cZDeqECzX](https://discord.gg/cZDeqECzX)**
+
+> **Public Edition — Lite**
 >
-> This repository is the portable public edition of Otacon. Antonio Garcia's private Otacon Keep contains additional production capabilities that are being generalized for public release.
+> This repository is the free, full-source **Lite Edition** of Otacon. Antonio Garcia's private **Otacon Keep** is the larger reference deployment this project is built from, and a **Premium Edition** (extra models, priority support, and more) is available — see [Lite vs. Premium](#lite-vs-premium) below.
+
+## Install Otacon Lite (one command, no experience required)
+
+**You do not need to know Linux, Python, Docker, or Rust to do this.** Copy the
+block below exactly, paste it into a terminal on an **Ubuntu or Debian Linux**
+computer, and press Enter:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash
+```
+
+**New to terminals? Here's the whole thing, step by step:**
+
+1. Open a terminal. (On Ubuntu Desktop: press the `Super`/Windows key, type
+   `terminal`, press Enter. On a server you're already SSH'd into, you're
+   already there.)
+2. Click into the black window, then paste the command above (right-click →
+   Paste, or `Ctrl+Shift+V`).
+3. Press Enter.
+4. Wait. The first run takes 10-30 minutes — it's installing everything
+   needed (Python, build tools, Rust, and Otacon itself) and building the
+   app for your machine. It will ask for your password once, to install a
+   few system packages (this is normal — that's what `sudo` is for).
+5. When it finishes, it prints a web address (`http://127.0.0.1:5757`) and
+   tries to open it in your browser automatically. If it doesn't open on
+   its own, copy that address into your browser yourself.
+
+That's the entire install. It also detects your GPU (if you have an NVIDIA
+one), recommends the right AI model size for your hardware, runs its own
+self-tests, and builds a native installable app (`.deb`) — all automatically.
+
+**It's completely safe to run more than once.** If anything interrupts it,
+or you just want to update later, run the exact same command again — every
+step skips whatever's already done.
+
+Prefer to download the script first and read it before running it (always a
+reasonable thing to do with any installer)? Grab
+[`install_otacon.sh`](install_otacon.sh) from this repo, then run:
+
+```bash
+chmod +x install_otacon.sh
+./install_otacon.sh
+```
+
+**Optional settings** (set as environment variables before running, only if
+you want to change the defaults):
+
+| Variable | Default | What it changes |
+|---|---|---|
+| `OTACON_INSTALL_DIR` | `~/otacon-ai-ecosystem` | Where Otacon gets installed |
+| `OTACON_BUILD_NATIVE` | `1` | Set to `0` to skip building the native `.deb` app |
+| `OTACON_INSTALL_DEB` | `0` | Set to `1` to also install the built `.deb` automatically |
+| `OTACON_LAUNCH_WIZARD` | `1` | Set to `0` to skip auto-launching the web UI at the end |
+| `OTACON_RUN_TESTS` | `1` | Set to `0` to skip the self-test suite (faster, less safe) |
+
+## Lite vs. Premium
+
+| | **Lite (this repo, free)** | **Premium** |
+|---|---|---|
+| Price | Free, full source | Paid — ask in Discord for current pricing |
+| Core agent chat, memory, voices | ✅ | ✅ |
+| Everything in the table below | ✅ | ✅ |
+| Extra/priority models | — | ✅ |
+| Priority support from Antonio G. Garcia | — | ✅ |
+| Early access to new capabilities | — | ✅ |
+
+There's no license key or artificial limit baked into Lite — it's the real,
+complete public platform. Premium is for people who want more model options
+and direct support. Come say hi and ask questions either way:
+
+### 💬 [discord.gg/cZDeqECzX](https://discord.gg/cZDeqECzX)
 
 ## Public Edition vs. the Full Otacon Keep
 
