@@ -5,6 +5,7 @@ class ProviderError(RuntimeError): pass
 @dataclass
 class Health: state:str; detail:str=''
 class LLMProvider:
+ def resource_requirements(self, model): return {}
  def health(self, model): raise NotImplementedError
  def generate(self, model, prompt): raise NotImplementedError
 class OllamaProvider(LLMProvider):

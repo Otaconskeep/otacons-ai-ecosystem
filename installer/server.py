@@ -23,6 +23,7 @@ from core.memory import MemoryStore
 from core.stt import TestSTTProvider, FasterWhisperProvider, normalize_wav
 from core.preferences import load_preferences, save_preferences
 from core.actions import action_plan, run_voice_actions
+from core.arbiter import default_resources
 
 CONFIG_ROOT = Path.home() / '.config' / 'otacon'
 MEMORY = MemoryStore(CONFIG_ROOT / 'runtime' / 'memory.sqlite')
@@ -91,6 +92,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({'voices': catalog_entries()})
         elif self.path == '/api/preferences':
             self.send_json(load_preferences(CONFIG_ROOT))
+        elif self.path == '/api/resources':
+            self.send_json({'resources': [r.__dict__ for r in default_resources()]})
         elif self.path == '/':
             self.path = '/index.html'
             self.serve()

@@ -14,6 +14,12 @@ elif len(sys.argv) > 1 and sys.argv[1] == 'validate-stt':
 elif len(sys.argv) > 1 and sys.argv[1] == 'validate-voice-loop':
     from installer.validate_voice_loop import main
     raise SystemExit(main(sys.argv[2:]))
+elif len(sys.argv) > 1 and sys.argv[1] == 'validate-resources':
+    from installer.validate_resources import main
+    raise SystemExit(main(sys.argv[2:]))
+elif len(sys.argv) > 1 and sys.argv[1] == 'validate-arbiter':
+    from installer.validate_arbiter import main
+    raise SystemExit(main(sys.argv[2:]))
 elif len(sys.argv) > 1 and sys.argv[1] == 'validate-memory':
     from installer.validate_memory import main
     main()
