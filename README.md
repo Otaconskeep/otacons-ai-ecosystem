@@ -55,6 +55,7 @@ The public repository contains the clean platform foundation: graphical installe
 | Resource arbitration | Production | Architecture complete; real hardware validation pending |
 | Image generation | Production reference | Public architecture complete; real provider validation pending |
 | Video generation | Production reference | Public architecture complete; real provider validation pending |
+| Remote compute nodes | Production reference | Pairing/registration architecture complete; multi-machine validation pending |
 | Distributed compute | Production | Resource model complete; onboarding planned |
 | GPU/resource arbitration | Production | Planned |
 | Image/video generation | Production | Planned |
@@ -123,6 +124,10 @@ PYTHONPATH=. python3 installer/backend_entry.py validate-arbiter
 ```
 
 Real hardware telemetry remains `REAL_RESOURCE_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT` where the execution environment cannot expose accelerators.
+
+## Remote compute nodes
+
+Public Otacon can represent trusted worker nodes with stable logical identities, explicit single-use pairing codes, revocation, heartbeats, resource and service advertisements, and structured workload dispatch. Nodes report CPU, RAM, GPU, storage, runtimes, and capabilities into the same topology, router, and resource arbiter used locally. Runtime communication is designed around authenticated Otacon APIs rather than arbitrary remote shell access. Deterministic validation passes; real multi-machine operation remains `REAL_DISTRIBUTED_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT`.
 
 ## Video production
 

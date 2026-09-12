@@ -17,7 +17,7 @@ async function loadVoices(){
 
 function render(){
   let s=state.step; document.getElementById('title').textContent=labels[s];
-  if(s===0) page.innerHTML='<p>This wizard configures your local AI system. No Docker or YAML knowledge is required.</p><button onclick="next()">Get Started</button><button onclick="showChat()">Open Chat</button>';
+  if(s===0) page.innerHTML='<p>This wizard configures your local AI system. No Docker or YAML knowledge is required.</p><button onclick="next()">Get Started</button><button onclick="showChat()">Open Chat</button><button onclick="showNodes()">Compute Nodes</button>';
   if(s===1) page.innerHTML='<p>Detect your computer, GPUs, storage, and available capacity.</p><button onclick="scan()">Scan My System</button>';
   if(s===2){let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles; page.innerHTML=`<div class=card>System: ${h.os}<br>CPU: ${h.cpu.model} (${h.cpu.cores} cores)<br>Memory: ${h.ram_gb} GB</div>`+(h.gpus.length?h.gpus.map(x=>`<div class=card>${x.model} — ${x.vram_gb} GB VRAM — ${x.capability}</div>`).join(''):'<div class=card>CPU fallback (no GPU detected)</div>')+`<p class=muted>Recommended primary: ${g.primary_gpu}</p><button onclick="next()">Use Recommended Setup</button>`;}
   if(s===3){let v=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}; page.innerHTML=`<div class=card><b>Recommended storage</b><br>${v.path||'Unavailable'}<br>${v.free_gb||0} GB free</div><button onclick="next()">Use Recommended Storage</button>`;}
@@ -138,6 +138,7 @@ async function showChat(){
 <div id=memory-panel class=card><b>Memories ${state.name} Keeps</b><p class=muted>Memories are details ${state.name} can use in future conversations.</p><div id=memories></div><input id=memory placeholder="Add a memory"><button onclick="addMemory()">Save Memory</button></div>`;
   openConversation(state.conversation); loadMemories();
 }
+async function showNodes(){let r=await fetch('/api/nodes'),d=await r.json(); page.innerHTML='<h2>Compute Nodes</h2><p class=muted>Paired computers advertise resources and services to Otacon.</p>'+(d.nodes||[]).map(n=>`<div class=card><b>${escapeHtml(n.display_name)}</b><br>${n.status} · ${n.trust_state}<br>Protocol ${n.protocol_version}</div>`).join('')+'<button onclick="render()">Back</button>'}
 
 async function assignVoice(vid){
   state.voiceId=vid;

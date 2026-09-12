@@ -27,9 +27,11 @@ from core.arbiter import default_resources
 from core.arbiter import ResourceArbiter, ComputeResource
 from core.image import ImageProductionManager, ImageGenerationRequest, TestImageProvider, StableDiffusionProvider
 from core.video import VideoProductionManager, VideoGenerationRequest, TestVideoProvider, ComfyUIProvider
+from core.nodes import NodeRegistry
 
 CONFIG_ROOT = Path.home() / '.config' / 'otacon'
 MEMORY = MemoryStore(CONFIG_ROOT / 'runtime' / 'memory.sqlite')
+NODES = NodeRegistry()
 
 
 def _load_agents() -> list[dict]:
@@ -97,6 +99,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(load_preferences(CONFIG_ROOT))
         elif self.path == '/api/resources':
             self.send_json({'resources': [r.__dict__ for r in default_resources()]})
+        elif self.path == '/api/nodes':
+            self.send_json({'nodes': [n.__dict__ for n in NODES.nodes.values()]})
         elif self.path == '/':
             self.path = '/index.html'
             self.serve()
