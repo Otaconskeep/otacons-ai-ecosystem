@@ -1,0 +1,1 @@
+{"productName":"Otacon Setup","version":"0.1.0","identifier":"com.otacon.setup","build":{"frontendDist":"../../ui"},"app":{"windows":[{"title":"Otacon Setup","width":900,"height":650}],"security":{"csp":"default-src 'self'"}},"bundle":{"active":false}}
