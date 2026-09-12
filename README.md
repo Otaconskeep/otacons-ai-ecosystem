@@ -125,6 +125,10 @@ PYTHONPATH=. python3 installer/backend_entry.py validate-arbiter
 
 Real hardware telemetry remains `REAL_RESOURCE_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT` where the execution environment cannot expose accelerators.
 
+## Voice satellites
+
+The final planned feature milestone adds a provider-neutral VoiceSatellite boundary: local wake detection gates transient capture, then the existing STT → Agent Conversation → Memory/LLM → TTS path is reused. Satellites have explicit trust, mute, heartbeat, and assigned-agent state; they do not contain a separate assistant brain. Physical microphone, wake-word, and speaker validation remains `REAL_SATELLITE_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT`.
+
 ## Lifecycle and beta readiness
 
 Public Otacon includes versioned state migration, manifest-based backup/restore, update checksum and package identity verification, diagnostics redaction, safe uninstall semantics, repair/install validation, and persistent node registry support. `beta-readiness` reports warnings rather than claiming readiness while real provider, native service, TLS, and multi-machine acceptance remain pending.

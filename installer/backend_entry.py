@@ -32,6 +32,9 @@ elif len(sys.argv) > 1 and sys.argv[1] == 'validate-integrations':
 elif len(sys.argv) > 1 and sys.argv[1] in ('validate-install','validate-update','validate-backup','validate-restore','validate-node-security','repair','beta-readiness'):
     from installer.validate_lifecycle import main
     raise SystemExit(main([sys.argv[1]]))
+elif len(sys.argv) > 1 and sys.argv[1] in ('validate-wake-word','validate-satellite'):
+    from installer.validate_satellite import main
+    raise SystemExit(main(sys.argv[2:]))
 elif len(sys.argv) > 1 and sys.argv[1] == 'validate-hardening':
     from installer.validate_hardening import main
     raise SystemExit(main(sys.argv[2:]))
