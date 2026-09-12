@@ -26,3 +26,4 @@ class PiperProvider(TTSProvider):
  def synthesize(self,text,profile,defaults=None): raise RuntimeError('Piper transport not configured')
 def synthesize(agent,text,provider=None):
  p=profile_for(agent.get('voice_id','voice_001')); return (provider or TestTTSProvider()).synthesize(text,p)
+def profile_hash(profile): return hashlib.sha256(repr(sorted(profile.synthesis.items())).encode()).hexdigest()[:12]

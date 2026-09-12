@@ -1,5 +1,5 @@
 from http.server import BaseHTTPRequestHandler,HTTPServer
-import json,os
+import json,os,base64
 from pathlib import Path
 from core.platform import detect
 from core.planner import recommend_hardware_plan
@@ -8,6 +8,7 @@ from core.storage import volumes,recommended_volume
 from core.topology import Deployment,Host,Service
 from core.agent_service import chat
 from core.providers import TestProvider
+from core.voice import synthesize,TestTTSProvider,profile_hash,profile_for
 from core.memory import MemoryStore
 MEMORY=MemoryStore(Path.home()/'.config/otacon/runtime/memory.sqlite')
 class Handler(BaseHTTPRequestHandler):
@@ -32,13 +33,16 @@ class Handler(BaseHTTPRequestHandler):
    svc=Service(id='service_llm_test',service_type='llm',placement_resource_id='host_local',capabilities=['conversational_llm'],metadata={'endpoint':'test://','model':'chat_small'})
    d=Deployment('deployment_local',[Host('host_local')],services=[svc])
    cid=data.get('conversation_id') or MEMORY.create_conversation(data.get('user_id','local_user'),agent['id'])
-   try: self.send_json(chat(d,agent,data.get('message',''),cid,provider=TestProvider(),memory=MEMORY,user_id=data.get('user_id','local_user')))
+   try:
+    result=chat(d,agent,data.get('message',''),cid,provider=TestProvider(),memory=MEMORY,user_id=data.get('user_id','local_user')); result['voice']=None; self.send_json(result)
    except Exception as e: self.send_json({'error':{'code':'CHAT_UNAVAILABLE','message':'Your AI service is unavailable.','technical':str(e)}},503)
   elif self.path=='/api/conversation': self.send_json({'id':MEMORY.create_conversation(data.get('user_id','local_user'),data.get('agent_id','agent_001'),data.get('title','New conversation'))})
   elif self.path=='/api/conversations': self.send_json(MEMORY.list_conversations(data.get('user_id','local_user'),data.get('agent_id','agent_001')))
   elif self.path=='/api/conversation/get': self.send_json(MEMORY.get_conversation(data['id'],data.get('user_id','local_user'),data.get('agent_id','agent_001')))
   elif self.path=='/api/conversation/delete': MEMORY.delete_conversation(data['id'],data.get('user_id','local_user'),data.get('agent_id','agent_001')); self.send_json({'ok':True})
   elif self.path=='/api/memory': MEMORY.remember(data.get('user_id','local_user'),data.get('agent_id','agent_001'),data.get('content','')); self.send_json({'ok':True})
+  elif self.path in ('/api/synthesize_agent_speech','/api/preview_voice'):
+   agent=data.get('agent',{'id':data.get('agent_id','agent_001'),'display_name':data.get('display_name','Billy'),'voice_id':data.get('voice_id','voice_001')}); p=profile_for(agent.get('voice_id','voice_001')); r=synthesize(agent,data.get('text','Hello, I am '+agent.get('display_name','Billy')),TestTTSProvider()); r['audio_base64']=base64.b64encode(r.pop('bytes')).decode(); r['profile_id']=profile_hash(p); r['status']='READY'; self.send_json(r)
   elif self.path=='/api/memories': self.send_json(MEMORY.list_memories(data.get('user_id','local_user'),data.get('agent_id','agent_001')))
   elif self.path=='/api/memory/delete': MEMORY.delete_memory(data['id'],data.get('user_id','local_user'),data.get('agent_id','agent_001')); self.send_json({'ok':True})
   else: self.send_json({'error':'not found'},404)
