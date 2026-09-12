@@ -8,7 +8,9 @@ from core.storage import volumes,recommended_volume
 from core.topology import Deployment,Host,Service
 from core.agent_service import chat
 from core.providers import TestProvider
-from core.voice import synthesize,TestTTSProvider,profile_hash,profile_for
+from core.voice import synthesize,TestTTSProvider,profile_hash,profile_for,provider_for
+from core.preferences import Preferences
+PREFS=Preferences(Path.home()/'.config/otacon/preferences.json')
 from core.memory import MemoryStore
 MEMORY=MemoryStore(Path.home()/'.config/otacon/runtime/memory.sqlite')
 class Handler(BaseHTTPRequestHandler):
@@ -42,7 +44,9 @@ class Handler(BaseHTTPRequestHandler):
   elif self.path=='/api/conversation/delete': MEMORY.delete_conversation(data['id'],data.get('user_id','local_user'),data.get('agent_id','agent_001')); self.send_json({'ok':True})
   elif self.path=='/api/memory': MEMORY.remember(data.get('user_id','local_user'),data.get('agent_id','agent_001'),data.get('content','')); self.send_json({'ok':True})
   elif self.path in ('/api/synthesize_agent_speech','/api/preview_voice'):
-   agent=data.get('agent',{'id':data.get('agent_id','agent_001'),'display_name':data.get('display_name','Billy'),'voice_id':data.get('voice_id','voice_001')}); p=profile_for(agent.get('voice_id','voice_001')); r=synthesize(agent,data.get('text','Hello, I am '+agent.get('display_name','Billy')),TestTTSProvider()); r['audio_base64']=base64.b64encode(r.pop('bytes')).decode(); r['profile_id']=profile_hash(p); r['service_id']='service_tts_test'; r['status']='READY'; self.send_json(r)
+   agent=data.get('agent',{'id':data.get('agent_id','agent_001'),'display_name':data.get('display_name','Billy'),'voice_id':data.get('voice_id','voice_001')}); p=profile_for(agent.get('voice_id','voice_001')); service={'provider':'test','endpoint':'test://','service_id':'service_tts_test'}; r=synthesize(agent,data.get('text','Hello, I am '+agent.get('display_name','Billy')),provider_for(service,True)); r['audio_base64']=base64.b64encode(r.pop('bytes')).decode(); r['profile_id']=profile_hash(p); r['service_id']='service_tts_test'; r['status']='READY'; r['agent_id']=agent['id']; self.send_json(r)
+  elif self.path=='/api/auto_speak': PREFS.set_auto_speak(data.get('user_id','local_user'),data.get('agent_id','agent_001'),data.get('enabled',False)); self.send_json({'enabled':PREFS.get_auto_speak(data.get('user_id','local_user'),data.get('agent_id','agent_001'))})
+  elif self.path=='/api/auto_speak/get': self.send_json({'enabled':PREFS.get_auto_speak(data.get('user_id','local_user'),data.get('agent_id','agent_001'))})
   elif self.path=='/api/memories': self.send_json(MEMORY.list_memories(data.get('user_id','local_user'),data.get('agent_id','agent_001')))
   elif self.path=='/api/memory/delete': MEMORY.delete_memory(data['id'],data.get('user_id','local_user'),data.get('agent_id','agent_001')); self.send_json({'ok':True})
   else: self.send_json({'error':'not found'},404)

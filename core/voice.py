@@ -34,6 +34,10 @@ class PiperProvider(TTSProvider):
    if not audio or not audio.startswith(b'RIFF'): raise RuntimeError('malformed Piper audio')
    return {'audio_id':hashlib.sha256(audio).hexdigest()[:12],'format':'wav','sample_rate':22050,'bytes':audio,'voice_id':profile.id,'provider':'piper','synthesis':dict(profile.synthesis)}
   except urllib.error.URLError as e: raise RuntimeError(f'PROVIDER_TRANSPORT_ERROR: {e.reason}')
+def provider_for(service, test_mode=False):
+ if service.get('provider')=='piper': return PiperProvider(service.get('endpoint',''))
+ if service.get('provider')=='test' and test_mode: return TestTTSProvider()
+ raise RuntimeError('unsupported TTS provider')
 def synthesize(agent,text,provider=None):
  p=profile_for(agent.get('voice_id','voice_001')); return (provider or TestTTSProvider()).synthesize(text,p)
 def profile_hash(profile): return hashlib.sha256(repr(sorted(profile.synthesis.items())).encode()).hexdigest()[:12]

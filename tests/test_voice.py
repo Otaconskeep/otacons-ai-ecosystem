@@ -11,3 +11,7 @@ class VoiceTests(unittest.TestCase):
  def test_piper_endpoint_is_configured(self):
   p=PiperProvider('http://voice-service'); self.assertEqual(p.endpoint,'http://voice-service')
  def test_profile_identity_is_stable(self): self.assertEqual(profile_hash(profile_for('voice_001')),profile_hash(profile_for('voice_001')))
+ def test_provider_factory_requires_explicit_test_mode(self):
+  self.assertIsInstance(provider_for({'provider':'piper','endpoint':'http://x'}),PiperProvider)
+  with self.assertRaises(RuntimeError): provider_for({'provider':'test'})
+  self.assertIsInstance(provider_for({'provider':'test'},True),TestTTSProvider)
