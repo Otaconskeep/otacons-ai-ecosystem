@@ -23,6 +23,9 @@ elif len(sys.argv) > 1 and sys.argv[1] == 'validate-arbiter':
 elif len(sys.argv) > 1 and sys.argv[1] in ('validate-image','validate-agent-image'):
     from installer.validate_image import main
     raise SystemExit(main(sys.argv[2:]))
+elif len(sys.argv) > 1 and sys.argv[1] in ('validate-video','validate-agent-video'):
+    from installer.validate_video import main
+    raise SystemExit(main(sys.argv[2:]))
 elif len(sys.argv) > 1 and sys.argv[1] == 'validate-memory':
     from installer.validate_memory import main
     main()
