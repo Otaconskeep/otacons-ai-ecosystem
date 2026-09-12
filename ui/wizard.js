@@ -1,4 +1,4 @@
-let state={step:0,scan:null,name:'Billy',features:['chat','memory','voice'],config:null,storage:null,conversation:null,voiceId:'voice_001',autoSpeak:false,voices:[],currentAudio:null,speakingMsg:null};
+let state={step:0,scan:null,name:'Billy',features:['chat','memory','voice'],config:null,storage:null,conversation:null,voiceId:'voice_001',autoSpeak:false,voices:[],currentAudio:null,speakingMsg:null,recorder:null,recordingState:'MIC_READY',testMode:window.__OTACON_TEST_MODE__===true};
 const page=document.getElementById('page');
 const labels=['Welcome','System Scan','Hardware Recommendation','Storage','Agent Setup','Features','Review','Finish'];
 
@@ -22,7 +22,7 @@ function render(){
   if(s===2){let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles; page.innerHTML=`<div class=card>System: ${h.os}<br>CPU: ${h.cpu.model} (${h.cpu.cores} cores)<br>Memory: ${h.ram_gb} GB</div>`+(h.gpus.length?h.gpus.map(x=>`<div class=card>${x.model} — ${x.vram_gb} GB VRAM — ${x.capability}</div>`).join(''):'<div class=card>CPU fallback (no GPU detected)</div>')+`<p class=muted>Recommended primary: ${g.primary_gpu}</p><button onclick="next()">Use Recommended Setup</button>`;}
   if(s===3){let v=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}; page.innerHTML=`<div class=card><b>Recommended storage</b><br>${v.path||'Unavailable'}<br>${v.free_gb||0} GB free</div><button onclick="next()">Use Recommended Storage</button>`;}
   if(s===4) page.innerHTML=agentSetupHtml();
-  if(s===5) page.innerHTML=['chat','memory','voice','image_generation','video_generation','web_search'].map(f=>`<label><input type=checkbox value=${f} ${state.features.includes(f)?'checked':''}> ${f.replaceAll('_',' ')}</label>`).join('')+'<button onclick="setFeatures()">Continue</button>';
+  if(s===5) page.innerHTML=[['chat','Chat','SUPPORTED'],['memory','Memory','SUPPORTED'],['voice','Voice Output','SUPPORTED'],['speech_to_text','Speech Input','IN DEVELOPMENT'],['image_generation','Image Generation','COMING LATER'],['video_generation','Video Generation','COMING LATER'],['web_search','Web Search','COMING LATER']].map(([f,label,status])=>`<label><input type=checkbox value=${f} ${state.features.includes(f)?'checked':''} ${status==='COMING LATER'?'disabled':''}> ${label} <span class=muted>— ${status}</span></label>`).join('')+'<button onclick="setFeatures()">Continue</button>';
   if(s===6) page.innerHTML=`<div class=card>Agent: ${state.name}<br>Voice: ${voiceLabel(state.voiceId)}<br>Features: ${state.features.join(', ')}<br>Storage: ${(state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}).path||'Unavailable'}</div><button onclick="build()">Create Configuration</button>`;
   if(s===7) page.innerHTML=`<p>${state.name} is configured.</p><p class=muted>Open chat to talk and use voice playback.</p><div class=card>${state.config?.saved||''}</div><button onclick="showChat()">Open Chat</button>`;
 }
@@ -132,7 +132,7 @@ async function showChat(){
 <div id=conversation-list>${(cs||[]).map((c,i)=>`<button onclick="openConversation('${c.id}')">${c.title||'Conversation '+(i+1)}</button>`).join('')}</div>
 <div id=messages class=card></div>
 <input id=chat placeholder="Message ${state.name}">
-<button onclick="sendChat()">Send</button>
+<button type=button id=micButton onclick="toggleRecording()" title="Record a message">🎤</button><button onclick="sendChat()">Send</button><span id=micStatus class=muted></span>
 <div id=memory-panel class=card><b>Memories ${state.name} Keeps</b><p class=muted>Memories are details ${state.name} can use in future conversations.</p><div id=memories></div><input id=memory placeholder="Add a memory"><button onclick="addMemory()">Save Memory</button></div>`;
   openConversation(state.conversation); loadMemories();
 }
@@ -189,6 +189,29 @@ async function sendChat(){
     if(b) b.dataset.audio=d.voice.audio_base64;
     playAudio(d.voice.audio_base64, mid);
   }
+}
+
+async function toggleRecording(){
+  const button=document.getElementById('micButton'), status=document.getElementById('micStatus');
+  if(state.recorder && state.recorder.state==='recording'){ state.recorder.stop(); return; }
+  if(!navigator.mediaDevices || !window.MediaRecorder){ state.recordingState='MIC_UNAVAILABLE'; if(status) status.textContent='Microphone is unavailable in this environment.'; return; }
+  try {
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const chunks=[]; state.recorder=new MediaRecorder(stream); state.recordingState='RECORDING';
+    button.textContent='■ Stop'; button.dataset.state='recording'; if(status) status.textContent='Recording…';
+    state.recorder.ondataavailable=e=>{if(e.data.size) chunks.push(e.data)};
+    state.recorder.onstop=async()=>{
+      stream.getTracks().forEach(t=>t.stop()); state.recordingState='PROCESSING'; button.textContent='🎤'; button.dataset.state='processing'; if(status) status.textContent='Transcribing…';
+      try {
+        const blob=new Blob(chunks,{type:state.recorder.mimeType||'audio/webm'}); const reader=new FileReader();
+        reader.onload=async()=>{ const b64=String(reader.result).split(',')[1]||''; const r=await api('/api/transcribe_audio',{audio_base64:b64,test_mode:state.testMode});
+          if(!r.ok || !r.data.text) throw new Error(r.data?.error?.message||'TRANSCRIPTION_FAILED');
+          document.getElementById('chat').value=r.data.text; state.recordingState='TRANSCRIPTION_READY'; if(status) status.textContent='Review the transcription, then press Send.';
+          button.dataset.state='ready';
+        }; reader.readAsDataURL(blob);
+      } catch(e){state.recordingState='TRANSCRIPTION_FAILED'; button.dataset.state='error'; if(status) status.textContent='We could not transcribe that recording.';}
+    }; state.recorder.start();
+  } catch(e){ state.recordingState=e.name==='NotAllowedError'?'MIC_PERMISSION_DENIED':'MIC_UNAVAILABLE'; if(status) status.textContent=state.recordingState==='MIC_PERMISSION_DENIED'?'Otacon needs microphone permission to hear you.':'Microphone is unavailable in this environment.'; }
 }
 
 (async()=>{ await loadPrefs(); await loadVoices(); render(); })();

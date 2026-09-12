@@ -50,12 +50,27 @@ TTS_ACTIONS = [
     ('ASSIGN_AGENT_VOICE', 'Assigning agent voice'),
 ]
 
+STT_ACTIONS = [
+    ('CHECK_STT_RUNTIME', 'Checking speech recognition'),
+    ('INSTALL_STT_RUNTIME', 'Installing speech recognition'),
+    ('SELECT_STT_MODEL', 'Selecting speech model'),
+    ('CHECK_STT_MODEL', 'Checking speech model'),
+    ('CHECK_STT_STORAGE', 'Checking speech model storage'),
+    ('DOWNLOAD_STT_MODEL', 'Downloading speech model'),
+    ('START_STT_SERVICE', 'Starting speech recognition'),
+    ('REGISTER_STT_SERVICE', 'Registering speech service'),
+    ('VALIDATE_STT_SERVICE', 'Validating speech service'),
+    ('TRANSCRIBE_TEST_AUDIO', 'Testing transcription'),
+]
+
 
 def action_plan(features: list[str] | None = None):
     features = features or ['chat']
     plan = [Action(i, l) for i, l in CHAT_ACTIONS]
     if 'voice' in features or 'tts' in features:
         plan.extend(Action(i, l) for i, l in TTS_ACTIONS)
+    if 'speech_to_text' in features or 'stt' in features or 'microphone' in features:
+        plan.extend(Action(i, l) for i, l in STT_ACTIONS)
     return plan
 
 
