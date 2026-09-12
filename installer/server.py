@@ -101,6 +101,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({'resources': [r.__dict__ for r in default_resources()]})
         elif self.path == '/api/nodes':
             self.send_json({'nodes': [n.__dict__ for n in NODES.nodes.values()]})
+        elif self.path == '/api/integrations/providers':
+            self.send_json({'providers': [
+                {'id':'webhook','type':'WEBHOOK','fields':[{'name':'url','kind':'url','required':True},{'name':'secret','kind':'secret'}]},
+                {'id':'test','type':'SMART_HOME','fields':[{'name':'display_name','kind':'text'}]},
+            ]})
         elif self.path == '/':
             self.path = '/index.html'
             self.serve()
