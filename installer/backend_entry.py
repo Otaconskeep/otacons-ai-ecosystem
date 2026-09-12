@@ -29,6 +29,9 @@ elif len(sys.argv) > 1 and sys.argv[1] in ('validate-video','validate-agent-vide
 elif len(sys.argv) > 1 and sys.argv[1] == 'validate-integrations':
     from installer.validate_integrations import main
     raise SystemExit(main(sys.argv[2:]))
+elif len(sys.argv) > 1 and sys.argv[1] in ('validate-install','validate-update','validate-backup','validate-restore','validate-node-security','repair','beta-readiness'):
+    from installer.validate_lifecycle import main
+    raise SystemExit(main([sys.argv[1]]))
 elif len(sys.argv) > 1 and sys.argv[1] == 'validate-nodes':
     from installer.validate_nodes import main
     raise SystemExit(main(sys.argv[2:]))

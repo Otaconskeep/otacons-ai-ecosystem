@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-import secrets, hashlib
+import secrets, hashlib, json
 
 PROTOCOL_VERSION=1
 @dataclass
@@ -15,17 +15,27 @@ class PairingCode:
 class RemoteWorkload:
  workload_id:str; node_id:str; capability:str; payload:dict; state:str='DISPATCHING'; revision:int=1; owner_id:str='control-plane'; result:dict|None=None
 class NodeRegistry:
- def __init__(self): self.nodes={}; self.codes={}; self.workloads={}
+ def __init__(self,path=None): self.nodes={}; self.codes={}; self.workloads={}; self.path=path; self.load()
+ def save(self):
+  if self.path:
+   from pathlib import Path
+   p=Path(self.path); p.parent.mkdir(parents=True,exist_ok=True); p.write_text(json.dumps({'nodes':[n.__dict__ for n in self.nodes.values()]}))
+ def load(self):
+  if self.path:
+   from pathlib import Path
+   p=Path(self.path)
+   if p.is_file():
+    for d in json.loads(p.read_text()).get('nodes',[]): self.nodes[d['node_id']]=Node(**d)
  def create_pairing(self,ttl_seconds=300):
   code=secrets.token_urlsafe(8); self.codes[hashlib.sha256(code.encode()).hexdigest()]=PairingCode(hashlib.sha256(code.encode()).hexdigest(),datetime.now(timezone.utc)+timedelta(seconds=ttl_seconds)); return code
  def approve_pairing(self,code,display_name,node_type='WORKER'):
   h=hashlib.sha256(code.encode()).hexdigest(); c=self.codes.get(h)
   if not c or c.used or datetime.now(timezone.utc)>=c.expires_at: return None,'PAIRING_EXPIRED'
-  c.used=True; node=Node('node_'+secrets.token_hex(8),display_name,node_type,'TRUSTED','ONLINE'); self.nodes[node.node_id]=node; return node,None
+  c.used=True; node=Node('node_'+secrets.token_hex(8),display_name,node_type,'TRUSTED','ONLINE'); self.nodes[node.node_id]=node; self.save(); return node,None
  def revoke(self,node_id):
   n=self.nodes.get(node_id)
   if not n:return False
-  n.trust_state='REVOKED'; n.status='OFFLINE'; return True
+  n.trust_state='REVOKED'; n.status='OFFLINE'; self.save(); return True
  def heartbeat(self,node_id,resources=None,services=None):
   n=self.nodes.get(node_id)
   if not n or n.trust_state!='TRUSTED': return {'status':'NODE_AUTH_FAILED'}

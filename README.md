@@ -125,6 +125,10 @@ PYTHONPATH=. python3 installer/backend_entry.py validate-arbiter
 
 Real hardware telemetry remains `REAL_RESOURCE_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT` where the execution environment cannot expose accelerators.
 
+## Lifecycle and beta readiness
+
+Public Otacon includes versioned state migration, manifest-based backup/restore, update checksum and package identity verification, diagnostics redaction, safe uninstall semantics, repair/install validation, and persistent node registry support. `beta-readiness` reports warnings rather than claiming readiness while real provider, native service, TLS, and multi-machine acceptance remain pending.
+
 ## Integrations
 
 Otacon uses provider-neutral integration adapters for optional smart-home, messaging, media, notifications, and configured webhooks. Actions are permission-checked, distinguish reads from writes, and can require explicit confirmation. Secrets remain referenced outside source control, and arbitrary agent-generated URLs or shell commands are not allowed. Deterministic validation passes; real external integrations remain `REAL_INTEGRATION_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT`.
