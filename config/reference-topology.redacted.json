@@ -1,0 +1,22 @@
+{
+  "id": "deployment_reference_redacted",
+  "control_plane_resource_id": "host_primary",
+  "hosts": [
+    {"id":"host_primary","hostname":"primary-host","os":"linux","virtualization_provider":null,"runtimes":["runtime_primary"],"virtual_machines":[]},
+    {"id":"host_virtualization","hostname":"virtualization-host","os":"linux","virtualization_provider":"proxmox","runtimes":[],"virtual_machines":["vm_offload"]}
+  ],
+  "virtual_machines": [
+    {"id":"vm_offload","parent_host_id":"host_virtualization","hypervisor":"proxmox","hypervisor_vm_id":"vm-redacted","hostname":"offload-vm","runtimes":["runtime_offload"],"passthrough_devices":[]}
+  ],
+  "runtimes": [
+    {"id":"runtime_primary","parent_resource_id":"host_primary","runtime":"docker"},
+    {"id":"runtime_offload","parent_resource_id":"vm_offload","runtime":"docker"}
+  ],
+  "services": [
+    {"id":"service_gateway","service_type":"gateway","placement_resource_id":"host_primary","runtime_id":"runtime_primary"},
+    {"id":"service_llm","service_type":"llm","placement_resource_id":"host_primary","runtime_id":"runtime_primary","required_capabilities":["conversational_llm"]},
+    {"id":"service_media_helper","service_type":"media-helper","placement_resource_id":"vm_offload","runtime_id":"runtime_offload"}
+  ],
+  "accelerators": [],
+  "storage": []
+}
