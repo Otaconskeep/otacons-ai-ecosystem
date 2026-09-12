@@ -4,11 +4,11 @@ from dataclasses import dataclass
 import json, platform
 APP_VERSION='0.1.0'; SCHEMA_VERSION=1
 REQUIRED=('REAL_OLLAMA_INFERENCE_PASS','REAL_MEMORY_INFERENCE_PASS','REAL_TTS_ACCEPTANCE_PASS','REAL_STT_ACCEPTANCE_PASS','REAL_RESOURCE_ACCEPTANCE_PASS','NATIVE_GUI_ACCEPTANCE_PASS','PHYSICAL_MICROPHONE_ACCEPTANCE_PASS','PHYSICAL_SPEAKER_ACCEPTANCE_PASS','REAL_LOCAL_VOICE_LOOP_PASS')
-def report(mode, statuses, *, commit, confirmations=None, failures=None):
+def report(mode, statuses, *, commit, confirmations=None, failures=None, evidence=None):
  allowed={k:v for k,v in statuses.items() if k in REQUIRED and v in ('PASS','PENDING','FAIL')}; confirmations=confirmations or {}; failures=failures or {}
  for k,v in confirmations.items():
   if v is True and k in REQUIRED: allowed[k]='PASS'
- return {'schema_version':SCHEMA_VERSION,'app_version':APP_VERSION,'commit':commit,'mode':mode,'platform':platform.system(),'statuses':allowed,'confirmations':{k:bool(v) for k,v in confirmations.items() if k in REQUIRED},'failures':{k:'SANITIZED_PROVIDER_FAILURE' for k,v in failures.items() if k in REQUIRED},'result':'PASS' if all(allowed.get(k)=='PASS' for k in REQUIRED) else 'PARTIAL'}
+ return {'schema_version':SCHEMA_VERSION,'app_version':APP_VERSION,'commit':commit,'mode':mode,'statuses':allowed,'confirmations':{k:bool(v) for k,v in confirmations.items() if k in REQUIRED},'evidence':evidence or {},'failures':{k:'SANITIZED_PROVIDER_FAILURE' for k,v in failures.items() if k in REQUIRED},'result':'PASS' if all(allowed.get(k)=='PASS' for k in REQUIRED) else 'PARTIAL'}
 def merge(reports):
  if not reports:return {'result':'PENDING','reason':'NO_REPORTS'}
  builds={(r.get('app_version'),r.get('commit')) for r in reports}
