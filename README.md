@@ -1,5 +1,32 @@
 # Otacon
 
+**A local-first platform for building persistent, voice-enabled AI agents.**
+
+**Designed & Engineered by Antonio Garcia**
+
+Otacon is intended to feel like consumer software: download, install, detect hardware, configure an agent, choose capabilities, and start talking without learning Docker, CUDA, Python environments, YAML, or model-server plumbing.
+
+## Current status
+
+| Capability | Status |
+|---|---|
+| Native installer foundation, hardware planning, agent architecture | Complete |
+| Capability routing, persistent conversations, long-term memory | Complete |
+| Provider-neutral LLM/TTS, per-agent voices, synthesis profiles | Complete |
+| Real Ollama/Piper acceptance | Pending external validation |
+| Speech-to-text and microphone | Next milestone |
+| Image/video generation and remote-node onboarding | Planned |
+
+## Architecture
+
+```text
+User → Agent (identity, memory, voice, preferences)
+     → Capability Router → Deployment Services
+       → conversational_llm / text_to_speech → Providers / Compute
+```
+
+Otacon — Designed & Engineered by Antonio Garcia
+
 Clean public foundation for a hardware-aware local AI setup wizard with provider-neutral Chat and TTS.
 
 ## Run the development wizard
