@@ -31,6 +31,6 @@ class TestProvider(LLMProvider):
   name='Assistant'
   for line in prompt.splitlines():
    if line.startswith('You are '): name=line.split('You are ',1)[1].split(',',1)[0]
- if 'what is your name' in prompt.lower(): return f'My name is {name}.'
+  if 'what is your name' in prompt.lower(): return f'My name is {name}.'
   if "dog's name" in prompt.lower() and 'cooper' in prompt.lower(): return "Your dog's name is Cooper."
   return f'{name} received your message.'
