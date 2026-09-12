@@ -2,12 +2,12 @@
 set -Eeuo pipefail
 
 # ==============================================================================
-#  OTACONSKEEP // OTACON AI ECOSYSTEM -- LITE EDITION
+#  OTACONSKEEP // OTACON AI ECOSYSTEM -- OTACON CORE
 #  AUTOMATED ONE-COMMAND BOOTSTRAP + NATIVE BUILDER (free, full source)
 #
 #  Designed & Engineered by Antonio G. Garcia
 #  "Built for the Keep."
-#  Community, support, and Premium Edition: https://discord.gg/cZDeqECzX
+#  Community, support, and Otaconskeep Services: https://discord.gg/cZDeqECzX
 # ==============================================================================
 #
 # Target:
@@ -54,7 +54,7 @@ set -Eeuo pipefail
 # ==============================================================================
 
 BRAND="ANTONIO G. GARCIA // OTACONSKEEP"
-PRODUCT="OTACON AI ECOSYSTEM -- LITE EDITION"
+PRODUCT="OTACON AI ECOSYSTEM -- OTACON CORE"
 TAGLINE="Built for the Keep."
 DISCORD_URL="https://discord.gg/cZDeqECzX"
 
@@ -101,9 +101,9 @@ cat <<'OTACON_ASCII'
 OTACON_ASCII
 printf '\033[0m\n'
 printf '\033[1;36m%s\033[0m\n' "$BRAND"
-printf '\033[0;37m%s — %s\033[0m\n' "$PRODUCT" "$TAGLINE"
-printf '\033[0;37mThis is the free Lite Edition -- full source, no license key, no time limit.\033[0m\n'
-printf '\033[0;37mPremium (extra models, priority support, more) -- come say hi: %s\033[0m\n\n' "$DISCORD_URL"
+printf '\033[0;37m%s :: %s\033[0m\n' "$PRODUCT" "$TAGLINE"
+printf '\033[0;37mThis is Otacon Core -- free, full source, no license key, no time limit.\033[0m\n'
+printf '\033[0;37mOtaconskeep Services (architecture, deployment, support) -- come say hi: %s\033[0m\n\n' "$DISCORD_URL"
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
@@ -116,7 +116,7 @@ is_debian_family() {
 }
 
 is_debian_family || die \
-  "This computer isn't running Ubuntu or Debian Linux, which is what this installer needs. What to do: if you're on Windows or Mac, you'll need an Ubuntu machine or VM to run Otacon Lite right now (support for other systems is planned) -- ask in Discord ($DISCORD_URL) if you're not sure how to set one up."
+  "This computer isn't running Ubuntu or Debian Linux, which is what this installer needs. What to do: if you're on Windows or Mac, you'll need an Ubuntu machine or VM to run Otacon Core right now (support for other systems is planned) -- ask in Discord ($DISCORD_URL) if you're not sure how to set one up."
 
 if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
   warn "Running the whole installer as root is not recommended."
@@ -615,9 +615,9 @@ if [[ -n "$DEB_PATH" ]]; then
 fi
 
 printf '\n'
-printf '\033[1;33mYou are running the free Lite Edition.\033[0m\n'
-printf '\033[1;33mQuestions, help, and the Premium Edition (extra models, priority support,\033[0m\n'
-printf '\033[1;33mmore) all live in one place -- come say hi: %s\033[0m\n' "$DISCORD_URL"
+printf '\033[1;33mYou are running Otacon Core -- free, open source, self-hosted.\033[0m\n'
+printf '\033[1;33mQuestions, help, and Otaconskeep Services (architecture, deployment,\033[0m\n'
+printf '\033[1;33msupport) all live in one place -- come say hi: %s\033[0m\n' "$DISCORD_URL"
 printf '\n'
 printf '[ANTONIO G. GARCIA] Rerunning this installer is safe; completed prerequisites are reused.\n'
 printf '[ANTONIO G. GARCIA] Otacon bootstrap complete. Welcome to the Keep.\n'

@@ -6,11 +6,11 @@
 
 **💬 Join the community: [discord.gg/cZDeqECzX](https://discord.gg/cZDeqECzX)**
 
-> **Public Edition — Lite**
+> **Otacon Core**
 >
-> This repository is the free, full-source **Lite Edition** of Otacon. Antonio Garcia's private **Otacon Keep** is the larger reference deployment this project is built from, and a **Premium Edition** (extra models, priority support, and more) is available — see [Lite vs. Premium](#lite-vs-premium) below.
+> This repository is **Otacon Core**: free, full source, self-hosted. Antonio Garcia's private **Otacon Keep** is the larger reference deployment this project is built from; see [Otacon Core, the Keep Blueprint, and Otaconskeep Services](#otacon-core-the-keep-blueprint-and-otaconskeep-services) below for how the pieces relate.
 
-## Install Otacon Lite (one command, no experience required)
+## Install Otacon Core (one command, no experience required)
 
 **You do not need to know Linux, Python, Docker, or Rust to do this.** Copy the
 block below exactly, paste it into a terminal on an **Ubuntu or Debian Linux**
@@ -28,20 +28,20 @@ curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/ma
 2. Click into the black window, then paste the command above (right-click →
    Paste, or `Ctrl+Shift+V`).
 3. Press Enter.
-4. Wait. The first run takes 10-30 minutes — it's installing everything
+4. Wait. The first run takes 10-30 minutes: it's installing everything
    needed (Python, build tools, Rust, and Otacon itself) and building the
    app for your machine. It will ask for your password once, to install a
-   few system packages (this is normal — that's what `sudo` is for).
+   few system packages (this is normal; that's what `sudo` is for).
 5. When it finishes, it prints a web address (`http://127.0.0.1:5757`) and
    tries to open it in your browser automatically. If it doesn't open on
    its own, copy that address into your browser yourself.
 
 That's the entire install. It also detects your GPU (if you have an NVIDIA
 one), recommends the right AI model size for your hardware, runs its own
-self-tests, and builds a native installable app (`.deb`) — all automatically.
+self-tests, and builds a native installable app (`.deb`), all automatically.
 
 **It's completely safe to run more than once.** If anything interrupts it,
-or you just want to update later, run the exact same command again — every
+or you just want to update later, run the exact same command again: every
 step skips whatever's already done.
 
 Prefer to download the script first and read it before running it (always a
@@ -64,20 +64,18 @@ you want to change the defaults):
 | `OTACON_LAUNCH_WIZARD` | `1` | Set to `0` to skip auto-launching the web UI at the end |
 | `OTACON_RUN_TESTS` | `1` | Set to `0` to skip the self-test suite (faster, less safe) |
 
-## Lite vs. Premium
+## Otacon Core, the Keep Blueprint, and Otaconskeep Services
 
-| | **Lite (this repo, free)** | **Premium** |
-|---|---|---|
-| Price | Free, full source | Paid — ask in Discord for current pricing |
-| Core agent chat, memory, voices | ✅ | ✅ |
-| Everything in the table below | ✅ | ✅ |
-| Extra/priority models | — | ✅ |
-| Priority support from Antonio G. Garcia | — | ✅ |
-| Early access to new capabilities | — | ✅ |
+| | **Otacon Core** (this repo) | **Keep Blueprint** | **Otaconskeep Services** |
+|---|---|---|---|
+| What it is | Free, open source, self-hosted | The broader ecosystem architecture demonstrated by Antonio's real Keep (agent rooms, media/home automation, remote GPU nodes, and more) | Architecture, deployment, and support engagements |
+| Status | Install today, this repo | Direction the architecture is heading, not a public installer yet | Available now |
+| Price | Free | Not offered publicly yet | Contact for scope/pricing |
 
-There's no license key or artificial limit baked into Lite — it's the real,
-complete public platform. Premium is for people who want more model options
-and direct support. Come say hi and ask questions either way:
+There's no license key or artificial limit baked into Otacon Core. It's the
+real, complete public platform as it stands today. **Otacon Core installs
+the foundation. The Keep Blueprint shows what that foundation can become.**
+Questions about any of the three, or want to talk deployment/consulting:
 
 ### 💬 [discord.gg/cZDeqECzX](https://discord.gg/cZDeqECzX)
 
@@ -183,7 +181,7 @@ User → Agent (identity, memory, voice, preferences)
        → conversational_llm / text_to_speech → Providers / Compute
 ```
 
-Otacon — Designed & Engineered by Antonio Garcia
+Otacon: Designed & Engineered by Antonio Garcia
 
 ## Resource arbitration
 
@@ -242,7 +240,7 @@ Expected in sandbox: `TEST_TTS_PASS` and `REAL_TTS_ACCEPTANCE_PENDING`.
 
 ## Real Piper / Wyoming acceptance
 
-When a Piper Wyoming endpoint is reachable (endpoint comes from env/config — never hardcoded in AgentService):
+When a Piper Wyoming endpoint is reachable (endpoint comes from env/config, never hardcoded in AgentService):
 
 ```bash
 OTACON_TTS_PROVIDER=piper \
@@ -264,33 +262,35 @@ PYTHONPATH=. python3 -m unittest discover -s tests -v
 ## Support
 
 Installer issue, a question about self-hosting on your own hardware, or
-interested in Premium? One channel covers all of it:
+interested in the Keep Blueprint / Otaconskeep Services? One channel covers
+all of it:
 
 ### 💬 [discord.gg/cZDeqECzX](https://discord.gg/cZDeqECzX)
 
 When reporting an install problem, include your OS/distro, the exact error
-text, and whether it happened during `install_otacon.sh` or after launch —
-that's usually enough to triage quickly.
+text, and whether it happened during `install_otacon.sh` or after launch.
+That's usually enough to triage quickly.
 
 ## About the Engineer
 
 **Antonio G. Garcia ("Otaconskeep")** designs and engineers distributed,
-local-first AI systems — the kind of infrastructure most teams either buy
+local-first AI systems: the kind of infrastructure most teams either buy
 as a SaaS subscription or never build at all. Otacon's architecture reflects
 that: a provider-neutral capability router that treats LLM/TTS/STT backends
 as swappable resources rather than hardcoded vendors, a resource arbiter
 that leases CPU/RAM/GPU/VRAM across bare metal, VMs, and remote nodes without
 agents ever touching a device index, per-agent voice profiles instead of one
 global synthesis setting, and a native installer/updater with versioned
-state migration and manifest-based backup — the unglamorous plumbing that
-decides whether a platform survives contact with someone else's hardware.
+state migration and manifest-based backup. It's the unglamorous plumbing
+that decides whether a platform survives contact with someone else's
+hardware.
 
 This public repository is the portable edition of a larger private
 reference deployment (the "Otacon Keep") spanning multiple physical hosts,
 Proxmox virtualization, and GPU-backed workloads in production use.
 
 Available for consulting on local-first AI architecture, resource
-orchestration, and voice-agent systems — reach out in Discord above.
+orchestration, and voice-agent systems. Reach out in Discord above.
 
 ## License
 
