@@ -129,6 +129,7 @@ async function showChat(){
 </div>
 <button onclick="newConversation()">+ New Conversation</button>
 <button onclick="loadMemories()">Memory</button>
+<div class=card><b>Create an image</b><br><input id=imagePrompt placeholder="Describe an image"><select id=imageProfile><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="quality">Quality</option></select><button onclick="generateImage()">Generate</button><span id=imageStatus class=muted></span></div>
 <div id=conversation-list>${(cs||[]).map((c,i)=>`<button onclick="openConversation('${c.id}')">${c.title||'Conversation '+(i+1)}</button>`).join('')}</div>
 <div id=messages class=card></div>
 <input id=chat placeholder="Message ${state.name}">
@@ -162,6 +163,7 @@ async function openConversation(id){
 async function loadMemories(){let r=(await api('/api/memories',{agent_id:'agent_001'})).data;let e=document.getElementById('memories');if(e)e.innerHTML=(r||[]).map(x=>`<p>${escapeHtml(x.content)} <button onclick="delMemory(${x.id})">Delete</button></p>`).join('')||'<p>None stored.</p>'}
 async function addMemory(){let e=document.getElementById('memory');if(e.value.trim())await api('/api/memory',{agent_id:'agent_001',content:e.value.trim()});e.value='';loadMemories()}
 async function delMemory(id){await api('/api/memory/delete',{agent_id:'agent_001',id});loadMemories()}
+async function generateImage(){let p=document.getElementById('imagePrompt').value.trim(), s=document.getElementById('imageStatus'); if(!p)return; s.textContent='Creating image…'; let r=await api('/api/generate_image',{prompt:p,profile:document.getElementById('imageProfile').value,agent_id:'agent_001',conversation_id:state.conversation,test_mode:state.testMode}); if(!r.ok){s.textContent=r.data?.error?.message||'Image generation unavailable.';return} let a=r.data.artifacts?.[0]; if(a){s.innerHTML=`<br><img src="file://${a.path}" alt="Generated image" style="max-width:100%">`; } }
 
 async function sendChat(){
   let el=document.getElementById('chat'), box=document.getElementById('messages'), m=el.value.trim();

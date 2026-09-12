@@ -53,6 +53,7 @@ The public repository contains the clean platform foundation: graphical installe
 | Piper TTS | Production | Architecture complete; external validation pending |
 | Speech-to-text | Production | Architecture complete; real provider validation pending |
 | Resource arbitration | Production | Architecture complete; real hardware validation pending |
+| Image generation | Production reference | Public architecture complete; real provider validation pending |
 | Distributed compute | Production | Resource model complete; onboarding planned |
 | GPU/resource arbitration | Production | Planned |
 | Image/video generation | Production | Planned |
@@ -121,6 +122,10 @@ PYTHONPATH=. python3 installer/backend_entry.py validate-arbiter
 ```
 
 Real hardware telemetry remains `REAL_RESOURCE_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT` where the execution environment cannot expose accelerators.
+
+## Image generation
+
+Public Otacon provides an `image_generation` capability, quality profiles (Draft, Standard, Quality), an arbiter-backed `ImageProductionManager`, provider-neutral artifacts, and a deterministic test provider. Generated files live in the application data directory outside the repository. A production image service is intentionally configured separately; deterministic fixtures never silently replace it. Run `validate-image` for the architecture check. Real provider/model execution remains `REAL_IMAGE_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT`.
 
 Clean public foundation for a hardware-aware local AI setup wizard with provider-neutral Chat and TTS.
 
