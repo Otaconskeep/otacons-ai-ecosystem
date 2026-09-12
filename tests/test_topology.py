@@ -10,6 +10,14 @@ class TopologyTests(unittest.TestCase):
         self.assertTrue(d.validate())
         self.assertEqual(d.virtual_machines[0].parent_host_id,'host_virtualization')
         self.assertEqual(d.services[1].runtime_id,'runtime_primary')
+        tts=next(s for s in d.services if s.id=='service_tts_001')
+        self.assertIn('text_to_speech', tts.capabilities)
+        from core.router import resolve
+        a=resolve(d,'text_to_speech')
+        self.assertEqual(a.service_id,'service_tts_001')
+        self.assertEqual(a.provider,'piper')
+        self.assertNotIn('127.0.0.1', a.endpoint)
+        self.assertNotIn('localhost', a.endpoint)
     def test_invalid_parent_rejected(self):
         d=Deployment('d', hosts=[Host('h')], virtual_machines=[VirtualMachine('v', parent_host_id='missing')])
         with self.assertRaises(ValueError): d.validate()

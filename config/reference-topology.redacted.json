@@ -14,7 +14,8 @@
   ],
   "services": [
     {"id":"service_gateway","service_type":"gateway","placement_resource_id":"host_primary","runtime_id":"runtime_primary"},
-    {"id":"service_llm","service_type":"llm","placement_resource_id":"host_primary","runtime_id":"runtime_primary","required_capabilities":["conversational_llm"]},
+    {"id":"service_llm","service_type":"llm","placement_resource_id":"host_primary","runtime_id":"runtime_primary","required_capabilities":["conversational_llm"],"capabilities":["conversational_llm"],"metadata":{"provider":"ollama","endpoint":"http://llm-service-redacted","model":"chat_small"},"endpoints":[{"id":"ep_llm","service_id":"service_llm","kind":"http","address":"http://llm-service-redacted"}]},
+    {"id":"service_tts_001","service_type":"tts","placement_resource_id":"host_primary","runtime_id":"runtime_primary","required_capabilities":["text_to_speech"],"capabilities":["text_to_speech"],"metadata":{"provider":"piper","endpoint":"wyoming://tts-service-redacted","defaults":{"length_scale":1.25,"noise_scale":0.95,"noise_w":0.95},"health":"UNKNOWN"},"endpoints":[{"id":"ep_tts","service_id":"service_tts_001","kind":"wyoming","address":"wyoming://tts-service-redacted"}]},
     {"id":"service_media_helper","service_type":"media-helper","placement_resource_id":"vm_offload","runtime_id":"runtime_offload"}
   ],
   "accelerators": [],
