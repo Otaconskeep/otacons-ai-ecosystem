@@ -66,6 +66,10 @@ If the environment blocks the endpoint, treat as:
 PYTHONPATH=. python3 -m unittest discover -s tests -v
 ```
 
+## License
+
+Apache-2.0. Copyright © 2026 Antonio Garcia.
+
 ## Licensing note
 
 Catalog entries `voice_001` / `voice_002` are **TEST FIXTURES**, not redistributable production Piper voices. Public Piper catalog entries carry upstream license/source metadata. Do not commit private trained voices or datasets.
