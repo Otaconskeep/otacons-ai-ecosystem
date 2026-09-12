@@ -5,6 +5,9 @@ from core.platform import detect
 from core.planner import recommend_hardware_plan
 from core.config import build_config,save
 from core.storage import volumes,recommended_volume
+from core.topology import Deployment,Host,Service
+from core.agent_service import chat
+from core.providers import TestProvider
 class Handler(BaseHTTPRequestHandler):
  def send_json(self,data,status=200):
   b=json.dumps(data).encode(); self.send_response(status); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b)
@@ -22,6 +25,12 @@ class Handler(BaseHTTPRequestHandler):
    root=Path(data.get('output') or (Path.home()/'.config/otacon')); self.send_json({'path':str(save(data['config'],root))})
   elif self.path=='/api/load_configuration':
    p=Path.home()/'.config/otacon/config.json'; self.send_json(json.loads(p.read_text()) if p.is_file() else {})
+  elif self.path=='/api/chat_with_agent':
+   agent=data.get('agent',{'id':data.get('agent_id','agent_001'),'display_name':data.get('display_name','Billy')})
+   svc=Service(id='service_llm_test',service_type='llm',placement_resource_id='host_local',capabilities=['conversational_llm'],metadata={'endpoint':'test://','model':'chat_small'})
+   d=Deployment('deployment_local',[Host('host_local')],services=[svc])
+   try: self.send_json(chat(d,agent,data.get('message',''),data.get('conversation_id','default'),provider=TestProvider()))
+   except Exception as e: self.send_json({'error':{'code':'CHAT_UNAVAILABLE','message':'Your AI service is unavailable.','technical':str(e)}},503)
   else: self.send_json({'error':'not found'},404)
  def serve(self):
   p=Path(__file__).parent.parent/'ui'/self.path.lstrip('/')
