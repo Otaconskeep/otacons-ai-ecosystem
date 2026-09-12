@@ -1,4 +1,8 @@
 product_name: Otacon
 tagline: Local AI Command System
 creator: Antonio Garcia
+creator_name: Antonio Garcia
+creator_credit: Designed & Engineered by Antonio Garcia
+short_credit: Antonio Garcia
+copyright: Copyright © 2026 Antonio Garcia
 show_creator_credit: true
