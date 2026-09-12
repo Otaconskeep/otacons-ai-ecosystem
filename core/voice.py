@@ -1,5 +1,5 @@
 from dataclasses import dataclass,asdict
-import hashlib, wave, io
+import hashlib, wave, io, json, urllib.request, urllib.error
 @dataclass
 class VoiceProfile:
  id:str; display_name:str; provider:str; model:str; language:str='en-US'; synthesis:dict=None
@@ -22,8 +22,18 @@ class TestTTSProvider(TTSProvider):
   return {'audio_id':hashlib.sha256((profile.id+text).encode()).hexdigest()[:12],'format':'wav','sample_rate':8000,'bytes':b.getvalue(),'voice_id':profile.id,'provider':profile.provider,'synthesis':dict(profile.synthesis)}
 class PiperProvider(TTSProvider):
  def __init__(self,endpoint): self.endpoint=endpoint
- def health(self): return 'UNKNOWN'
- def synthesize(self,text,profile,defaults=None): raise RuntimeError('Piper transport not configured')
+ def health(self):
+  try:
+   with urllib.request.urlopen(self.endpoint.rstrip('/')+'/health',timeout=5) as r: return 'ONLINE' if r.status==200 else 'DEGRADED'
+  except Exception as e: return 'OFFLINE'
+ def synthesize(self,text,profile,defaults=None):
+  profile.validate(); payload={'text':text,'voice':profile.model,'language':profile.language,'settings':profile.synthesis if profile.synthesis else (defaults or {})}
+  try:
+   req=urllib.request.Request(self.endpoint.rstrip('/')+'/synthesize',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})
+   with urllib.request.urlopen(req,timeout=120) as r: audio=r.read()
+   if not audio or not audio.startswith(b'RIFF'): raise RuntimeError('malformed Piper audio')
+   return {'audio_id':hashlib.sha256(audio).hexdigest()[:12],'format':'wav','sample_rate':22050,'bytes':audio,'voice_id':profile.id,'provider':'piper','synthesis':dict(profile.synthesis)}
+  except urllib.error.URLError as e: raise RuntimeError(f'Piper connection failed: {e.reason}')
 def synthesize(agent,text,provider=None):
  p=profile_for(agent.get('voice_id','voice_001')); return (provider or TestTTSProvider()).synthesize(text,p)
 def profile_hash(profile): return hashlib.sha256(repr(sorted(profile.synthesis.items())).encode()).hexdigest()[:12]
