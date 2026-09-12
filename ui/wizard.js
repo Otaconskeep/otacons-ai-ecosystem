@@ -1,12 +1,194 @@
-let state={step:0,scan:null,name:'',features:['chat','memory','voice'],config:null,storage:null}; const page=document.getElementById('page');
+let state={step:0,scan:null,name:'Billy',features:['chat','memory','voice'],config:null,storage:null,conversation:null,voiceId:'voice_001',autoSpeak:false,voices:[],currentAudio:null,speakingMsg:null};
+const page=document.getElementById('page');
 const labels=['Welcome','System Scan','Hardware Recommendation','Storage','Agent Setup','Features','Review','Finish'];
-function render(){let s=state.step; document.getElementById('title').textContent=labels[s]; if(s===0) page.innerHTML='<p>This wizard configures your local AI system. No Docker or YAML knowledge is required.</p><button onclick="next()">Get Started</button>'; if(s===1) page.innerHTML='<p>Detect your computer, GPUs, storage, and available capacity.</p><button onclick="scan()">Scan My System</button>'; if(s===2){let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles; page.innerHTML=`<div class=card>System: ${h.os}<br>CPU: ${h.cpu.model} (${h.cpu.cores} cores)<br>Memory: ${h.ram_gb} GB</div>`+(h.gpus.length?h.gpus.map(x=>`<div class=card>${x.model} — ${x.vram_gb} GB VRAM — ${x.capability}</div>`).join(''):'<div class=card>CPU fallback (no GPU detected)</div>')+`<p class=muted>Recommended primary: ${g.primary_gpu}</p><button onclick="next()">Use Recommended Setup</button>`;} if(s===3){let v=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}; page.innerHTML=`<div class=card><b>Recommended storage</b><br>${v.path||'Unavailable'}<br>${v.free_gb||0} GB free</div><button onclick="next()">Use Recommended Storage</button>`;} if(s===4) page.innerHTML='<label>Agent name<br><input id=name placeholder="Billy"></label><label>Role<br><input value="Primary Assistant" disabled></label><button onclick="setName()">Continue</button>'; if(s===5) page.innerHTML=['chat','memory','voice','image_generation','video_generation','web_search'].map(f=>`<label><input type=checkbox value=${f} ${state.features.includes(f)?'checked':''}> ${f.replaceAll('_',' ')}</label>`).join('')+'<button onclick="setFeatures()">Continue</button>'; if(s===6) page.innerHTML=`<div class=card>Agent: ${state.name}<br>Features: ${state.features.join(', ')}<br>Storage: ${(state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}).path||'Unavailable'}</div><button onclick="build()">Create Configuration</button>`; if(s===7) page.innerHTML=`<p>${state.name} is configured.</p><p class=muted>Services are not installed in this milestone.</p><div class=card>${state.config?.saved||''}</div>`;}
-function next(){state.step++;render()} async function scan(){state.scan=await (await fetch('/api/scan')).json();state.storage=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0];state.step=2;render()} function setName(){state.name=document.getElementById('name').value.trim()||'Assistant';next()} function setFeatures(){state.features=[...document.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);next()} async function build(){let p=await (await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:state.name,features:state.features,storage:state.storage})})).json();let s=await (await fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({config:p.config})})).json();state.config={saved:s.path};next()} async function showChat(){page.innerHTML=`<h2>${state.name}</h2><div id=messages class=card></div><input id=chat placeholder="Message ${state.name}"><button onclick="sendChat()">Send</button>`} async function sendChat(){let el=document.getElementById('chat'),box=document.getElementById('messages'),m=el.value.trim();if(!m)return;box.innerHTML+=`<p><b>You:</b> ${m}</p><p id=wait>Waiting…</p>`;el.value='';let r=await fetch('/api/chat_with_agent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent:{id:'agent_001',display_name:state.name},message:m})});let d=await r.json();document.getElementById('wait').remove();box.innerHTML+=`<p><b>${state.name}:</b> ${r.ok?d.text:'Your AI service is unavailable.'}</p>`} render();
-async function api(path,body){let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});return r.json()}
-async function showChat(){let cs=await api('/api/conversations',{agent_id:'agent_001'});state.conversation=(cs[0]||{}).id||(await api('/api/conversation',{agent_id:'agent_001'})).id;page.innerHTML=`<h2>${state.name}</h2><button onclick="newConversation()">+ New Conversation</button><button onclick="loadMemories()">Memory</button><div id=conversation-list>${cs.map((c,i)=>`<button onclick="openConversation('${c.id}')">${c.title||'Conversation '+(i+1)}</button>`).join('')}</div><div id=messages class=card></div><input id=chat placeholder="Message ${state.name}"><button onclick="sendChat()">Send</button><div id=memory-panel class=card><b>Memories ${state.name} Keeps</b><p class=muted>Memories are details ${state.name} can use in future conversations.</p><div id=memories></div><input id=memory placeholder="Add a memory"><button onclick="addMemory()">Save Memory</button></div>`;openConversation(state.conversation);loadMemories()}
-async function newConversation(){state.conversation=(await api('/api/conversation',{agent_id:'agent_001'})).id;document.getElementById('messages').innerHTML=''}
-async function openConversation(id){state.conversation=id;let r=await api('/api/conversation/get',{id,agent_id:'agent_001'});document.getElementById('messages').innerHTML=(r.messages||[]).map(x=>`<p><b>${x.role}:</b> ${x.content}</p>`).join('')}
-async function loadMemories(){let r=await api('/api/memories',{agent_id:'agent_001'});let e=document.getElementById('memories');if(e)e.innerHTML=(r||[]).map(x=>`<p>${x.content} <button onclick="delMemory(${x.id})">Delete</button></p>`).join('')||'<p>None stored.</p>'}
+
+async function api(path,body){
+  let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  return {ok:r.ok,status:r.status,data:await r.json()};
+}
+async function apiGet(path){return (await fetch(path)).json()}
+
+async function loadPrefs(){
+  try{let p=await apiGet('/api/preferences'); state.autoSpeak=!!p.auto_speak}catch(e){state.autoSpeak=false}
+}
+async function loadVoices(){
+  try{let v=await apiGet('/api/voices'); state.voices=v.voices||[]}catch(e){state.voices=[]}
+}
+
+function render(){
+  let s=state.step; document.getElementById('title').textContent=labels[s];
+  if(s===0) page.innerHTML='<p>This wizard configures your local AI system. No Docker or YAML knowledge is required.</p><button onclick="next()">Get Started</button><button onclick="showChat()">Open Chat</button>';
+  if(s===1) page.innerHTML='<p>Detect your computer, GPUs, storage, and available capacity.</p><button onclick="scan()">Scan My System</button>';
+  if(s===2){let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles; page.innerHTML=`<div class=card>System: ${h.os}<br>CPU: ${h.cpu.model} (${h.cpu.cores} cores)<br>Memory: ${h.ram_gb} GB</div>`+(h.gpus.length?h.gpus.map(x=>`<div class=card>${x.model} — ${x.vram_gb} GB VRAM — ${x.capability}</div>`).join(''):'<div class=card>CPU fallback (no GPU detected)</div>')+`<p class=muted>Recommended primary: ${g.primary_gpu}</p><button onclick="next()">Use Recommended Setup</button>`;}
+  if(s===3){let v=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}; page.innerHTML=`<div class=card><b>Recommended storage</b><br>${v.path||'Unavailable'}<br>${v.free_gb||0} GB free</div><button onclick="next()">Use Recommended Storage</button>`;}
+  if(s===4) page.innerHTML=agentSetupHtml();
+  if(s===5) page.innerHTML=['chat','memory','voice','image_generation','video_generation','web_search'].map(f=>`<label><input type=checkbox value=${f} ${state.features.includes(f)?'checked':''}> ${f.replaceAll('_',' ')}</label>`).join('')+'<button onclick="setFeatures()">Continue</button>';
+  if(s===6) page.innerHTML=`<div class=card>Agent: ${state.name}<br>Voice: ${voiceLabel(state.voiceId)}<br>Features: ${state.features.join(', ')}<br>Storage: ${(state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}).path||'Unavailable'}</div><button onclick="build()">Create Configuration</button>`;
+  if(s===7) page.innerHTML=`<p>${state.name} is configured.</p><p class=muted>Open chat to talk and use voice playback.</p><div class=card>${state.config?.saved||''}</div><button onclick="showChat()">Open Chat</button>`;
+}
+
+function voiceLabel(id){
+  let v=(state.voices||[]).find(x=>x.id===id); return v?v.display_name:id;
+}
+function agentSetupHtml(){
+  let opts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}${v.fixture?' (test)':''}</option>`).join('');
+  return `<label>Agent name<br><input id=name value="${state.name||'Billy'}"></label>
+<label>Voice<br><select id=voiceSelect>${opts||'<option value="voice_001">Warm Male</option>'}</select></label>
+<button type=button onclick="previewSelectedVoice()">Preview</button>
+<p class=muted id=previewStatus></p>
+<label>Role<br><input value="Primary Assistant" disabled></label>
+<button onclick="setName()">Continue</button>`;
+}
+
+async function previewSelectedVoice(){
+  let sel=document.getElementById('voiceSelect'); state.voiceId=sel?sel.value:state.voiceId;
+  let st=document.getElementById('previewStatus'); if(st) st.textContent='Synthesizing…';
+  let r=await api('/api/preview_voice',{agent:{id:'agent_001',display_name:state.name||'Billy',voice_id:state.voiceId},text:`Hello, I am ${state.name||'Billy'}.`});
+  if(!r.ok||r.data.status==='error'){ if(st) st.textContent='Voice preview unavailable'; return }
+  if(st) st.textContent='Playing preview';
+  playAudio(r.data.audio_base64);
+}
+
+function next(){state.step++;render()}
+async function scan(){state.scan=await apiGet('/api/scan');state.storage=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0];state.step=2;render()}
+async function setName(){
+  state.name=document.getElementById('name').value.trim()||'Assistant';
+  let sel=document.getElementById('voiceSelect'); if(sel) state.voiceId=sel.value;
+  await api('/api/agent/voice',{agent_id:'agent_001',display_name:state.name,voice_id:state.voiceId});
+  next();
+}
+function setFeatures(){state.features=[...document.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);next()}
+async function build(){
+  let p=await api('/api/plan',{name:state.name,features:state.features,storage:state.storage});
+  let cfg=p.data.config; if(cfg.agents&&cfg.agents[0]) cfg.agents[0].voice_id=state.voiceId;
+  let s=await api('/api/save',{config:cfg}); state.config={saved:s.data.path}; next();
+}
+
+function stopAudio(){
+  if(state.currentAudio){try{state.currentAudio.pause(); state.currentAudio.currentTime=0}catch(e){} state.currentAudio=null}
+  if(state.speakingMsg!=null){
+    let b=document.querySelector(`[data-speak-btn="${state.speakingMsg}"]`);
+    if(b){b.textContent='▶'; b.dataset.state='idle'}
+    state.speakingMsg=null;
+  }
+}
+function playAudio(b64, msgId){
+  stopAudio();
+  let a=new Audio('data:audio/wav;base64,'+b64);
+  state.currentAudio=a;
+  if(msgId!=null){
+    state.speakingMsg=msgId;
+    let b=document.querySelector(`[data-speak-btn="${msgId}"]`);
+    if(b){b.textContent='■'; b.dataset.state='playing'}
+  }
+  a.onended=()=>stopAudio();
+  a.play().catch(()=>{ if(msgId!=null){ let e=document.querySelector(`[data-speak-err="${msgId}"]`); if(e) e.textContent='Voice playback unavailable';} stopAudio();});
+}
+
+async function toggleSpeak(msgId, text){
+  let b=document.querySelector(`[data-speak-btn="${msgId}"]`);
+  if(!b) return;
+  if(b.dataset.state==='playing'){ stopAudio(); return }
+  if(b.dataset.state==='waiting') return;
+  b.dataset.state='waiting'; b.textContent='…';
+  let err=document.querySelector(`[data-speak-err="${msgId}"]`); if(err) err.textContent='';
+  let r=await api('/api/synthesize_agent_speech',{agent:{id:'agent_001',display_name:state.name,voice_id:state.voiceId},text});
+  if(!r.ok||r.data.status==='error'||!r.data.audio_base64){
+    b.dataset.state='idle'; b.textContent='▶';
+    if(err) err.textContent='Voice playback unavailable';
+    return;
+  }
+  b.dataset.audio=r.data.audio_base64;
+  playAudio(r.data.audio_base64, msgId);
+}
+
+function messageHtml(role, content, msgId){
+  if(role!=='assistant' && role!==state.name){
+    return `<div class=msg><p><b>${role==='user'?'You':role}:</b> ${escapeHtml(content)}</p></div>`;
+  }
+  return `<div class=msg data-msg="${msgId}">
+    <p><b>${state.name}:</b> ${escapeHtml(content)}</p>
+    <button type=button class=speak data-speak-btn="${msgId}" data-state=idle onclick='toggleSpeak(${msgId}, ${JSON.stringify(content)})' title="Play voice">▶</button>
+    <span class=muted data-speak-err="${msgId}"></span>
+  </div>`;
+}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+async function showChat(){
+  await loadPrefs(); await loadVoices();
+  let cs=(await api('/api/conversations',{agent_id:'agent_001'})).data;
+  state.conversation=(cs[0]||{}).id||(await api('/api/conversation',{agent_id:'agent_001'})).data.id;
+  let voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
+  page.innerHTML=`<h2>${state.name}</h2>
+<div class=card>
+  <label>Voice
+    <select id=chatVoice onchange="assignVoice(this.value)">${voiceOpts}</select>
+  </label>
+  <button type=button onclick="previewSelectedVoiceChat()">Preview</button>
+  <label><input type=checkbox id=autoSpeak ${state.autoSpeak?'checked':''} onchange="setAutoSpeak(this.checked)"> Auto Speak Responses</label>
+</div>
+<button onclick="newConversation()">+ New Conversation</button>
+<button onclick="loadMemories()">Memory</button>
+<div id=conversation-list>${(cs||[]).map((c,i)=>`<button onclick="openConversation('${c.id}')">${c.title||'Conversation '+(i+1)}</button>`).join('')}</div>
+<div id=messages class=card></div>
+<input id=chat placeholder="Message ${state.name}">
+<button onclick="sendChat()">Send</button>
+<div id=memory-panel class=card><b>Memories ${state.name} Keeps</b><p class=muted>Memories are details ${state.name} can use in future conversations.</p><div id=memories></div><input id=memory placeholder="Add a memory"><button onclick="addMemory()">Save Memory</button></div>`;
+  openConversation(state.conversation); loadMemories();
+}
+
+async function assignVoice(vid){
+  state.voiceId=vid;
+  await api('/api/agent/voice',{agent_id:'agent_001',display_name:state.name,voice_id:vid});
+}
+async function previewSelectedVoiceChat(){
+  let r=await api('/api/preview_voice',{agent:{id:'agent_001',display_name:state.name,voice_id:state.voiceId},text:`Hello, I am ${state.name}.`});
+  if(!r.ok||r.data.status==='error'){alert('Voice preview unavailable');return}
+  playAudio(r.data.audio_base64);
+}
+async function setAutoSpeak(on){
+  state.autoSpeak=!!on;
+  await api('/api/preferences',{auto_speak:state.autoSpeak});
+}
+
+async function newConversation(){state.conversation=(await api('/api/conversation',{agent_id:'agent_001'})).data.id;document.getElementById('messages').innerHTML=''}
+async function openConversation(id){
+  state.conversation=id;
+  let r=(await api('/api/conversation/get',{id,agent_id:'agent_001'})).data;
+  let box=document.getElementById('messages');
+  box.innerHTML='';
+  (r.messages||[]).forEach((x,i)=>{ box.insertAdjacentHTML('beforeend', messageHtml(x.role,x.content,i)); });
+}
+async function loadMemories(){let r=(await api('/api/memories',{agent_id:'agent_001'})).data;let e=document.getElementById('memories');if(e)e.innerHTML=(r||[]).map(x=>`<p>${escapeHtml(x.content)} <button onclick="delMemory(${x.id})">Delete</button></p>`).join('')||'<p>None stored.</p>'}
 async function addMemory(){let e=document.getElementById('memory');if(e.value.trim())await api('/api/memory',{agent_id:'agent_001',content:e.value.trim()});e.value='';loadMemories()}
 async function delMemory(id){await api('/api/memory/delete',{agent_id:'agent_001',id});loadMemories()}
-async function speak(text){let r=await fetch('/api/synthesize_agent_speech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent:{id:'agent_001',display_name:state.name,voice_id:'voice_001'},text})});if(!r.ok){alert('Voice unavailable');return}let d=await r.json();let a=new Audio('data:audio/wav;base64,'+d.audio_base64);a.play()}
+
+async function sendChat(){
+  let el=document.getElementById('chat'), box=document.getElementById('messages'), m=el.value.trim();
+  if(!m) return;
+  let uid=box.querySelectorAll('.msg').length;
+  box.insertAdjacentHTML('beforeend', `<div class=msg><p><b>You:</b> ${escapeHtml(m)}</p></div><p id=wait class=muted>Waiting…</p>`);
+  el.value='';
+  let r=await api('/api/chat_with_agent',{
+    agent:{id:'agent_001',display_name:state.name,voice_id:state.voiceId},
+    message:m, conversation_id:state.conversation, auto_speak:state.autoSpeak
+  });
+  document.getElementById('wait')?.remove();
+  if(!r.ok){
+    box.insertAdjacentHTML('beforeend', `<div class=msg><p><b>${state.name}:</b> Your AI service is unavailable.</p></div>`);
+    return;
+  }
+  let d=r.data;
+  let mid=uid+1;
+  box.insertAdjacentHTML('beforeend', messageHtml('assistant', d.text, mid));
+  if(d.voice && d.voice.status==='error'){
+    let err=document.querySelector(`[data-speak-err="${mid}"]`);
+    if(err) err.textContent='Voice playback unavailable';
+  } else if(state.autoSpeak && d.voice && d.voice.audio_base64){
+    let b=document.querySelector(`[data-speak-btn="${mid}"]`);
+    if(b) b.dataset.audio=d.voice.audio_base64;
+    playAudio(d.voice.audio_base64, mid);
+  }
+}
+
+(async()=>{ await loadPrefs(); await loadVoices(); render(); })();
