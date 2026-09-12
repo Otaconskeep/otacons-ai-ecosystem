@@ -26,6 +26,9 @@ elif len(sys.argv) > 1 and sys.argv[1] in ('validate-image','validate-agent-imag
 elif len(sys.argv) > 1 and sys.argv[1] in ('validate-video','validate-agent-video'):
     from installer.validate_video import main
     raise SystemExit(main(sys.argv[2:]))
+elif len(sys.argv) > 1 and sys.argv[1] == 'validate-integrations':
+    from installer.validate_integrations import main
+    raise SystemExit(main(sys.argv[2:]))
 elif len(sys.argv) > 1 and sys.argv[1] == 'validate-nodes':
     from installer.validate_nodes import main
     raise SystemExit(main(sys.argv[2:]))
