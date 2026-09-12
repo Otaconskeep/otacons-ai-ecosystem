@@ -8,3 +8,5 @@ class VoiceTests(unittest.TestCase):
  def test_audio_result(self): self.assertTrue(synthesize({'voice_id':'voice_001'},'x')['bytes'].startswith(b'RIFF'))
  def test_missing_voice(self):
   with self.assertRaises(LookupError): synthesize({'voice_id':'missing'},'x')
+ def test_piper_endpoint_is_configured(self):
+  p=PiperProvider('http://voice-service'); self.assertEqual(p.endpoint,'http://voice-service')
