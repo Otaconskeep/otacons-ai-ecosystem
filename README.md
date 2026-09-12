@@ -54,6 +54,7 @@ The public repository contains the clean platform foundation: graphical installe
 | Speech-to-text | Production | Architecture complete; real provider validation pending |
 | Resource arbitration | Production | Architecture complete; real hardware validation pending |
 | Image generation | Production reference | Public architecture complete; real provider validation pending |
+| Video generation | Production reference | Public architecture complete; real provider validation pending |
 | Distributed compute | Production | Resource model complete; onboarding planned |
 | GPU/resource arbitration | Production | Planned |
 | Image/video generation | Production | Planned |
@@ -122,6 +123,10 @@ PYTHONPATH=. python3 installer/backend_entry.py validate-arbiter
 ```
 
 Real hardware telemetry remains `REAL_RESOURCE_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT` where the execution environment cannot expose accelerators.
+
+## Video production
+
+The public `video_generation` capability uses a provider-neutral `VideoProductionManager` with Draft, Normal, and Final profiles (640×352, 864×480, and 1344×768 reference resolutions). Provider adapters translate those intents into compatible execution plans, including accelerated-path fallback, while the resource arbiter protects active workloads and releases leases. Generated video artifacts stay in runtime storage outside Git. Run `validate-video` for the deterministic architecture check; real model execution remains `REAL_VIDEO_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT`.
 
 ## Image generation
 

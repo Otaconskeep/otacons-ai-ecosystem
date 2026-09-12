@@ -26,6 +26,7 @@ from core.actions import action_plan, run_voice_actions
 from core.arbiter import default_resources
 from core.arbiter import ResourceArbiter, ComputeResource
 from core.image import ImageProductionManager, ImageGenerationRequest, TestImageProvider, StableDiffusionProvider
+from core.video import VideoProductionManager, VideoGenerationRequest, TestVideoProvider, ComfyUIProvider
 
 CONFIG_ROOT = Path.home() / '.config' / 'otacon'
 MEMORY = MemoryStore(CONFIG_ROOT / 'runtime' / 'memory.sqlite')
@@ -238,6 +239,14 @@ class Handler(BaseHTTPRequestHandler):
                 manager=ImageProductionManager(ResourceArbiter([ComputeResource('gpu_test',capacity={'vram_gb':24})]),TestImageProvider())
                 result=manager.generate(request); self.send_json(result.__dict__,200 if result.status=='COMPLETED' else 409)
             except Exception as exc: self.send_json({'status':'FAILED','error':{'code':'IMAGE_GENERATION_FAILED','message':'Image generation failed','technical':str(exc)}},500)
+        elif self.path == '/api/generate_video':
+            try:
+                if not data.get('test_mode'):
+                    self.send_json({'status':'FAILED','error':{'code':'VIDEO_SERVICE_NOT_CONFIGURED','message':'Video generation is not configured.'}},503); return
+                request=VideoGenerationRequest(data.get('request_id') or os.urandom(8).hex(),data.get('prompt',''),data.get('mode','TEXT_TO_VIDEO'),data.get('profile','normal'),source_artifact_id=data.get('source_artifact_id'),agent_id=data.get('agent_id'),user_id=data.get('user_id','local_user'),conversation_id=data.get('conversation_id'))
+                manager=VideoProductionManager(ResourceArbiter([ComputeResource('gpu_test',capacity={'vram_gb':24})]),TestVideoProvider())
+                result=manager.generate(request); self.send_json(result.__dict__,200 if result.status=='COMPLETED' else 409)
+            except Exception as exc: self.send_json({'status':'FAILED','error':{'code':'VIDEO_GENERATION_FAILED','message':'Video generation failed','technical':str(exc)}},500)
         elif self.path == '/api/transcribe_audio':
             try:
                 import base64

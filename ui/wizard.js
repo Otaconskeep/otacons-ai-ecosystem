@@ -130,6 +130,7 @@ async function showChat(){
 <button onclick="newConversation()">+ New Conversation</button>
 <button onclick="loadMemories()">Memory</button>
 <div class=card><b>Create an image</b><br><input id=imagePrompt placeholder="Describe an image"><select id=imageProfile><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="quality">Quality</option></select><button onclick="generateImage()">Generate</button><span id=imageStatus class=muted></span></div>
+<div class=card><b>Create a video</b><br><input id=videoPrompt placeholder="Describe a short video"><select id=videoProfile><option value="draft">Draft</option><option value="normal" selected>Normal</option><option value="final">Final</option></select><button onclick="generateVideo()">Generate</button><span id=videoStatus class=muted></span></div>
 <div id=conversation-list>${(cs||[]).map((c,i)=>`<button onclick="openConversation('${c.id}')">${c.title||'Conversation '+(i+1)}</button>`).join('')}</div>
 <div id=messages class=card></div>
 <input id=chat placeholder="Message ${state.name}">
@@ -164,6 +165,7 @@ async function loadMemories(){let r=(await api('/api/memories',{agent_id:'agent_
 async function addMemory(){let e=document.getElementById('memory');if(e.value.trim())await api('/api/memory',{agent_id:'agent_001',content:e.value.trim()});e.value='';loadMemories()}
 async function delMemory(id){await api('/api/memory/delete',{agent_id:'agent_001',id});loadMemories()}
 async function generateImage(){let p=document.getElementById('imagePrompt').value.trim(), s=document.getElementById('imageStatus'); if(!p)return; s.textContent='Creating image…'; let r=await api('/api/generate_image',{prompt:p,profile:document.getElementById('imageProfile').value,agent_id:'agent_001',conversation_id:state.conversation,test_mode:state.testMode}); if(!r.ok){s.textContent=r.data?.error?.message||'Image generation unavailable.';return} let a=r.data.artifacts?.[0]; if(a){s.innerHTML=`<br><img src="file://${a.path}" alt="Generated image" style="max-width:100%">`; } }
+async function generateVideo(){let p=document.getElementById('videoPrompt').value.trim(), s=document.getElementById('videoStatus'); if(!p)return; s.textContent='Creating video…'; let r=await api('/api/generate_video',{prompt:p,profile:document.getElementById('videoProfile').value,agent_id:'agent_001',conversation_id:state.conversation,test_mode:state.testMode}); if(!r.ok){s.textContent=r.data?.error?.message||'Video generation unavailable.';return} let a=r.data.artifacts?.[0]; if(a)s.textContent='Video ready: '+a.path; }
 
 async function sendChat(){
   let el=document.getElementById('chat'), box=document.getElementById('messages'), m=el.value.trim();
