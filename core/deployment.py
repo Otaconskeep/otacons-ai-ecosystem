@@ -57,6 +57,18 @@ def tts_service(
     )
 
 
+def stt_service(*, service_id: str = 'service_stt_001', endpoint: str = 'local://stt',
+                provider: str = 'faster_whisper', model: str = 'stt_small',
+                placement: str = 'host_local') -> Service:
+    """Create a provider-neutral speech recognition service registration."""
+    return Service(
+        id=service_id, service_type='stt', placement_resource_id=placement,
+        capabilities=['speech_to_text'], required_capabilities=['speech_to_text'],
+        metadata={'endpoint': endpoint, 'provider': provider, 'model': model, 'health': 'UNKNOWN'},
+        endpoints=[ServiceEndpoint(f'ep_{service_id}', service_id, 'http', endpoint)],
+    )
+
+
 def local_deployment(
     *,
     include_llm: bool = True,

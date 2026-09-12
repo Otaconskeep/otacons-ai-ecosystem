@@ -20,6 +20,7 @@ from core.voice import (
     CATALOG_AVAILABLE,
 )
 from core.memory import MemoryStore
+from core.stt import TestSTTProvider, FasterWhisperProvider, normalize_wav
 from core.preferences import load_preferences, save_preferences
 from core.actions import action_plan, run_voice_actions
 
@@ -224,6 +225,22 @@ class Handler(BaseHTTPRequestHandler):
                 'status': voice_status(vid),
                 'catalog': CATALOG_AVAILABLE,
             })
+        elif self.path == '/api/transcribe_audio':
+            try:
+                import base64
+                raw = base64.b64decode(data.get('audio_base64', ''), validate=True)
+                audio = normalize_wav(raw)
+                # Test provider is opt-in for deterministic development/UI tests.
+                if data.get('test_mode') is True and os.getenv('OTACON_ALLOW_TEST_PROVIDERS', '1') == '1':
+                    provider = TestSTTProvider()
+                else:
+                    provider = FasterWhisperProvider(data.get('model_id', 'stt_small'))
+                result = provider.transcribe(audio, data.get('language'))
+                self.send_json(result.__dict__)
+            except ValueError as e:
+                self.send_json({'status': 'TRANSCRIPTION_FAILED', 'error': {'message': 'We could not process that recording.', 'technical': str(e)}}, 400)
+            except Exception as e:
+                self.send_json({'status': 'TRANSCRIPTION_FAILED', 'error': {'message': 'Speech recognition is unavailable.', 'technical': str(e)}}, 503)
         elif self.path == '/api/installer/voice_actions':
             agent = _agent_from_request(data)
             d = _deployment()
