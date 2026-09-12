@@ -38,6 +38,9 @@ elif len(sys.argv) > 1 and sys.argv[1] in ('validate-wake-word','validate-satell
 elif len(sys.argv) > 1 and sys.argv[1] == 'validate-hardening':
     from installer.validate_hardening import main
     raise SystemExit(main(sys.argv[2:]))
+elif len(sys.argv) > 1 and sys.argv[1] == 'acceptance-gate1':
+    from installer.acceptance_gate1 import main
+    raise SystemExit(main(sys.argv[2:]))
 elif len(sys.argv) > 1 and sys.argv[1] == 'validate-nodes':
     from installer.validate_nodes import main
     raise SystemExit(main(sys.argv[2:]))
