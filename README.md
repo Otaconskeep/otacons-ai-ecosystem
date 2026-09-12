@@ -1,8 +1,11 @@
 # Otacon
 
-A local AI platform with a hardware-aware setup wizard. Runtime configuration is written outside this repository.
+Clean public foundation for a hardware-aware local AI setup wizard.
+
+## Run the development wizard
 
 ```bash
-python3 -m unittest discover -s tests -v
-PYTHONPATH=. python3 -m installer.cli --name Billy --features chat,memory,voice --output ~/.config/otacon
+TMPDIR=/mnt/data/tmp PYTHONPATH=. python3 -m installer.server
 ```
+
+Open http://127.0.0.1:8787. Runtime configuration is written outside this repository.
