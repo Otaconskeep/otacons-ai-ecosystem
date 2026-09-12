@@ -125,6 +125,10 @@ PYTHONPATH=. python3 installer/backend_entry.py validate-arbiter
 
 Real hardware telemetry remains `REAL_RESOURCE_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT` where the execution environment cannot expose accelerators.
 
+## Integrations
+
+Otacon uses provider-neutral integration adapters for optional smart-home, messaging, media, notifications, and configured webhooks. Actions are permission-checked, distinguish reads from writes, and can require explicit confirmation. Secrets remain referenced outside source control, and arbitrary agent-generated URLs or shell commands are not allowed. Deterministic validation passes; real external integrations remain `REAL_INTEGRATION_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT`.
+
 ## Remote compute nodes
 
 Public Otacon can represent trusted worker nodes with stable logical identities, explicit single-use pairing codes, revocation, heartbeats, resource and service advertisements, and structured workload dispatch. Nodes report CPU, RAM, GPU, storage, runtimes, and capabilities into the same topology, router, and resource arbiter used locally. Runtime communication is designed around authenticated Otacon APIs rather than arbitrary remote shell access. Deterministic validation passes; real multi-machine operation remains `REAL_DISTRIBUTED_ACCEPTANCE_PENDING_EXTERNAL_ENVIRONMENT`.
