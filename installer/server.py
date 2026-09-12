@@ -17,9 +17,11 @@ class Handler(BaseHTTPRequestHandler):
  def do_POST(self):
   n=int(self.headers.get('Content-Length','0')); data=json.loads(self.rfile.read(n) or '{}')
   if self.path=='/api/plan':
-   h=detect(); self.send_json({'config':build_config(recommend_hardware_plan(h),data.get('name','Assistant'),data.get('features',[])),'storage':data.get('storage') or recommended_volume()})
+   h=detect(); st=data.get('storage') or recommended_volume(); self.send_json({'config':build_config(recommend_hardware_plan(h),data.get('name','Assistant'),data.get('features',[]),storage=st),'storage':st})
   elif self.path=='/api/save':
    root=Path(data.get('output') or (Path.home()/'.config/otacon')); self.send_json({'path':str(save(data['config'],root))})
+  elif self.path=='/api/load_configuration':
+   p=Path.home()/'.config/otacon/config.json'; self.send_json(json.loads(p.read_text()) if p.is_file() else {})
   else: self.send_json({'error':'not found'},404)
  def serve(self):
   p=Path(__file__).parent.parent/'ui'/self.path.lstrip('/')

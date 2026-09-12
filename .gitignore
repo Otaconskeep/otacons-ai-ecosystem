@@ -22,3 +22,5 @@ __pycache__/
 *.pyc
 .vscode/
 .idea/
+installer/bin/
+src-tauri/target/

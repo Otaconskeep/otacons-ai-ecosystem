@@ -4,10 +4,10 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 @dataclass
 class GPU:
- id:str; vendor:str; model:str; vram_gb:float; capability:str='GPU_SMALL'
+ id:str; vendor:str; model:str; vram_gb:float; capability:str='GPU_SMALL'; node_id:str='node_001'
 @dataclass
 class Hardware:
- os:str; cpu_model:str; cpu_cores:int; ram_gb:float; free_storage_gb:float; gpus:list[GPU]
+ os:str; cpu_model:str; cpu_cores:int; ram_gb:float; free_storage_gb:float; gpus:list[GPU]; node_id:str='node_001'; hostname:str='local'
 def capability(v):
  return 'GPU_HIGH_END' if v>=20 else 'GPU_LARGE' if v>=12 else 'GPU_MEDIUM' if v>=8 else 'GPU_SMALL'
 def detect():
@@ -26,4 +26,6 @@ def detect():
   except Exception: pass
  return Hardware(platform.system(),platform.processor() or platform.machine(),os.cpu_count() or 1,ram,free,g)
 def as_dict(h):
- d=asdict(h); d['cpu']={'model':d.pop('cpu_model'),'cores':d.pop('cpu_cores')}; return d
+ d=asdict(h); d['cpu']={'model':d.pop('cpu_model'),'cores':d.pop('cpu_cores')}
+ d['node']={'id':d['node_id'],'hostname':d['hostname'],'cpu':d['cpu'],'ram_gb':d['ram_gb'],'gpus':d['gpus']}
+ return d
