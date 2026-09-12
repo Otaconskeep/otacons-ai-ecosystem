@@ -88,6 +88,11 @@ class ResourceArbiter:
         if self.circuits.get(request.service_id)=='CIRCUIT_OPEN': return {'status':'CIRCUIT_OPEN'}
         candidates=[r for r in self.snapshot() if self._eligible(request,r)]
         if not candidates:
+            needed = float(request.requirements.get('vram_gb', 0))
+            if needed:
+                self.reclaim_idle(needed)
+                candidates=[r for r in self.snapshot() if self._eligible(request,r)]
+        if not candidates:
             self.queue.append(request); self.events.append({'event':'queue','workload_id':request.workload_id})
             if any(r.state == OFFLINE for r in self.resources.values()): return {'status':'RESOURCE_OFFLINE'}
             if any(request.requirements.get('vram_gb',0)>r.capacity.get('vram_gb',0) for r in self.resources.values()): return {'status':'INSUFFICIENT_VRAM'}
