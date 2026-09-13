@@ -31,6 +31,7 @@ set -Eeuo pipefail
 #   - Builds the native .deb package
 #   - Optionally installs the generated .deb
 #   - Launches the setup wizard and checks http://127.0.0.1:8787
+#   - Optionally installs Genome Voice Trainer when OTACON_INSTALL_VOICE_TRAINER=1
 #
 # Rerunnable:
 #   - Existing repo -> fast-forward update
@@ -45,6 +46,7 @@ set -Eeuo pipefail
 #   OTACON_LAUNCH_WIZARD=1
 #   OTACON_INSTALL_STT=0
 #   OTACON_RUN_TESTS=1
+#   OTACON_INSTALL_VOICE_TRAINER=0   # set 1 to also install Genome Voice Trainer (GPU Piper)
 #
 # Notes:
 #   The current public repository still marks real Ollama/Piper acceptance and
@@ -67,8 +69,10 @@ INSTALL_DEB="${OTACON_INSTALL_DEB:-0}"
 LAUNCH_WIZARD="${OTACON_LAUNCH_WIZARD:-1}"
 INSTALL_STT="${OTACON_INSTALL_STT:-0}"
 RUN_TESTS="${OTACON_RUN_TESTS:-1}"
+INSTALL_VOICE_TRAINER="${OTACON_INSTALL_VOICE_TRAINER:-0}"
 CHAT_HOST="${OTACON_CHAT_HOST:-0.0.0.0}"
 CHAT_PORT="${OTACON_CHAT_PORT:-5757}"
+VOICE_TRAINER_INSTALLER_URL="${OTACON_VOICE_TRAINER_URL:-https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh}"
 
 log()  { printf '\n\033[1;36m[AGG::OTACON]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[AGG::OK]\033[0m %s\n' "$*"; }
@@ -649,6 +653,27 @@ SERVICEEOF
       warn "Review: $LOG_FILE"
     fi
   fi
+fi
+
+# ------------------------------------------------------------------------------
+# Optional: Genome Voice Trainer (GPU Piper cloning)
+# Docs: https://github.com/Otaconskeep/otacon-voice-trainer
+# One-click forget: OTACON_INSTALL_VOICE_TRAINER=1 curl -fsSL ... | bash
+# ------------------------------------------------------------------------------
+if [[ "$INSTALL_VOICE_TRAINER" == "1" ]]; then
+  log "Installing Genome Voice Trainer (GPU Piper) — Otaconskeep"
+  if curl -fsSL "$VOICE_TRAINER_INSTALLER_URL" | bash; then
+    ok "Genome Voice Trainer installed"
+  else
+    warn "Genome Voice Trainer install failed — Core is still ready. Retry with:"
+    warn "  curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
+  fi
+else
+  printf '\n'
+  printf '\033[1;36m[AGG::HINT]\033[0m Genome Voice Trainer (GPU Piper cloning) is optional.\n'
+  printf '  One-click with Core: OTACON_INSTALL_VOICE_TRAINER=1 curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash\n'
+  printf '  Standalone:          curl -fsSL %s | bash\n' "$VOICE_TRAINER_INSTALLER_URL"
+  printf '  Write-up:            https://github.com/Otaconskeep/otacon-voice-trainer/blob/main/docs/WRITEUP.md\n'
 fi
 
 # ------------------------------------------------------------------------------
