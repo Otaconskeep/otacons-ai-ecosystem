@@ -58,23 +58,20 @@ curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/ma
    tries to open it in your browser automatically. If it doesn't open on
    its own, copy that address into your browser yourself.
 
-That's the entire Core install. It detects your GPU (if NVIDIA), runs
-self-tests, builds a native `.deb` when enabled, and registers
-`otacon.service` to start on boot.
+That's the entire Otacon install. It detects your GPU (if NVIDIA), installs
+Ollama, pulls a default chat model sized to your VRAM
+(`qwen2.5:1.5b` / `3b` / `7b` / `14b`), installs Genome Voice Trainer when
+possible, runs self-tests, builds a native `.deb` when enabled, and registers
+`otacon.service` to start on boot. When it finishes, open Otacon and chat.
 
-**Optional — Default Model (chat):** install Ollama and pull a VRAM-sized
-model in the same run:
+Skip pieces if you want a lighter install:
 
 ```bash
-OTACON_INSTALL_DEFAULT_MODEL=1 curl -fsSL \
+OTACON_INSTALL_DEFAULT_MODEL=0 OTACON_INSTALL_VOICE_TRAINER=0 curl -fsSL \
   https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash
 ```
 
-Windows: double-click [`install_otacon_with_default_model.bat`](install_otacon_with_default_model.bat)
-instead of the plain installer.
-
-VRAM tiers: under 6GB → `qwen2.5:1.5b` · ≥6 → `3b` · ≥8 → `7b` · ≥16 → `14b`
-(override with `OTACON_LLM_MODEL=...`).
+Override the chat model tag with `OTACON_LLM_MODEL=qwen2.5:7b` if needed.
 
 **Both paths are completely safe to run more than once.** If anything
 interrupts it, or you just want to update later, run the same
@@ -247,7 +244,8 @@ Otacon is intended to feel like consumer software: download, install, detect har
 | Native installer foundation, hardware planning, agent architecture | Complete |
 | Capability routing, persistent conversations, long-term memory | Complete |
 | Provider-neutral LLM/TTS, per-agent voices, synthesis profiles | Complete |
-| Ollama auto-install + VRAM-tier default chat model | Optional (`OTACON_INSTALL_DEFAULT_MODEL=1`) |
+| Ollama + VRAM-tier default chat model | Included with Otacon (skip: `OTACON_INSTALL_DEFAULT_MODEL=0`) |
+| Genome Voice Trainer (GPU Piper) | Included with Otacon (skip: `OTACON_INSTALL_VOICE_TRAINER=0`) |
 | Real Piper / STT / image acceptance | Pending external validation |
 | Speech-to-text and microphone | Next milestone |
 | Image/video generation and remote-node onboarding | Planned |

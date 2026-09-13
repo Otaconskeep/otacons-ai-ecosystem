@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- Optional **Default Model** install: `OTACON_INSTALL_DEFAULT_MODEL=1` installs
-  Ollama and pulls a VRAM-sized chat model (`qwen2.5:1.5b` / `3b` / `7b` / `14b`).
-- One-click helpers: Linux env flag, `install_otacon_with_default_model.bat` on Windows.
+- Normal Otacon one-click includes **Default Model** (Ollama + VRAM-tier chat)
+  and **Genome Voice Trainer**. Skip with `OTACON_INSTALL_DEFAULT_MODEL=0` /
+  `OTACON_INSTALL_VOICE_TRAINER=0`.
 - Chat API uses real `OllamaProvider` when a model is configured.
-- `OTACON_INSTALL_OLLAMA` remains an alias; `OTACON_LLM_MODEL=...` overrides the tag.
+- `OTACON_LLM_MODEL=...` overrides the auto-picked Ollama tag.
 
 ## 0.1.0 — Development
 
