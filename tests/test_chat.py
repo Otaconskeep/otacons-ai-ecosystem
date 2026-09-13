@@ -11,6 +11,14 @@ from core.agent_service import chat
 class ChatTests(unittest.TestCase):
  def test_conservative_model_when_gpu_inspection_errors(self):
   h=SimpleNamespace(gpus=[],gpu_detection={'status':'error'}); self.assertEqual(recommend(h).id,'chat_small')
+ def test_vram_tiers(self):
+  from core.models import recommend_from_vram_gb
+  self.assertEqual(recommend_from_vram_gb(0).source_id,'qwen2.5:1.5b')
+  self.assertEqual(recommend_from_vram_gb(6).source_id,'qwen2.5:3b')
+  self.assertEqual(recommend_from_vram_gb(8).source_id,'qwen2.5:7b')
+  self.assertEqual(recommend_from_vram_gb(16).source_id,'qwen2.5:14b')
+  g=lambda v: SimpleNamespace(gpus=[SimpleNamespace(vram_gb=v)],gpu_detection={'status':'detected'})
+  self.assertEqual(recommend(g(24)).id,'chat_large')
  def test_capability_router_is_placement_independent(self):
   d=Deployment('d',[Host('host_a')],services=[Service(id='svc',service_type='llm',placement_resource_id='host_a',capabilities=['conversational_llm'],metadata={'endpoint':'http://service','model':'chat_small'})])
   a=resolve(d,'conversational_llm'); self.assertEqual(a.placement,'host_a'); self.assertEqual(a.endpoint,'http://service')
