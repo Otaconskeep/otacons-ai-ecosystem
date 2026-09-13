@@ -10,11 +10,27 @@
 >
 > This repository is **Otacon Core**: free, full source, self-hosted. Antonio Garcia's private **Otacon Keep** is the larger reference deployment this project is built from; see [Otacon Core, the Keep Blueprint, and Otaconskeep Services](#otacon-core-the-keep-blueprint-and-otaconskeep-services) below for how the pieces relate.
 
-## Install Otacon Core (one command, no experience required)
+## Install Otacon Core (no experience required)
 
-**You do not need to know Linux, Python, Docker, or Rust to do this.** Copy the
-block below exactly, paste it into a terminal on an **Ubuntu or Debian Linux**
-computer, and press Enter:
+**You do not need to know Linux, Python, Docker, Rust, or WSL to do this.**
+Pick your OS:
+
+### Windows
+
+1. Download [`install_otacon.bat`](install_otacon.bat) (right-click →
+   Save Link As, or clone the repo).
+2. Double-click it.
+
+That's it. It checks whether WSL2 and an Ubuntu environment are already set
+up; if not, it sets them up for you, walks you through the one unavoidable
+manual step (a Windows restart and/or a one-time Ubuntu username/password,
+which is Microsoft's own requirement, not something any script can skip),
+then automatically continues and finishes the real install the moment
+that's done. You do not need to know what WSL or Ubuntu even are.
+
+### Linux (Ubuntu/Debian, or already inside WSL)
+
+Copy the block below exactly, paste it into a terminal, and press Enter:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash
@@ -40,9 +56,10 @@ That's the entire install. It also detects your GPU (if you have an NVIDIA
 one), recommends the right AI model size for your hardware, runs its own
 self-tests, and builds a native installable app (`.deb`), all automatically.
 
-**It's completely safe to run more than once.** If anything interrupts it,
-or you just want to update later, run the exact same command again: every
-step skips whatever's already done.
+**Both paths are completely safe to run more than once.** If anything
+interrupts it, or you just want to update later, run the same
+`install_otacon.bat` / `install_otacon.sh` again: every step skips whatever's
+already done, and neither one resets or deletes an existing install.
 
 Prefer to download the script first and read it before running it (always a
 reasonable thing to do with any installer)? Grab
@@ -52,6 +69,22 @@ reasonable thing to do with any installer)? Grab
 chmod +x install_otacon.sh
 ./install_otacon.sh
 ```
+
+### Windows/WSL manual path (only if the `.bat` doesn't work for you)
+
+`install_otacon.bat` automates all of this, so you shouldn't normally need
+it, but if you want to do it by hand or something goes wrong:
+
+1. Open PowerShell **as Administrator**, run `wsl --install`, and restart
+   if it asks you to.
+2. Open the new **Ubuntu** app from your Start menu. The first time it
+   opens, it asks you to create a username and password; type anything you
+   want, it only matters inside that Ubuntu environment.
+3. Run the Linux install command from the section above inside that Ubuntu
+   window.
+
+On a Mac, you'll need an Ubuntu VM (UTM, Parallels, VMware) or a real Linux
+box; native macOS support isn't here yet.
 
 **Optional settings** (set as environment variables before running, only if
 you want to change the defaults):
