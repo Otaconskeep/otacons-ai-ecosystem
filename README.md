@@ -235,7 +235,8 @@ Otacon is intended to feel like consumer software: download, install, detect har
 | Native installer foundation, hardware planning, agent architecture | Complete |
 | Capability routing, persistent conversations, long-term memory | Complete |
 | Provider-neutral LLM/TTS, per-agent voices, synthesis profiles | Complete |
-| Real Ollama/Piper acceptance | Pending external validation |
+| Ollama auto-install + VRAM-tier default chat model | Complete |
+| Real Piper / STT / image acceptance | Pending external validation |
 | Speech-to-text and microphone | Next milestone |
 | Image/video generation and remote-node onboarding | Planned |
 
