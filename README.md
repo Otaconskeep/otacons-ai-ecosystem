@@ -58,11 +58,23 @@ curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/ma
    tries to open it in your browser automatically. If it doesn't open on
    its own, copy that address into your browser yourself.
 
-That's the entire install. It also detects your GPU (if you have an NVIDIA
-one), recommends the right AI model size for your hardware, runs its own
-self-tests, builds a native installable app (`.deb`), and installs itself
-as a systemd service (`otacon.service`) enabled to start on boot and
-restart itself if it ever crashes, all automatically.
+That's the entire Core install. It detects your GPU (if NVIDIA), runs
+self-tests, builds a native `.deb` when enabled, and registers
+`otacon.service` to start on boot.
+
+**Optional — Default Model (chat):** install Ollama and pull a VRAM-sized
+model in the same run:
+
+```bash
+OTACON_INSTALL_DEFAULT_MODEL=1 curl -fsSL \
+  https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash
+```
+
+Windows: double-click [`install_otacon_with_default_model.bat`](install_otacon_with_default_model.bat)
+instead of the plain installer.
+
+VRAM tiers: under 6GB → `qwen2.5:1.5b` · ≥6 → `3b` · ≥8 → `7b` · ≥16 → `14b`
+(override with `OTACON_LLM_MODEL=...`).
 
 **Both paths are completely safe to run more than once.** If anything
 interrupts it, or you just want to update later, run the same
@@ -235,7 +247,7 @@ Otacon is intended to feel like consumer software: download, install, detect har
 | Native installer foundation, hardware planning, agent architecture | Complete |
 | Capability routing, persistent conversations, long-term memory | Complete |
 | Provider-neutral LLM/TTS, per-agent voices, synthesis profiles | Complete |
-| Ollama auto-install + VRAM-tier default chat model | Complete |
+| Ollama auto-install + VRAM-tier default chat model | Optional (`OTACON_INSTALL_DEFAULT_MODEL=1`) |
 | Real Piper / STT / image acceptance | Pending external validation |
 | Speech-to-text and microphone | Next milestone |
 | Image/video generation and remote-node onboarding | Planned |

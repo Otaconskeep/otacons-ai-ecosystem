@@ -31,7 +31,7 @@ set -Eeuo pipefail
 #   - Builds the native .deb package
 #   - Optionally installs the generated .deb
 #   - Launches the setup wizard and checks http://127.0.0.1:8787
-#   - Installs Ollama (if missing) and pulls a default chat model sized for your VRAM
+#   - Optionally installs Ollama + a VRAM-sized default chat model (OTACON_INSTALL_DEFAULT_MODEL=1)
 #   - Optionally installs Genome Voice Trainer when OTACON_INSTALL_VOICE_TRAINER=1
 #
 # Rerunnable:
@@ -48,7 +48,8 @@ set -Eeuo pipefail
 #   OTACON_INSTALL_STT=0
 #   OTACON_RUN_TESTS=1
 #   OTACON_INSTALL_VOICE_TRAINER=0   # set 1 to also install Genome Voice Trainer (GPU Piper)
-#   OTACON_INSTALL_OLLAMA=1         # set 0 to skip Ollama install + model pull
+#   OTACON_INSTALL_DEFAULT_MODEL=0   # set 1 to install Ollama + VRAM-sized default chat model
+#   OTACON_INSTALL_OLLAMA=...        # alias for OTACON_INSTALL_DEFAULT_MODEL (compat)
 #   OTACON_LLM_MODEL=""             # override auto model (e.g. qwen2.5:7b)
 #
 # Notes:
@@ -73,7 +74,8 @@ LAUNCH_WIZARD="${OTACON_LAUNCH_WIZARD:-1}"
 INSTALL_STT="${OTACON_INSTALL_STT:-0}"
 RUN_TESTS="${OTACON_RUN_TESTS:-1}"
 INSTALL_VOICE_TRAINER="${OTACON_INSTALL_VOICE_TRAINER:-0}"
-INSTALL_OLLAMA="${OTACON_INSTALL_OLLAMA:-1}"
+# Optional Default Model = Ollama + VRAM-tier chat pull. Alias: OTACON_INSTALL_OLLAMA.
+INSTALL_DEFAULT_MODEL="${OTACON_INSTALL_DEFAULT_MODEL:-${OTACON_INSTALL_OLLAMA:-0}}"
 CHAT_HOST="${OTACON_CHAT_HOST:-0.0.0.0}"
 CHAT_PORT="${OTACON_CHAT_PORT:-5757}"
 VOICE_TRAINER_INSTALLER_URL="${OTACON_VOICE_TRAINER_URL:-https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh}"
@@ -252,6 +254,11 @@ printf '  GPU VRAM    : %s GB\n' "$GPU_VRAM_GB"
 printf '  GPU state   : %s\n' "$GPU_STATUS"
 printf '  Model tier  : %s\n' "$MODEL_TIER"
 printf '  Default LLM : %s\n' "$RECOMMENDED_MODEL"
+if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
+  printf '  LLM install : yes (optional Default Model enabled)\n'
+else
+  printf '  LLM install : skipped (optional — enable with OTACON_INSTALL_DEFAULT_MODEL=1)\n'
+fi
 
 # ------------------------------------------------------------------------------
 # System packages
@@ -452,8 +459,8 @@ print(cfg_path)
 PY
 }
 
-if [[ "$INSTALL_OLLAMA" == "1" ]]; then
-  log "Installing Ollama and pulling your default chat model ($RECOMMENDED_MODEL)"
+if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
+  log "Optional Default Model: installing Ollama + pulling $RECOMMENDED_MODEL"
 
   if ! command_exists ollama; then
     curl -fsSL https://ollama.com/install.sh | sh
@@ -479,8 +486,13 @@ if [[ "$INSTALL_OLLAMA" == "1" ]]; then
   write_otacon_llm_config "$RECOMMENDED_MODEL" "$MODEL_ID"
   ok "Otacon config points chat at Ollama ($RECOMMENDED_MODEL)"
 else
-  warn "Ollama install skipped (OTACON_INSTALL_OLLAMA=0)."
+  # Still record the recommended tag so a later Default Model install / manual ollama pull matches.
   write_otacon_llm_config "$RECOMMENDED_MODEL" "$MODEL_ID" || true
+  printf '\n'
+  printf '\033[1;36m[AGG::HINT]\033[0m Default Model (Ollama chat) is optional.\n'
+  printf '  One-click with Core: OTACON_INSTALL_DEFAULT_MODEL=1 curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash\n'
+  printf '  Or re-run later with the same flag after Core is already installed.\n'
+  printf '  VRAM tiers: <6GB→qwen2.5:1.5b · ≥6→3b · ≥8→7b · ≥16→14b (override: OTACON_LLM_MODEL=...)\n'
 fi
 
 # ------------------------------------------------------------------------------
@@ -843,7 +855,11 @@ printf 'Python venv      : %s\n' "$VENV_DIR"
 printf 'Detected GPU     : %s\n' "$GPU_NAME"
 printf 'Detected VRAM    : %s GB\n' "$GPU_VRAM_GB"
 printf 'Default LLM      : %s (%s)\n' "$RECOMMENDED_MODEL" "$MODEL_TIER"
-printf 'Ollama endpoint  : %s\n' "$OLLAMA_ENDPOINT"
+if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
+  printf 'Default Model    : installed (Ollama @ %s)\n' "$OLLAMA_ENDPOINT"
+else
+  printf 'Default Model    : optional — OTACON_INSTALL_DEFAULT_MODEL=1\n'
+fi
 printf 'Local web UI     : %s
 ' "$LOCAL_URL"
 if [[ "$USE_SYSTEMD" == "1" ]]; then
