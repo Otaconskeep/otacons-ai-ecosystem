@@ -4,7 +4,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 if len(sys.argv) > 1 and sys.argv[1] == 'validate-chat':
     from installer.validate_chat import main
-    main(sys.argv[2:])
+    raise SystemExit(main(sys.argv[2:]) or 0)
+elif len(sys.argv) > 1 and sys.argv[1] == 'validate-e2e-chat':
+    from installer.validate_e2e_chat import main
+    raise SystemExit(main(sys.argv[2:]))
+elif len(sys.argv) > 1 and sys.argv[1] == 'doctor':
+    from installer.doctor import main
+    raise SystemExit(main(sys.argv[2:]))
 elif len(sys.argv) > 1 and sys.argv[1] == 'validate-voice':
     from installer.validate_voice import main
     raise SystemExit(main(sys.argv[2:]))

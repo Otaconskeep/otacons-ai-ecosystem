@@ -1,0 +1,11 @@
+{
+  "product": "Otacon",
+  "version": "0.1.0",
+  "channel": "public",
+  "ecosystem_ref": "main",
+  "genome_voice_trainer_ref": "main",
+  "ai9_ref": "main",
+  "python_requires": ">=3.10,<3.14",
+  "python_preferred": "3.12",
+  "notes": "Public installers may pin to this file. Development may still track main. Update ecosystem_ref to a git tag/commit when cutting a release."
+}
