@@ -400,6 +400,7 @@ APT_PACKAGES=(
   python3-venv
   python3-pip
   libssl-dev
+  zstd
 )
 
 # Native/desktop profile needs WebKit/Tauri libs; Core skips them to reduce failure surface.
@@ -907,9 +908,12 @@ SERVICEEOF
 
     if [[ -f "$PID_FILE" ]]; then
       OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-      if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" >/dev/null 2>&1; then
+      if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" >/dev/null 2>&1 \
+        && curl -fsS --max-time 2 "${LOCAL_URL}/api/branding" 2>/dev/null | grep -q '"product_name"'; then
         ok "Otacon web UI is already running (PID $OLD_PID)"
       else
+        warn "Stale or unhealthy Otacon PID file — restarting web UI"
+        if [[ -n "$OLD_PID" ]]; then kill "$OLD_PID" >/dev/null 2>&1 || true; fi
         rm -f "$PID_FILE"
       fi
     fi

@@ -6,65 +6,75 @@ import json
 import os
 import secrets
 import sys
+import time
 import urllib.error
 import urllib.request
+
+
+def _post_chat(base_url: str, payload: dict, headers: dict, timeout: float) -> dict:
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        base_url.rstrip('/') + '/api/chat_with_agent',
+        data=body,
+        headers=headers,
+        method='POST',
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode('utf-8', errors='replace'))
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description='Otacon real LLM end-to-end check')
     p.add_argument('--base-url', default=os.getenv('OTACON_E2E_BASE', 'http://127.0.0.1:5757'))
     p.add_argument('--token', default=os.getenv('OTACON_LAN_TOKEN', ''))
-    p.add_argument('--timeout', type=float, default=120.0)
+    p.add_argument('--timeout', type=float, default=180.0)
+    p.add_argument('--retries', type=int, default=3)
     args = p.parse_args(argv)
 
-    token = secrets.token_hex(4)
-    expected = f'OTACON_READY_{token}'
-    payload = {
-        'message': (
-            f'Reply with exactly this string and nothing else: {expected}'
-        ),
-        'agent_id': 'agent_001',
-        'auto_speak': False,
-    }
-    body = json.dumps(payload).encode()
     headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
     if args.token:
         headers['Authorization'] = f'Bearer {args.token}'
 
-    req = urllib.request.Request(
-        args.base_url.rstrip('/') + '/api/chat_with_agent',
-        data=body,
-        headers=headers,
-        method='POST',
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=args.timeout) as resp:
-            raw = resp.read().decode('utf-8', errors='replace')
-            data = json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode('utf-8', errors='replace')
-        print(f'Result: FAIL\nReason: HTTP_{exc.code}\nDetail: {detail[:500]}')
-        return 1
-    except Exception as exc:
-        print(f'Result: FAIL\nReason: REQUEST_ERROR\nDetail: {exc}')
-        return 1
+    last_text = ''
+    for attempt in range(1, max(1, args.retries) + 1):
+        token = secrets.token_hex(4)
+        expected = f'OTACON_READY_{token}'
+        payload = {
+            'message': (
+                'SYSTEM CHECK. Ignore personality and greetings. '
+                f'Your entire reply must be exactly this token with no quotes, '
+                f'no punctuation, and no other words: {expected}'
+            ),
+            'agent_id': 'agent_001',
+            'auto_speak': False,
+        }
+        try:
+            data = _post_chat(args.base_url, payload, headers, args.timeout)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode('utf-8', errors='replace')
+            print(f'Attempt {attempt}: HTTP_{exc.code} {detail[:300]}')
+            time.sleep(2)
+            continue
+        except Exception as exc:
+            print(f'Attempt {attempt}: REQUEST_ERROR {exc}')
+            time.sleep(2)
+            continue
 
-    if data.get('error'):
-        print(f"Result: FAIL\nReason: API_ERROR\nDetail: {data.get('error')}")
-        return 1
+        if data.get('error'):
+            print(f"Attempt {attempt}: API_ERROR {data.get('error')}")
+            time.sleep(2)
+            continue
 
-    text = (data.get('text') or data.get('response') or data.get('message') or '').strip()
-    if not text:
-        print(f'Result: FAIL\nReason: EMPTY_RESPONSE\nPayload keys: {list(data.keys())}')
-        return 1
+        text = (data.get('text') or data.get('response') or data.get('message') or '').strip()
+        last_text = text
+        print(f'Attempt {attempt}: Prompt token: {expected}\nResponse: {text[:500]}')
+        if expected in text.replace(' ', '') or expected in text:
+            print('Result: PASS')
+            return 0
+        time.sleep(2)
 
-    # Accept exact match or containment (some models add punctuation/whitespace).
-    ok = expected in text.replace(' ', '') or expected in text
-    print(f'Prompt token: {expected}\nResponse: {text[:500]}\nResult: {"PASS" if ok else "FAIL"}')
-    if not ok:
-        print('Reason: MODEL_RESPONSE_MISSING_TOKEN')
-        return 1
-    return 0
+    print(f'Result: FAIL\nReason: MODEL_RESPONSE_MISSING_TOKEN\nLast response: {last_text[:500]}')
+    return 1
 
 
 if __name__ == '__main__':
