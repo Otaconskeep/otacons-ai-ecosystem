@@ -133,6 +133,29 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
 fi
 
 # ------------------------------------------------------------------------------
+# WSL: make sure systemd is active before doing anything else. Enabling it
+# only takes effect on the *next* boot of this WSL distro (not a Windows
+# reboot -- just this Linux environment restarting), so if we just turned it
+# on, stop here with a distinct exit code. The Windows-side installer
+# (install_otacon.bat) restarts WSL and reruns this script automatically;
+# every step below is safe to redo, so the rerun just picks up from here.
+# ------------------------------------------------------------------------------
+
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  WSL_CONF="/etc/wsl.conf"
+  if ! grep -qE '^\s*systemd\s*=\s*true' "$WSL_CONF" 2>/dev/null; then
+    log "Enabling systemd in WSL (needed so Otacon can auto-start with Windows)"
+    if [[ -f "$WSL_CONF" ]] && grep -q '^\[boot\]' "$WSL_CONF"; then
+      $SUDO sed -i '/^\[boot\]/a systemd=true' "$WSL_CONF"
+    else
+      printf '[boot]\nsystemd=true\n' | $SUDO tee -a "$WSL_CONF" >/dev/null
+    fi
+    warn "This Linux environment needs to restart once to activate that. If you're seeing this from install_otacon.bat, it will handle the restart and continue automatically."
+    exit 42
+  fi
+fi
+
+# ------------------------------------------------------------------------------
 # Hardware scan
 # ------------------------------------------------------------------------------
 
@@ -526,28 +549,67 @@ if [[ -n "$LAN_IP" ]]; then
   LAN_URL="http://${LAN_IP}:${CHAT_PORT}"
 fi
 
+SYSTEMD_SERVICE_NAME="otacon.service"
+USE_SYSTEMD=0
+if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+  USE_SYSTEMD=1
+fi
+
 if [[ "$LAUNCH_WIZARD" == "1" ]]; then
-  log "Starting your local Otacon web UI"
+  if [[ "$USE_SYSTEMD" == "1" ]]; then
+    log "Installing Otacon as a systemd service (auto-starts, restarts itself on crash)"
 
-  if [[ -f "$PID_FILE" ]]; then
-    OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-    if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" >/dev/null 2>&1; then
-      ok "Otacon web UI is already running (PID $OLD_PID)"
-    else
-      rm -f "$PID_FILE"
+    SERVICE_FILE="/etc/systemd/system/$SYSTEMD_SERVICE_NAME"
+    RUN_USER="$(id -un)"
+
+    $SUDO tee "$SERVICE_FILE" >/dev/null <<SERVICEEOF
+[Unit]
+Description=Otacon AI Ecosystem
+After=network.target
+
+[Service]
+Type=simple
+User=$RUN_USER
+WorkingDirectory=$INSTALL_DIR
+Environment=PYTHONPATH=$INSTALL_DIR
+Environment=OTACON_HOST=$CHAT_HOST
+Environment=OTACON_PORT=$CHAT_PORT
+ExecStart=$VPY -m installer.server
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
+
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable "$SYSTEMD_SERVICE_NAME" >/dev/null 2>&1 || true
+    $SUDO systemctl restart "$SYSTEMD_SERVICE_NAME"
+    ok "otacon.service enabled -- starts automatically whenever this Linux environment boots"
+  else
+    log "Starting your local Otacon web UI"
+    warn "No live systemd found here, so this won't auto-start on the next boot. Falling back to a plain background process for this session."
+
+    if [[ -f "$PID_FILE" ]]; then
+      OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+      if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" >/dev/null 2>&1; then
+        ok "Otacon web UI is already running (PID $OLD_PID)"
+      else
+        rm -f "$PID_FILE"
+      fi
     fi
-  fi
 
-  if [[ ! -f "$PID_FILE" ]]; then
-    nohup env \
-      PYTHONPATH="$INSTALL_DIR" \
-      OTACON_HOST="$CHAT_HOST" \
-      OTACON_PORT="$CHAT_PORT" \
-      "$VPY" -m installer.server \
-      >"$LOG_FILE" 2>&1 &
+    if [[ ! -f "$PID_FILE" ]]; then
+      nohup env \
+        PYTHONPATH="$INSTALL_DIR" \
+        OTACON_HOST="$CHAT_HOST" \
+        OTACON_PORT="$CHAT_PORT" \
+        "$VPY" -m installer.server \
+        >"$LOG_FILE" 2>&1 &
 
-    WIZARD_PID=$!
-    printf '%s\n' "$WIZARD_PID" > "$PID_FILE"
+      WIZARD_PID=$!
+      printf '%s\n' "$WIZARD_PID" > "$PID_FILE"
+    fi
   fi
 
   HEALTH_OK=0
@@ -581,7 +643,11 @@ if [[ "$LAUNCH_WIZARD" == "1" ]]; then
     fi
   else
     warn "Otacon web UI did not answer the health check."
-    warn "Review: $LOG_FILE"
+    if [[ "$USE_SYSTEMD" == "1" ]]; then
+      warn "Review: sudo journalctl -u $SYSTEMD_SERVICE_NAME -n 100"
+    else
+      warn "Review: $LOG_FILE"
+    fi
   fi
 fi
 
@@ -607,7 +673,12 @@ printf 'Detected VRAM    : %s GB\n' "$GPU_VRAM_GB"
 printf 'Recommended LLM  : %s\n' "$RECOMMENDED_MODEL"
 printf 'Local web UI     : %s
 ' "$LOCAL_URL"
-printf 'Wizard log       : %s\n' "$LOG_FILE"
+if [[ "$USE_SYSTEMD" == "1" ]]; then
+  printf 'Auto-start       : systemd (%s) -- survives reboots and crashes on its own\n' "$SYSTEMD_SERVICE_NAME"
+  printf 'Service log      : sudo journalctl -u %s -f\n' "$SYSTEMD_SERVICE_NAME"
+else
+  printf 'Wizard log       : %s\n' "$LOG_FILE"
+fi
 printf 'Hardware profile : %s\n' "$HOME/.config/otacon/bootstrap-hardware.env"
 
 if [[ -n "$DEB_PATH" ]]; then

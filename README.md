@@ -28,6 +28,12 @@ which is Microsoft's own requirement, not something any script can skip),
 then automatically continues and finishes the real install the moment
 that's done. You do not need to know what WSL or Ubuntu even are.
 
+**Install once, and Otacon starts itself from then on.** The installer sets
+Otacon up as a real background service and adds a small Windows task that
+wakes it at logon, so after that first install: shut your PC down, turn it
+back on tomorrow, sign in, and open `http://localhost:5757`: Otacon is
+already running. No terminal, no "start the server," nothing to remember.
+
 ### Linux (Ubuntu/Debian, or already inside WSL)
 
 Copy the block below exactly, paste it into a terminal, and press Enter:
@@ -54,7 +60,9 @@ curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/ma
 
 That's the entire install. It also detects your GPU (if you have an NVIDIA
 one), recommends the right AI model size for your hardware, runs its own
-self-tests, and builds a native installable app (`.deb`), all automatically.
+self-tests, builds a native installable app (`.deb`), and installs itself
+as a systemd service (`otacon.service`) enabled to start on boot and
+restart itself if it ever crashes, all automatically.
 
 **Both paths are completely safe to run more than once.** If anything
 interrupts it, or you just want to update later, run the same
@@ -96,6 +104,31 @@ you want to change the defaults):
 | `OTACON_INSTALL_DEB` | `0` | Set to `1` to also install the built `.deb` automatically |
 | `OTACON_LAUNCH_WIZARD` | `1` | Set to `0` to skip auto-launching the web UI at the end |
 | `OTACON_RUN_TESTS` | `1` | Set to `0` to skip the self-test suite (faster, less safe) |
+
+### How the always-on part actually works (Windows)
+
+`install_otacon.bat` sets up two things beyond the base install, both purely
+additive, neither touching your Ubuntu distro's identity or data:
+
+- **Inside WSL**: a systemd service (`otacon.service`), enabled so it starts
+  whenever that Linux environment boots, and restarts itself automatically
+  if it ever crashes.
+- **On Windows**: a logon task (`OtaconAutoStart`, visible in Task
+  Scheduler) that quietly wakes your WSL environment right after you sign
+  in, which in turn boots systemd and starts the already-enabled service.
+  It never opens a terminal window and never opens your browser for you.
+
+**Repair.** Something not starting right, or you skipped the auto-start
+setup earlier? Just run `install_otacon.bat` again. It re-checks and
+re-creates the systemd service and the logon task if either is missing,
+without resetting your existing install, your agents, or your WSL distro.
+
+**Uninstall the auto-start pieces.** Run
+[`uninstall_otacon.bat`](uninstall_otacon.bat). It removes the
+`OtaconAutoStart` logon task and the `otacon.service` systemd unit only.
+Your Ubuntu environment, your Otacon install directory, your venv, and all
+your data are left exactly as they are; this only stops Otacon from
+starting automatically, it doesn't remove Otacon itself.
 
 ## Otacon Core, the Keep Blueprint, and Otaconskeep Services
 
