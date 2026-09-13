@@ -116,7 +116,7 @@ is_debian_family() {
 }
 
 is_debian_family || die \
-  "This computer isn't running Ubuntu or Debian Linux, which is what this installer needs. What to do: if you're on Windows or Mac, you'll need an Ubuntu machine or VM to run Otacon Core right now (support for other systems is planned) -- ask in Discord ($DISCORD_URL) if you're not sure how to set one up."
+  "This terminal isn't running Ubuntu or Debian Linux, which is what this installer needs. What to do: on Windows, this means you're in PowerShell, CMD, or Git Bash -- none of those work. Open an elevated PowerShell, run 'wsl --install' (installs WSL2 + Ubuntu, one reboot required), then open the new Ubuntu app from your Start menu and run this same command again inside THAT window. On a Mac, you'll need an Ubuntu VM (UTM, Parallels, VMware) or a real Linux box; native macOS support isn't here yet. Ask in Discord ($DISCORD_URL) if you get stuck."
 
 if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
   warn "Running the whole installer as root is not recommended."
