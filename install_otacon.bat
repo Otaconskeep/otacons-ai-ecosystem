@@ -107,7 +107,7 @@ echo It's completely safe to run this file again later; every step
 echo skips whatever's already done, and it never resets an existing
 echo Ubuntu environment.
 echo.
-wsl.exe -d "%UBUNTU_NAME%" -- bash -lc "curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash"
+wsl.exe -d "%UBUNTU_NAME%" -- bash -lc "OTACON_INSTALL_DEFAULT_MODEL=%OTACON_INSTALL_DEFAULT_MODEL% OTACON_INSTALL_VOICE_TRAINER=%OTACON_INSTALL_VOICE_TRAINER% OTACON_LLM_MODEL=%OTACON_LLM_MODEL% curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash"
 set "INSTALL_RC=%errorlevel%"
 
 if "%INSTALL_RC%"=="42" (
@@ -116,7 +116,7 @@ if "%INSTALL_RC%"=="42" (
     echo this Linux environment once ^(this does not touch Windows^)...
     wsl.exe --shutdown
     timeout /t 3 /nobreak >nul
-    wsl.exe -d "%UBUNTU_NAME%" -- bash -lc "curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash"
+    wsl.exe -d "%UBUNTU_NAME%" -- bash -lc "OTACON_INSTALL_DEFAULT_MODEL=%OTACON_INSTALL_DEFAULT_MODEL% OTACON_INSTALL_VOICE_TRAINER=%OTACON_INSTALL_VOICE_TRAINER% OTACON_LLM_MODEL=%OTACON_LLM_MODEL% curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash"
     set "INSTALL_RC=!errorlevel!"
 )
 

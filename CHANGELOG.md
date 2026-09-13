@@ -2,10 +2,11 @@
 
 ## Unreleased
 
-- Installer installs Ollama by default and pulls a VRAM-sized chat model
-  (`qwen2.5:1.5b` / `3b` / `7b` / `14b`), then wires Otacon chat to it.
-- Chat API uses real `OllamaProvider` instead of the deterministic test double.
-- `OTACON_INSTALL_OLLAMA=0` / `OTACON_LLM_MODEL=...` overrides available.
+- Optional **Default Model** install: `OTACON_INSTALL_DEFAULT_MODEL=1` installs
+  Ollama and pulls a VRAM-sized chat model (`qwen2.5:1.5b` / `3b` / `7b` / `14b`).
+- One-click helpers: Linux env flag, `install_otacon_with_default_model.bat` on Windows.
+- Chat API uses real `OllamaProvider` when a model is configured.
+- `OTACON_INSTALL_OLLAMA` remains an alias; `OTACON_LLM_MODEL=...` overrides the tag.
 
 ## 0.1.0 — Development
 
