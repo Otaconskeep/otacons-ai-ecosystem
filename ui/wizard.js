@@ -1,4 +1,4 @@
-let state={step:0,scan:null,name:'Billy',features:['chat','memory','voice'],config:null,storage:null,conversation:null,voiceId:'voice_001',autoSpeak:false,voices:[],currentAudio:null,speakingMsg:null,recorder:null,recordingState:'MIC_READY',testMode:window.__OTACON_TEST_MODE__===true};
+let state={step:0,scan:null,name:'Billy',features:['chat','memory','voice'],config:null,storage:null,conversation:null,voiceId:'voice_001',autoSpeak:false,voices:[],capabilities:null,currentAudio:null,speakingMsg:null,recorder:null,recordingState:'MIC_READY',testMode:window.__OTACON_TEST_MODE__===true};
 const page=document.getElementById('page');
 const labels=['Welcome','System Scan','Hardware Recommendation','Storage','Agent Setup','Features','Review','Finish'];
 
@@ -14,6 +14,24 @@ async function loadPrefs(){
 async function loadVoices(){
   try{let v=await apiGet('/api/voices'); state.voices=v.voices||[]}catch(e){state.voices=[]}
 }
+async function loadCapabilities(){
+  try{state.capabilities=await apiGet('/api/capabilities')}catch(e){state.capabilities=null}
+}
+function capStatus(key){
+  let c=state.capabilities; if(!c) return 'unknown';
+  return c[key]||'not_configured';
+}
+function capReady(key){
+  // Without a snapshot, keep core chat/tts usable; treat STT/image/video as not ready.
+  if(!state.capabilities) return key==='chat'||key==='tts';
+  return capStatus(key)==='ready';
+}
+function capAnnotate(key, readyLabel, fallback){
+  let s=capStatus(key);
+  if(s==='ready') return readyLabel||'READY';
+  if(s==='unknown') return fallback||'STATUS UNKNOWN';
+  return String(s).replace(/_/g,' ').toUpperCase();
+}
 
 function render(){
   let s=state.step; document.getElementById('title').textContent=labels[s];
@@ -22,9 +40,30 @@ function render(){
   if(s===2){let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles; page.innerHTML=`<div class=card>System: ${h.os}<br>CPU: ${h.cpu.model} (${h.cpu.cores} cores)<br>Memory: ${h.ram_gb} GB</div>`+(h.gpus.length?h.gpus.map(x=>`<div class=card>${x.model} — ${x.vram_gb} GB VRAM — ${x.capability}</div>`).join(''):'<div class=card>CPU fallback (no GPU detected)</div>')+`<p class=muted>Recommended primary: ${g.primary_gpu}</p><button onclick="next()">Use Recommended Setup</button>`;}
   if(s===3){let v=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}; page.innerHTML=`<div class=card><b>Recommended storage</b><br>${v.path||'Unavailable'}<br>${v.free_gb||0} GB free</div><button onclick="next()">Use Recommended Storage</button>`;}
   if(s===4) page.innerHTML=agentSetupHtml();
-  if(s===5) page.innerHTML=[['chat','Chat','SUPPORTED'],['memory','Memory','SUPPORTED'],['voice','Voice Output','SUPPORTED'],['speech_to_text','Speech Input','IN DEVELOPMENT'],['image_generation','Image Generation','COMING LATER'],['video_generation','Video Generation','COMING LATER'],['web_search','Web Search','COMING LATER']].map(([f,label,status])=>`<label><input type=checkbox value=${f} ${state.features.includes(f)?'checked':''} ${status==='COMING LATER'?'disabled':''}> ${label} <span class=muted>— ${status}</span></label>`).join('')+'<button onclick="setFeatures()">Continue</button>';
+  if(s===5) page.innerHTML=featuresHtml()+'<button onclick="setFeatures()">Continue</button>';
   if(s===6) page.innerHTML=`<div class=card>Agent: ${state.name}<br>Voice: ${voiceLabel(state.voiceId)}<br>Features: ${state.features.join(', ')}<br>Storage: ${(state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}).path||'Unavailable'}</div><button onclick="build()">Create Configuration</button>`;
   if(s===7) page.innerHTML=`<p>${state.name} is configured.</p><p class=muted>Open chat to talk and use voice playback.</p><div class=card>${state.config?.saved||''}</div><button onclick="showChat()">Open Chat</button>`;
+}
+
+function featuresHtml(){
+  const rows=[
+    ['chat','Chat','chat','SUPPORTED'],
+    ['memory','Memory',null,'SUPPORTED'],
+    ['voice','Voice Output','tts','SUPPORTED'],
+    ['speech_to_text','Speech Input','stt','REQUIRES PROVIDER'],
+    ['image_generation','Image Generation','image','REQUIRES PROVIDER'],
+    ['video_generation','Video Generation','video','REQUIRES PROVIDER'],
+    ['web_search','Web Search',null,'COMING LATER'],
+  ];
+  return rows.map(([f,label,capKey,fallback])=>{
+    const coming=f==='web_search';
+    const ready=!capKey||capReady(capKey);
+    const status=capKey?capAnnotate(capKey,fallback,fallback):(coming?'COMING LATER':fallback);
+    const disabled=coming||(!!capKey&&!ready);
+    const checked=state.features.includes(f)&&!disabled;
+    const note=` <span class=muted>— ${status}</span>`;
+    return `<label class="${disabled?'cap-off':''}"><input type=checkbox value=${f} ${checked?'checked':''} ${disabled?'disabled':''}> ${label}${note}</label>`;
+  }).join('');
 }
 
 function voiceLabel(id){
@@ -115,10 +154,21 @@ function messageHtml(role, content, msgId){
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 async function showChat(){
-  await loadPrefs(); await loadVoices();
+  await loadPrefs(); await loadVoices(); await loadCapabilities();
   let cs=(await api('/api/conversations',{agent_id:'agent_001'})).data;
   state.conversation=(cs[0]||{}).id||(await api('/api/conversation',{agent_id:'agent_001'})).data.id;
   let voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
+  const sttOk=capReady('stt'), imgOk=capReady('image'), vidOk=capReady('video');
+  const imageCard=imgOk
+    ?`<div class=card><b>Create an image</b><br><input id=imagePrompt placeholder="Describe an image"><select id=imageProfile><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="quality">Quality</option></select><button onclick="generateImage()">Generate</button><span id=imageStatus class=muted></span></div>`
+    :`<div class="card cap-off"><b>Create an image</b><br><span class=muted>Not ready — ${capAnnotate('image','','requires provider')}</span><input id=imagePrompt disabled><button disabled>Generate</button></div>`;
+  const videoCard=vidOk
+    ?`<div class=card><b>Create a video</b><br><input id=videoPrompt placeholder="Describe a short video"><select id=videoProfile><option value="draft">Draft</option><option value="normal" selected>Normal</option><option value="final">Final</option></select><button onclick="generateVideo()">Generate</button><span id=videoStatus class=muted></span></div>`
+    :`<div class="card cap-off"><b>Create a video</b><br><span class=muted>Not ready — ${capAnnotate('video','','requires provider')}</span><input id=videoPrompt disabled><button disabled>Generate</button></div>`;
+  const micBtn=sttOk
+    ?`<button type=button id=micButton onclick="toggleRecording()" title="Record a message">🎤</button>`
+    :`<button type=button id=micButton disabled title="Speech input not ready">🎤</button>`;
+  const micStatus=sttOk?'':`Speech input not ready (${capAnnotate('stt','','requires provider')}).`;
   page.innerHTML=`<h2>${state.name}</h2>
 <div class=card>
   <label>Voice
@@ -129,12 +179,12 @@ async function showChat(){
 </div>
 <button onclick="newConversation()">+ New Conversation</button>
 <button onclick="loadMemories()">Memory</button>
-<div class=card><b>Create an image</b><br><input id=imagePrompt placeholder="Describe an image"><select id=imageProfile><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="quality">Quality</option></select><button onclick="generateImage()">Generate</button><span id=imageStatus class=muted></span></div>
-<div class=card><b>Create a video</b><br><input id=videoPrompt placeholder="Describe a short video"><select id=videoProfile><option value="draft">Draft</option><option value="normal" selected>Normal</option><option value="final">Final</option></select><button onclick="generateVideo()">Generate</button><span id=videoStatus class=muted></span></div>
+${imageCard}
+${videoCard}
 <div id=conversation-list>${(cs||[]).map((c,i)=>`<button onclick="openConversation('${c.id}')">${c.title||'Conversation '+(i+1)}</button>`).join('')}</div>
 <div id=messages class=card></div>
 <input id=chat placeholder="Message ${state.name}">
-<button type=button id=micButton onclick="toggleRecording()" title="Record a message">🎤</button><button onclick="sendChat()">Send</button><span id=micStatus class=muted></span>
+${micBtn}<button onclick="sendChat()">Send</button><span id=micStatus class=muted>${micStatus}</span>
 <div id=memory-panel class=card><b>Memories ${state.name} Keeps</b><p class=muted>Memories are details ${state.name} can use in future conversations.</p><div id=memories></div><input id=memory placeholder="Add a memory"><button onclick="addMemory()">Save Memory</button></div>`;
   openConversation(state.conversation); loadMemories();
 }
@@ -165,8 +215,12 @@ async function openConversation(id){
 async function loadMemories(){let r=(await api('/api/memories',{agent_id:'agent_001'})).data;let e=document.getElementById('memories');if(e)e.innerHTML=(r||[]).map(x=>`<p>${escapeHtml(x.content)} <button onclick="delMemory(${x.id})">Delete</button></p>`).join('')||'<p>None stored.</p>'}
 async function addMemory(){let e=document.getElementById('memory');if(e.value.trim())await api('/api/memory',{agent_id:'agent_001',content:e.value.trim()});e.value='';loadMemories()}
 async function delMemory(id){await api('/api/memory/delete',{agent_id:'agent_001',id});loadMemories()}
-async function generateImage(){let p=document.getElementById('imagePrompt').value.trim(), s=document.getElementById('imageStatus'); if(!p)return; s.textContent='Creating image…'; let r=await api('/api/generate_image',{prompt:p,profile:document.getElementById('imageProfile').value,agent_id:'agent_001',conversation_id:state.conversation,test_mode:state.testMode}); if(!r.ok){s.textContent=r.data?.error?.message||'Image generation unavailable.';return} let a=r.data.artifacts?.[0]; if(a){s.innerHTML=`<br><img src="file://${a.path}" alt="Generated image" style="max-width:100%">`; } }
-async function generateVideo(){let p=document.getElementById('videoPrompt').value.trim(), s=document.getElementById('videoStatus'); if(!p)return; s.textContent='Creating video…'; let r=await api('/api/generate_video',{prompt:p,profile:document.getElementById('videoProfile').value,agent_id:'agent_001',conversation_id:state.conversation,test_mode:state.testMode}); if(!r.ok){s.textContent=r.data?.error?.message||'Video generation unavailable.';return} let a=r.data.artifacts?.[0]; if(a)s.textContent='Video ready: '+a.path; }
+async function generateImage(){
+  if(!capReady('image')){let s=document.getElementById('imageStatus'); if(s) s.textContent='Image generation is not configured.'; return}
+  let p=document.getElementById('imagePrompt').value.trim(), s=document.getElementById('imageStatus'); if(!p)return; s.textContent='Creating image…'; let r=await api('/api/generate_image',{prompt:p,profile:document.getElementById('imageProfile').value,agent_id:'agent_001',conversation_id:state.conversation,test_mode:state.testMode}); if(!r.ok){s.textContent=r.data?.error?.message||'Image generation unavailable.';return} let a=r.data.artifacts?.[0]; if(a){s.innerHTML=`<br><img src="file://${a.path}" alt="Generated image" style="max-width:100%">`; } }
+async function generateVideo(){
+  if(!capReady('video')){let s=document.getElementById('videoStatus'); if(s) s.textContent='Video generation is not configured.'; return}
+  let p=document.getElementById('videoPrompt').value.trim(), s=document.getElementById('videoStatus'); if(!p)return; s.textContent='Creating video…'; let r=await api('/api/generate_video',{prompt:p,profile:document.getElementById('videoProfile').value,agent_id:'agent_001',conversation_id:state.conversation,test_mode:state.testMode}); if(!r.ok){s.textContent=r.data?.error?.message||'Video generation unavailable.';return} let a=r.data.artifacts?.[0]; if(a)s.textContent='Video ready: '+a.path; }
 
 async function sendChat(){
   let el=document.getElementById('chat'), box=document.getElementById('messages'), m=el.value.trim();
@@ -197,6 +251,11 @@ async function sendChat(){
 }
 
 async function toggleRecording(){
+  if(!capReady('stt')){
+    const status=document.getElementById('micStatus');
+    if(status) status.textContent=`Speech input not ready (${capAnnotate('stt','','requires provider')}).`;
+    return;
+  }
   const button=document.getElementById('micButton'), status=document.getElementById('micStatus');
   if(state.recorder && state.recorder.state==='recording'){ state.recorder.stop(); return; }
   if(!navigator.mediaDevices || !window.MediaRecorder){ state.recordingState='MIC_UNAVAILABLE'; if(status) status.textContent='Microphone is unavailable in this environment.'; return; }
@@ -219,4 +278,4 @@ async function toggleRecording(){
   } catch(e){ state.recordingState=e.name==='NotAllowedError'?'MIC_PERMISSION_DENIED':'MIC_UNAVAILABLE'; if(status) status.textContent=state.recordingState==='MIC_PERMISSION_DENIED'?'Otacon needs microphone permission to hear you.':'Microphone is unavailable in this environment.'; }
 }
 
-(async()=>{ await loadPrefs(); await loadVoices(); render(); })();
+(async()=>{ await loadCapabilities(); await loadPrefs(); await loadVoices(); render(); })();

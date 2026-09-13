@@ -34,13 +34,17 @@ wakes it at logon, so after that first install: shut your PC down, turn it
 back on tomorrow, sign in, and open `http://localhost:5757`: Otacon is
 already running. No terminal, no "start the server," nothing to remember.
 
-### Linux (Ubuntu/Debian, or already inside WSL)
+### Linux (Ubuntu 22.04/24.04, or already inside WSL)
 
 Copy the block below exactly, paste it into a terminal, and press Enter:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash
 ```
+
+**Supported OS:** Ubuntu 22.04/24.04 supported. Debian 12 supported if verified.
+Linux Mint / Pop!_OS best-effort. Older releases are unsupported unless you set
+`OTACON_ALLOW_UNSUPPORTED_OS=1` (Core web-only may still work).
 
 **New to terminals? Here's the whole thing, step by step:**
 
@@ -58,11 +62,22 @@ curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/ma
    tries to open it in your browser automatically. If it doesn't open on
    its own, copy that address into your browser yourself.
 
-That's the entire Otacon install. It detects your GPU (if NVIDIA), installs
-Ollama, pulls a default chat model sized to your VRAM
+That's the entire Otacon install. Default profile is **CORE**
+(`OTACON_PROFILE=core`, `OTACON_BUILD_NATIVE=0`): it detects your GPU (if
+NVIDIA), installs Ollama, pulls a default chat model sized to your VRAM
 (`qwen2.5:1.5b` / `3b` / `7b` / `14b`), installs Genome Voice Trainer when
-possible, runs self-tests, builds a native `.deb` when enabled, and registers
-`otacon.service` to start on boot. When it finishes, open Otacon and chat.
+possible, runs self-tests, and registers `otacon.service` to start on boot.
+Desktop/native `.deb` packaging is opt-in via `OTACON_PROFILE=desktop` or
+`OTACON_BUILD_NATIVE=1`. When it finishes, open Otacon and chat.
+
+Installer final states: **READY** (exit 0), **DEGRADED** (exit 2 — core up,
+optional component failed), **FAILED** (exit 1). Health check anytime:
+`otacon doctor` (`~/.local/bin/otacon doctor`).
+
+**Default bind is localhost only.** LAN access requires `OTACON_LAN_MODE=1`,
+writes `~/.config/otacon/lan_token`, and requires
+`Authorization: Bearer <token>` for API mutations/chat. Optional bind host:
+`OTACON_CHAT_HOST` (defaults to `127.0.0.1`; becomes `0.0.0.0` when LAN is on).
 
 Skip pieces if you want a lighter install:
 
@@ -109,10 +124,14 @@ you want to change the defaults):
 | Variable | Default | What it changes |
 |---|---|---|
 | `OTACON_INSTALL_DIR` | `~/otacon-ai-ecosystem` | Where Otacon gets installed |
-| `OTACON_BUILD_NATIVE` | `1` | Set to `0` to skip building the native `.deb` app |
+| `OTACON_PROFILE` | `core` | `core` (default) or `desktop` (enables native `.deb` build) |
+| `OTACON_BUILD_NATIVE` | `0` | Default 0 for CORE; set `1` (or `OTACON_PROFILE=desktop`) to build the native `.deb` |
+| `OTACON_LAN_MODE` | `0` | Set `1` to bind for LAN; writes `~/.config/otacon/lan_token` and requires Bearer auth |
+| `OTACON_CHAT_HOST` | `127.0.0.1` | Bind host; overridden to `0.0.0.0` when LAN mode=1 |
 | `OTACON_INSTALL_DEB` | `0` | Set to `1` to also install the built `.deb` automatically |
 | `OTACON_LAUNCH_WIZARD` | `1` | Set to `0` to skip auto-launching the web UI at the end |
 | `OTACON_RUN_TESTS` | `1` | Set to `0` to skip the self-test suite (faster, less safe) |
+| `OTACON_ALLOW_UNSUPPORTED_OS` | `0` | Set `1` to continue on unsupported distros |
 
 ### How the always-on part actually works (Windows)
 
@@ -132,12 +151,22 @@ setup earlier? Just run `install_otacon.bat` again. It re-checks and
 re-creates the systemd service and the logon task if either is missing,
 without resetting your existing install, your agents, or your WSL distro.
 
-**Uninstall the auto-start pieces.** Run
+**Uninstall auto-start only.** Run
 [`uninstall_otacon.bat`](uninstall_otacon.bat). It removes the
 `OtaconAutoStart` logon task and the `otacon.service` systemd unit only.
-Your Ubuntu environment, your Otacon install directory, your venv, and all
-your data are left exactly as they are; this only stops Otacon from
-starting automatically, it doesn't remove Otacon itself.
+It does **not** remove binaries, your Ubuntu environment, your Otacon install
+directory, your venv, or your data — only stops automatic start.
+
+**Full uninstall is manual** (after disabling auto-start), for example in
+Ubuntu/WSL:
+
+```bash
+systemctl disable --now otacon.service
+sudo rm -f /etc/systemd/system/otacon.service
+sudo systemctl daemon-reload
+rm -rf ~/otacon-ai-ecosystem ~/.config/otacon ~/.local/share/otacon
+rm -f ~/.local/bin/otacon
+```
 
 ## Otacon Core, the Keep Blueprint, and Otaconskeep Services
 

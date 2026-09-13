@@ -29,10 +29,22 @@ from core.arbiter import ResourceArbiter, ComputeResource
 from core.image import ImageProductionManager, ImageGenerationRequest, TestImageProvider, StableDiffusionProvider
 from core.video import VideoProductionManager, VideoGenerationRequest, TestVideoProvider, ComfyUIProvider
 from core.nodes import NodeRegistry
+from installer.security import (
+    CONFIG_ROOT,
+    check_lan_auth,
+    ensure_lan_token,
+    load_lan_token,
+    path_is_protected,
+    resolve_bind_host,
+    safe_config_root,
+    safe_ui_path,
+)
 
-CONFIG_ROOT = Path.home() / '.config' / 'otacon'
 MEMORY = MemoryStore(CONFIG_ROOT / 'runtime' / 'memory.sqlite')
 NODES = NodeRegistry()
+BIND_HOST, BIND_MODE = resolve_bind_host()
+LAN_TOKEN = ensure_lan_token() if BIND_MODE == 'lan' else load_lan_token()
+UI_ROOT = Path(__file__).parent.parent / 'ui'
 
 
 def _llm_settings() -> tuple[str, str, str]:
@@ -121,47 +133,136 @@ def _agent_from_request(data: dict) -> dict:
     return agent
 
 
+def _capability_snapshot() -> dict:
+    """Honest capability states for the UI (ready / not_configured / unavailable / degraded / error)."""
+    caps = {
+        'chat': 'not_configured',
+        'tts': 'not_configured',
+        'stt': 'not_configured',
+        'image': 'not_configured',
+        'video': 'not_configured',
+        'bind_mode': BIND_MODE,
+        'lan_auth_required': BIND_MODE == 'lan',
+    }
+    try:
+        provider, endpoint, model = _llm_settings()
+        if os.getenv('OTACON_USE_TEST_LLM', '').strip() in ('1', 'true', 'yes') or provider == 'test':
+            caps['chat'] = 'ready'
+        elif model:
+            try:
+                health = OllamaProvider(endpoint).health(model)
+                caps['chat'] = 'ready' if getattr(health, 'state', '') == 'ONLINE' else 'unavailable'
+            except Exception:
+                caps['chat'] = 'error'
+        else:
+            caps['chat'] = 'not_configured'
+    except Exception:
+        caps['chat'] = 'error'
+
+    try:
+        if CATALOG_AVAILABLE:
+            caps['tts'] = 'ready' if catalog_entries() else 'not_configured'
+        else:
+            caps['tts'] = 'not_configured'
+    except Exception:
+        caps['tts'] = 'error'
+
+    try:
+        stt = FasterWhisperProvider()
+        state, detail = stt.health()
+        if state == 'STT_READY':
+            caps['stt'] = 'ready'
+        elif state == 'STT_MODEL_MISSING':
+            caps['stt'] = 'not_configured'
+        else:
+            # Package present but model lifecycle not production-ready.
+            caps['stt'] = 'unavailable'
+            caps['stt_detail'] = detail
+    except Exception as exc:
+        caps['stt'] = 'error'
+        caps['stt_detail'] = str(exc)
+
+    caps['image'] = 'not_configured'
+    caps['video'] = 'not_configured'
+    return caps
+
+
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, data, status=200):
         b = json.dumps(data).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(b)))
+        # Localhost UI may call LAN-bound API; never reflect arbitrary Origin.
+        self.send_header('Access-Control-Allow-Origin', 'null' if BIND_MODE == 'lan' else '*')
         self.end_headers()
         self.wfile.write(b)
 
+    def _require_auth_if_needed(self) -> bool:
+        if not path_is_protected(self.path.split('?', 1)[0]):
+            return True
+        if check_lan_auth(self, BIND_MODE, LAN_TOKEN):
+            return True
+        self.send_json({
+            'error': {
+                'code': 'LAN_AUTH_REQUIRED',
+                'message': 'LAN mode requires Authorization: Bearer <token> (see ~/.config/otacon/lan_token).',
+            }
+        }, 401)
+        return False
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', 'null' if BIND_MODE == 'lan' else '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Otacon-Token')
+        self.end_headers()
+
     def do_GET(self):
-        if self.path == '/api/scan':
+        path = self.path.split('?', 1)[0]
+        if path == '/api/scan':
             h = detect()
             self.send_json({'hardware': recommend_hardware_plan(h), 'storage': volumes()})
-        elif self.path == '/api/branding':
+        elif path == '/api/branding':
             self.send_json({
                 'product_name': 'Otacon',
                 'tagline': 'Local AI Command System',
                 'creator': 'Antonio Garcia',
                 'show_creator_credit': True,
+                'bind_mode': BIND_MODE,
+                'bind_host': BIND_HOST,
             })
-        elif self.path == '/api/voices':
+        elif path == '/api/capabilities':
+            self.send_json(_capability_snapshot())
+        elif path == '/api/voices':
             self.send_json({'voices': catalog_entries()})
-        elif self.path == '/api/preferences':
+        elif path == '/api/preferences':
+            if not self._require_auth_if_needed():
+                return
             self.send_json(load_preferences(CONFIG_ROOT))
-        elif self.path == '/api/resources':
+        elif path == '/api/resources':
             self.send_json({'resources': [r.__dict__ for r in default_resources()]})
-        elif self.path == '/api/nodes':
+        elif path == '/api/nodes':
             self.send_json({'nodes': [n.__dict__ for n in NODES.nodes.values()]})
-        elif self.path == '/api/integrations/providers':
+        elif path == '/api/integrations/providers':
             self.send_json({'providers': [
                 {'id':'webhook','type':'WEBHOOK','fields':[{'name':'url','kind':'url','required':True},{'name':'secret','kind':'secret'}]},
                 {'id':'test','type':'SMART_HOME','fields':[{'name':'display_name','kind':'text'}]},
             ]})
-        elif self.path == '/':
+        elif path == '/':
             self.path = '/index.html'
             self.serve()
         else:
             self.serve()
 
     def do_POST(self):
+        if not self._require_auth_if_needed():
+            return
         n = int(self.headers.get('Content-Length', '0'))
+        # Cap request body to 32 MiB to avoid trivial DoS via huge uploads.
+        if n > 32 * 1024 * 1024:
+            self.send_json({'error': {'code': 'PAYLOAD_TOO_LARGE', 'message': 'Request body too large.'}}, 413)
+            return
         data = json.loads(self.rfile.read(n) or '{}')
         if self.path == '/api/plan':
             h = detect()
@@ -183,8 +284,29 @@ class Handler(BaseHTTPRequestHandler):
                 'storage': st,
             })
         elif self.path == '/api/save':
-            root = Path(data.get('output') or CONFIG_ROOT)
-            self.send_json({'path': str(save(data['config'], root))})
+            try:
+                root = safe_config_root(data.get('output') or CONFIG_ROOT)
+            except ValueError:
+                self.send_json({
+                    'error': {
+                        'code': 'OUTPUT_PATH_FORBIDDEN',
+                        'message': 'Config output must stay under ~/.config/otacon or ~/.local/share/otacon.',
+                    }
+                }, 400)
+                return
+            try:
+                cfg = data.get('config') or {}
+                if 'system' not in cfg or not isinstance(cfg.get('system'), dict):
+                    cfg['system'] = dict(cfg.get('system') or {})
+                self.send_json({'path': str(save(cfg, root))})
+            except Exception as exc:
+                self.send_json({
+                    'error': {
+                        'code': 'SAVE_FAILED',
+                        'message': 'Could not save configuration.',
+                        'technical': str(exc),
+                    }
+                }, 400)
         elif self.path == '/api/load_configuration':
             p = CONFIG_ROOT / 'config.json'
             self.send_json(json.loads(p.read_text()) if p.is_file() else {})
@@ -360,8 +482,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({'error': 'not found'}, 404)
 
     def serve(self):
-        p = Path(__file__).parent.parent / 'ui' / self.path.lstrip('/')
-        if not p.is_file():
+        p = safe_ui_path(UI_ROOT, self.path)
+        if p is None:
             self.send_error(404)
             return
         b = p.read_bytes()
@@ -379,9 +501,23 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global BIND_HOST, BIND_MODE, LAN_TOKEN
+    BIND_HOST, BIND_MODE = resolve_bind_host()
     port = int(os.getenv('OTACON_PORT', '8787'))
-    print(f'Wizard: http://127.0.0.1:{port}')
-    HTTPServer(('127.0.0.1', port), Handler).serve_forever()
+    if BIND_MODE == 'lan':
+        LAN_TOKEN = ensure_lan_token()
+        print(f'Otacon LAN mode: http://{BIND_HOST}:{port}')
+        print(f'LAN auth token: {TOKEN_HINT}')
+        print('Send Authorization: Bearer <token> (file: ~/.config/otacon/lan_token)')
+        print('Firewall tip: allow TCP only from your LAN subnet to this port.')
+    else:
+        LAN_TOKEN = load_lan_token()
+        print(f'Otacon local mode: http://127.0.0.1:{port} (not reachable from LAN)')
+    HTTPServer((BIND_HOST, port), Handler).serve_forever()
+
+
+# Avoid printing the full token into every log line; show a short hint only.
+TOKEN_HINT = '(see ~/.config/otacon/lan_token)'
 
 
 if __name__ == '__main__':

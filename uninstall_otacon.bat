@@ -1,22 +1,23 @@
 @echo off
-REM Removes Otacon's Windows auto-start task and its systemd service.
-REM Does NOT touch your WSL/Ubuntu environment, your Otacon install
-REM directory, your venv, or any of your data. Safe to run more than once.
+REM Disables Otacon auto-start only (Windows logon task + systemd unit).
+REM Does NOT remove binaries, the Otacon install directory, venv, or data.
+REM Full uninstall is manual — see the messages at the end (and README).
 setlocal enabledelayedexpansion
-title Otacon Uninstaller (Windows startup pieces only)
+title Otacon Uninstaller (auto-start only — not a full uninstall)
 
 set "SCRIPT_DIR=%~dp0"
 set "FIND_UBUNTU_PS1=%SCRIPT_DIR%deploy\find-ubuntu.ps1"
 
 echo ============================================================
-echo  OTACONSKEEP // REMOVE OTACON AUTO-START
+echo  OTACONSKEEP // REMOVE OTACON AUTO-START ONLY
 echo ============================================================
 echo This removes:
 echo   - the Windows logon task that wakes Otacon
 echo   - the otacon.service systemd unit inside WSL
 echo.
-echo This does NOT remove your Ubuntu/WSL environment, your Otacon
-echo install folder, your venv, or any of your data.
+echo This does NOT remove binaries, your Ubuntu/WSL environment,
+echo your Otacon install folder, your venv, or any of your data.
+echo Full uninstall is a separate manual step (shown at the end).
 echo.
 
 echo Removing the Windows logon task...
@@ -38,10 +39,18 @@ if defined UBUNTU_NAME (
 
 echo.
 echo ============================================================
-echo  DONE
+echo  DONE — AUTO-START DISABLED
 echo ============================================================
-echo Otacon will no longer start automatically. Your install, your
-echo agents, and your data are untouched. To bring auto-start back,
-echo just run install_otacon.bat again.
+echo Otacon will no longer start automatically. Install files and
+echo data are untouched. To bring auto-start back, run
+echo install_otacon.bat again.
+echo.
+echo Full uninstall (manual — binaries/data are NOT removed above):
+echo   In Ubuntu/WSL:
+echo     systemctl disable --now otacon.service
+echo     sudo rm -f /etc/systemd/system/otacon.service
+echo     sudo systemctl daemon-reload
+echo     rm -rf ~/otacon-ai-ecosystem ~/.config/otacon ~/.local/share/otacon
+echo     rm -f ~/.local/bin/otacon
 echo.
 pause

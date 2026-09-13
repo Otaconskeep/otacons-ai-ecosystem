@@ -42,7 +42,8 @@ set -Eeuo pipefail
 #
 # Environment overrides:
 #   OTACON_INSTALL_DIR="$HOME/otacon-ai-ecosystem"
-#   OTACON_BUILD_NATIVE=1
+#   OTACON_PROFILE=core|desktop     # core (default): server+Ollama; desktop: +Rust/Tauri .deb
+#   OTACON_BUILD_NATIVE=0           # default 0 for CORE; set 1 or use profile=desktop
 #   OTACON_INSTALL_DEB=0
 #   OTACON_LAUNCH_WIZARD=1
 #   OTACON_INSTALL_STT=0
@@ -51,12 +52,15 @@ set -Eeuo pipefail
 #   OTACON_INSTALL_DEFAULT_MODEL=1   # set 0 to skip Ollama + VRAM-sized default chat model
 #   OTACON_INSTALL_OLLAMA=...        # alias for OTACON_INSTALL_DEFAULT_MODEL (compat)
 #   OTACON_LLM_MODEL=""             # override auto model (e.g. qwen2.5:7b)
+#   OTACON_LAN_MODE=0               # set 1 to bind LAN (requires auth token)
+#   OTACON_CHAT_HOST=127.0.0.1      # overridden to 0.0.0.0 when LAN mode=1
+#   OTACON_RELEASE=                 # optional release tag; empty follows release.json / main
+#   OTACON_ALLOW_UNSUPPORTED_OS=0   # set 1 to continue on unsupported distros
 #
-# Notes:
-#   The current public repository still marks real Ollama/Piper acceptance and
-#   some production providers as pending external validation. This installer
-#   automates the repository's actual public build/runtime path without
-#   pretending those unfinished integrations are production-ready.
+# Final states / exit codes:
+#   READY    (0) — all required selected components passed functional validation
+#   DEGRADED (2) — core works; an optional component failed
+#   FAILED   (1) — a required component failed
 # ==============================================================================
 
 BRAND="ANTONIO G. GARCIA // OTACONSKEEP"
@@ -68,7 +72,12 @@ REPO_URL="https://github.com/Otaconskeep/otacons-ai-ecosystem.git"
 INSTALL_DIR="${OTACON_INSTALL_DIR:-$HOME/otacon-ai-ecosystem}"
 VENV_DIR="$INSTALL_DIR/.venv"
 
-BUILD_NATIVE="${OTACON_BUILD_NATIVE:-1}"
+OTACON_PROFILE="${OTACON_PROFILE:-core}"
+case "${OTACON_PROFILE,,}" in
+  desktop|native|full) DEFAULT_BUILD_NATIVE=1 ;;
+  *) DEFAULT_BUILD_NATIVE=0 ;;
+esac
+BUILD_NATIVE="${OTACON_BUILD_NATIVE:-$DEFAULT_BUILD_NATIVE}"
 INSTALL_DEB="${OTACON_INSTALL_DEB:-0}"
 LAUNCH_WIZARD="${OTACON_LAUNCH_WIZARD:-1}"
 INSTALL_STT="${OTACON_INSTALL_STT:-0}"
@@ -76,17 +85,44 @@ RUN_TESTS="${OTACON_RUN_TESTS:-1}"
 INSTALL_VOICE_TRAINER="${OTACON_INSTALL_VOICE_TRAINER:-1}"
 # Default Model = Ollama + VRAM-tier chat pull (normal Otacon install). Alias: OTACON_INSTALL_OLLAMA.
 INSTALL_DEFAULT_MODEL="${OTACON_INSTALL_DEFAULT_MODEL:-${OTACON_INSTALL_OLLAMA:-1}}"
-CHAT_HOST="${OTACON_CHAT_HOST:-0.0.0.0}"
+LAN_MODE="${OTACON_LAN_MODE:-0}"
+if [[ "$LAN_MODE" == "1" || "${LAN_MODE,,}" == "true" || "${LAN_MODE,,}" == "yes" || "${LAN_MODE,,}" == "lan" ]]; then
+  LAN_MODE=1
+  CHAT_HOST="${OTACON_CHAT_HOST:-0.0.0.0}"
+else
+  LAN_MODE=0
+  CHAT_HOST="${OTACON_CHAT_HOST:-127.0.0.1}"
+fi
 CHAT_PORT="${OTACON_CHAT_PORT:-5757}"
 VOICE_TRAINER_INSTALLER_URL="${OTACON_VOICE_TRAINER_URL:-https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh}"
 OLLAMA_ENDPOINT="${OTACON_LLM_ENDPOINT:-http://127.0.0.1:11434}"
+ALLOW_UNSUPPORTED_OS="${OTACON_ALLOW_UNSUPPORTED_OS:-0}"
+
+# Install outcome tracking
+REQUIRED_FAIL=0
+OPTIONAL_FAIL=0
+MODEL_OK=0
+E2E_OK=0
+HEALTH_OK=0
+VOICE_TRAINER_OK=0
+INSTALL_LOG_DIR="${OTACON_INSTALL_LOG_DIR:-$HOME/.config/otacon/logs}"
+mkdir -p "$INSTALL_LOG_DIR"
+INSTALL_LOG="$INSTALL_LOG_DIR/install-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$INSTALL_LOG") 2>&1
 
 log()  { printf '\n\033[1;36m[AGG::OTACON]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[AGG::OK]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[AGG::WARN]\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31m[AGG::FAIL]\033[0m %s\n' "$*" >&2; exit 1; }
+die()  {
+  printf '\033[1;31m[AGG::FAIL]\033[0m %s\n' "$*" >&2
+  printf '\033[1;31m[AGG::FAIL]\033[0m Failed stage near line %s. Log: %s\n' "${BASH_LINENO[0]:-$LINENO}" "$INSTALL_LOG" >&2
+  printf 'Recovery: re-run this installer, or: PYTHONPATH=%s %s/bin/python -m installer.backend_entry doctor\n' \
+    "${INSTALL_DIR:-$HOME/otacon-ai-ecosystem}" "${VENV_DIR:-$HOME/otacon-ai-ecosystem/.venv}" >&2
+  exit 1
+}
 
-trap 'printf "\n\033[1;31m[AGG::FAIL]\033[0m Installer stopped on line %s.\n" "$LINENO" >&2' ERR
+trap 'printf "\n\033[1;31m[AGG::FAIL]\033[0m Installer stopped on line %s. Log: %s\n" "$LINENO" "$INSTALL_LOG" >&2' ERR
+log "Install log → $INSTALL_LOG"
 
 printf '\033[1;35m'
 cat <<'OTACON_ASCII'
@@ -126,8 +162,62 @@ is_debian_family() {
   [[ "${ID:-}" == "ubuntu" || "${ID:-}" == "debian" || "${ID_LIKE:-}" == *"debian"* ]]
 }
 
+classify_os_support() {
+  # Sets OS_SUPPORT to supported | best_effort | unsupported
+  [[ -f /etc/os-release ]] || { OS_SUPPORT=unsupported; return; }
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  local id="${ID:-}" ver="${VERSION_ID:-}" like="${ID_LIKE:-}"
+  OS_SUPPORT=unsupported
+  case "$id" in
+    ubuntu)
+      case "$ver" in
+        22.04|24.04) OS_SUPPORT=supported ;;
+        20.04|18.04) OS_SUPPORT=unsupported ;;
+        *) OS_SUPPORT=best_effort ;;
+      esac
+      ;;
+    debian)
+      case "$ver" in
+        12|12.*) OS_SUPPORT=supported ;;
+        11|11.*) OS_SUPPORT=unsupported ;;
+        *) OS_SUPPORT=best_effort ;;
+      esac
+      ;;
+    linuxmint|pop|elementary|zorin)
+      OS_SUPPORT=best_effort
+      ;;
+    *)
+      if [[ "$like" == *"debian"* || "$like" == *"ubuntu"* ]]; then
+        OS_SUPPORT=best_effort
+      else
+        OS_SUPPORT=unsupported
+      fi
+      ;;
+  esac
+}
+
 is_debian_family || die \
   "This terminal isn't running Ubuntu or Debian Linux, which is what this installer needs. What to do: on Windows, this means you're in PowerShell, CMD, or Git Bash -- none of those work. Open an elevated PowerShell, run 'wsl --install' (installs WSL2 + Ubuntu, one reboot required), then open the new Ubuntu app from your Start menu and run this same command again inside THAT window. On a Mac, you'll need an Ubuntu VM (UTM, Parallels, VMware) or a real Linux box; native macOS support isn't here yet. Ask in Discord ($DISCORD_URL) if you get stuck."
+
+classify_os_support
+log "OS support class: $OS_SUPPORT ($(. /etc/os-release; echo "${PRETTY_NAME:-unknown}"))"
+case "$OS_SUPPORT" in
+  supported) ok "Supported platform" ;;
+  best_effort)
+    warn "Best-effort platform — Core web install is attempted; native desktop (Tauri) may fail."
+    if [[ "$BUILD_NATIVE" == "1" ]]; then
+      warn "Consider OTACON_PROFILE=core (default) to skip native .deb on best-effort distros."
+    fi
+    ;;
+  unsupported)
+    if [[ "$ALLOW_UNSUPPORTED_OS" == "1" ]]; then
+      warn "Unsupported OS — continuing because OTACON_ALLOW_UNSUPPORTED_OS=1"
+    else
+      die "This OS version is unsupported for Otacon. Supported: Ubuntu 22.04/24.04, Debian 12. Set OTACON_ALLOW_UNSUPPORTED_OS=1 to override (Core web-only may still work)."
+    fi
+    ;;
+esac
 
 if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
   warn "Running the whole installer as root is not recommended."
@@ -254,10 +344,41 @@ printf '  GPU VRAM    : %s GB\n' "$GPU_VRAM_GB"
 printf '  GPU state   : %s\n' "$GPU_STATUS"
 printf '  Model tier  : %s\n' "$MODEL_TIER"
 printf '  Default LLM : %s\n' "$RECOMMENDED_MODEL"
+printf '  Install profile : %s (native build=%s)\n' "$OTACON_PROFILE" "$BUILD_NATIVE"
+printf '  LAN mode    : %s (bind %s:%s)\n' "$([[ "$LAN_MODE" == "1" ]] && echo enabled || echo local-only)" "$CHAT_HOST" "$CHAT_PORT"
 if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
   printf '  LLM install : yes (Default Model — normal Otacon install)\n'
 else
   printf '  LLM install : skipped (OTACON_INSTALL_DEFAULT_MODEL=0)\n'
+fi
+
+# Hardware thresholds (PASS / WARNING / FAIL)
+log "Preflight resource thresholds"
+PREFLIGHT_FAIL=0
+ram_check="$(awk -v r="$RAM_GB" 'BEGIN{ if (r+0 < 4) print "FAIL"; else if (r+0 < 8) print "WARNING"; else print "PASS" }')"
+disk_check="$(awk -v d="$FREE_GB" 'BEGIN{ if (d+0 < 8) print "FAIL"; else if (d+0 < 20) print "WARNING"; else print "PASS" }')"
+printf '  [%-7s] RAM %s GB (min 4 GB, prefer 8+ GB)\n' "$ram_check" "$RAM_GB"
+printf '  [%-7s] Free disk %s GB (min 8 GB, prefer 20+ GB for models)\n' "$disk_check" "$FREE_GB"
+if [[ "$ram_check" == "FAIL" || "$disk_check" == "FAIL" ]]; then
+  PREFLIGHT_FAIL=1
+fi
+# Port occupancy
+if command_exists ss; then
+  if ss -ltn 2>/dev/null | awk -v p=":$CHAT_PORT" '$4 ~ p"$"{found=1} END{exit !found}'; then
+    warn "Port $CHAT_PORT appears already in use — installer will reuse/restart Otacon service if present."
+  else
+    ok "Port $CHAT_PORT is free"
+  fi
+fi
+# Download reachability
+if curl -fsSI --max-time 8 https://github.com >/dev/null 2>&1; then
+  ok "Network reachability: github.com"
+else
+  warn "Cannot reach github.com — clone/update may fail"
+  PREFLIGHT_FAIL=1
+fi
+if [[ "$PREFLIGHT_FAIL" == "1" ]]; then
+  die "Preflight failed (RAM/disk/network). Free resources or fix connectivity, then rerun. Log: $INSTALL_LOG"
 fi
 
 # ------------------------------------------------------------------------------
@@ -279,11 +400,17 @@ APT_PACKAGES=(
   python3-venv
   python3-pip
   libssl-dev
-  libwebkit2gtk-4.1-dev
-  libayatana-appindicator3-dev
-  librsvg2-dev
-  libxdo-dev
 )
+
+# Native/desktop profile needs WebKit/Tauri libs; Core skips them to reduce failure surface.
+if [[ "$BUILD_NATIVE" == "1" ]]; then
+  APT_PACKAGES+=(
+    libwebkit2gtk-4.1-dev
+    libayatana-appindicator3-dev
+    librsvg2-dev
+    libxdo-dev
+  )
+fi
 
 $SUDO apt-get update -y
 $SUDO apt-get install -y "${APT_PACKAGES[@]}"
@@ -356,9 +483,16 @@ fi
 if [[ "$INSTALL_STT" == "1" ]]; then
   log "Installing optional Faster-Whisper package"
   "$VPIP" install --upgrade faster-whisper
+  log "STT functional gate (package alone is not READY)"
+  if PYTHONPATH=. "$VPY" installer/backend_entry.py validate-stt --real; then
+    ok "STT real validation passed"
+  else
+    warn "STT package installed but functional readiness failed — capability will stay unavailable"
+    OPTIONAL_FAIL=1
+  fi
 else
   warn "Faster-Whisper installation skipped (OTACON_INSTALL_STT=0)."
-  warn "The current repository still marks real STT/model loading as external acceptance work."
+  warn "Installing the package alone never marks STT READY; use OTACON_INSTALL_STT=1 and pass validate-stt --real."
 fi
 
 # Capture our hardware recommendation for humans and future tooling.
@@ -473,14 +607,19 @@ if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
     log "Pulling $RECOMMENDED_MODEL (sized for ${GPU_VRAM_GB} GB VRAM / $MODEL_TIER)"
     if ollama pull "$RECOMMENDED_MODEL"; then
       ok "Model ready: $RECOMMENDED_MODEL"
+      MODEL_OK=1
     else
-      warn "Could not pull $RECOMMENDED_MODEL. Chat will wait until the model is available."
+      warn "Could not pull $RECOMMENDED_MODEL."
       warn "Retry later with: ollama pull $RECOMMENDED_MODEL"
+      REQUIRED_FAIL=1
+      MODEL_OK=0
     fi
   else
     warn "Ollama installed but did not answer at $OLLAMA_ENDPOINT yet."
     warn "Start it with: sudo systemctl start ollama   (or: ollama serve)"
     warn "Then: ollama pull $RECOMMENDED_MODEL"
+    REQUIRED_FAIL=1
+    MODEL_OK=0
   fi
 
   write_otacon_llm_config "$RECOMMENDED_MODEL" "$MODEL_ID"
@@ -488,7 +627,8 @@ if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
 else
   write_otacon_llm_config "$RECOMMENDED_MODEL" "$MODEL_ID" || true
   warn "Default Model skipped (OTACON_INSTALL_DEFAULT_MODEL=0). Chat needs Ollama later."
-  warn "  Re-run with Default Model: OTACON_INSTALL_DEFAULT_MODEL=1 curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash"
+  warn "  Re-run with Default Model: OTACON_INSTALL_DEFAULT_MODEL=1 bash install_otacon.sh"
+  MODEL_OK=0
 fi
 
 # ------------------------------------------------------------------------------
@@ -533,12 +673,13 @@ for validator in "${VALIDATORS[@]}"; do
   else
     warn "$validator returned a non-zero status."
     VALIDATION_WARNINGS=$((VALIDATION_WARNINGS + 1))
+    OPTIONAL_FAIL=1
   fi
 done
 
 if (( VALIDATION_WARNINGS > 0 )); then
   warn "$VALIDATION_WARNINGS validation command(s) returned warnings/failures."
-  warn "This does not automatically mean the bootstrap failed; some public-provider acceptance paths are intentionally pending."
+  warn "Optional architecture validators failing does not by itself fail Core READY."
 else
   ok "Architecture validation completed cleanly"
 fi
@@ -697,7 +838,7 @@ LAN_IP="$(detect_lan_ip)"
 LOCAL_URL="http://127.0.0.1:${CHAT_PORT}"
 LAN_URL=""
 
-if [[ -n "$LAN_IP" ]]; then
+if [[ "$LAN_MODE" == "1" && -n "$LAN_IP" ]]; then
   LAN_URL="http://${LAN_IP}:${CHAT_PORT}"
 fi
 
@@ -707,12 +848,29 @@ if command_exists systemctl && [[ -d /run/systemd/system ]]; then
   USE_SYSTEMD=1
 fi
 
+# Persist LAN token early so systemd EnvironmentFile can reference it.
+LAN_TOKEN_FILE="$HOME/.config/otacon/lan_token"
+if [[ "$LAN_MODE" == "1" ]]; then
+  mkdir -p "$HOME/.config/otacon"
+  if [[ ! -s "$LAN_TOKEN_FILE" ]]; then
+    python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > "$LAN_TOKEN_FILE"
+    chmod 600 "$LAN_TOKEN_FILE" || true
+  fi
+  ok "LAN auth token stored at $LAN_TOKEN_FILE"
+fi
+
 if [[ "$LAUNCH_WIZARD" == "1" ]]; then
   if [[ "$USE_SYSTEMD" == "1" ]]; then
     log "Installing Otacon as a systemd service (auto-starts, restarts itself on crash)"
 
     SERVICE_FILE="/etc/systemd/system/$SYSTEMD_SERVICE_NAME"
     RUN_USER="$(id -un)"
+    ENV_EXTRA=""
+    if [[ "$LAN_MODE" == "1" ]]; then
+      ENV_EXTRA="Environment=OTACON_LAN_MODE=1"
+    else
+      ENV_EXTRA="Environment=OTACON_LAN_MODE=0"
+    fi
 
     $SUDO tee "$SERVICE_FILE" >/dev/null <<SERVICEEOF
 [Unit]
@@ -727,6 +885,7 @@ WorkingDirectory=$INSTALL_DIR
 Environment=PYTHONPATH=$INSTALL_DIR
 Environment=OTACON_HOST=$CHAT_HOST
 Environment=OTACON_PORT=$CHAT_PORT
+$ENV_EXTRA
 Environment=OTACON_LLM_PROVIDER=ollama
 Environment=OTACON_LLM_ENDPOINT=$OLLAMA_ENDPOINT
 Environment=OTACON_LLM_MODEL=$RECOMMENDED_MODEL
@@ -760,6 +919,7 @@ SERVICEEOF
         PYTHONPATH="$INSTALL_DIR" \
         OTACON_HOST="$CHAT_HOST" \
         OTACON_PORT="$CHAT_PORT" \
+        OTACON_LAN_MODE="$LAN_MODE" \
         OTACON_LLM_PROVIDER=ollama \
         OTACON_LLM_ENDPOINT="$OLLAMA_ENDPOINT" \
         OTACON_LLM_MODEL="$RECOMMENDED_MODEL" \
@@ -784,14 +944,19 @@ SERVICEEOF
   done
 
   if [[ "$HEALTH_OK" == "1" ]]; then
-    ok "Otacon web UI is online"
+    ok "Otacon web UI is online (bind mode: $([[ "$LAN_MODE" == "1" ]] && echo LAN || echo local))"
 
     printf '\n'
     printf '\033[1;32mOpen Otacon here:\033[0m\n'
     printf '  Local: %s\n' "$LOCAL_URL"
 
-    if [[ -n "$LAN_URL" ]]; then
+    if [[ "$LAN_MODE" == "1" && -n "$LAN_URL" ]]; then
       printf '  LAN  : %s\n' "$LAN_URL"
+      printf '  Auth : Bearer token in %s\n' "$LAN_TOKEN_FILE"
+      printf '  Firewall (example ufw): sudo ufw allow from 192.168.0.0/16 to any port %s proto tcp\n' "$CHAT_PORT"
+      printf '           or firewalld: sudo firewall-cmd --add-rich-rule='\''rule family=ipv4 source address=192.168.0.0/16 port port=%s protocol=tcp accept'\''\n' "$CHAT_PORT"
+    elif [[ "$LAN_MODE" != "1" ]]; then
+      printf '  LAN  : disabled (localhost only). Enable with OTACON_LAN_MODE=1\n'
     fi
 
     printf '\n'
@@ -800,8 +965,32 @@ SERVICEEOF
     if command_exists xdg-open && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
       xdg-open "$LOCAL_URL" >/dev/null 2>&1 || true
     fi
+
+    # Real end-to-end LLM proof (required when Default Model was selected).
+    if [[ "$INSTALL_DEFAULT_MODEL" == "1" && "$MODEL_OK" == "1" ]]; then
+      log "End-to-end LLM validation (chat_with_agent → Ollama → inference)"
+      E2E_ARGS=(validate-e2e-chat --base-url "$LOCAL_URL")
+      if [[ "$LAN_MODE" == "1" && -s "$LAN_TOKEN_FILE" ]]; then
+        E2E_ARGS+=(--token "$(cat "$LAN_TOKEN_FILE")")
+      fi
+      if PYTHONPATH=. "$VPY" installer/backend_entry.py "${E2E_ARGS[@]}"; then
+        ok "Real model inference succeeded"
+        E2E_OK=1
+      else
+        warn "End-to-end chat validation FAILED — SYSTEM READY will not be emitted"
+        REQUIRED_FAIL=1
+        E2E_OK=0
+      fi
+    elif [[ "$INSTALL_DEFAULT_MODEL" != "1" ]]; then
+      warn "Skipping E2E LLM test (Default Model not selected)"
+      E2E_OK=1  # not required
+    else
+      REQUIRED_FAIL=1
+      E2E_OK=0
+    fi
   else
     warn "Otacon web UI did not answer the health check."
+    REQUIRED_FAIL=1
     if [[ "$USE_SYSTEMD" == "1" ]]; then
       warn "Review: sudo journalctl -u $SYSTEMD_SERVICE_NAME -n 100"
     else
@@ -818,21 +1007,59 @@ if [[ "$INSTALL_VOICE_TRAINER" == "1" ]]; then
   log "Voice Trainer: installing Genome GPU Piper (included with Otacon)"
   if curl -fsSL "$VOICE_TRAINER_INSTALLER_URL" | bash; then
     ok "Genome Voice Trainer installed"
+    VOICE_TRAINER_OK=1
   else
-    warn "Genome Voice Trainer install failed — Core + Default Model are still ready. Retry with:"
-    warn "  curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
+    warn "Genome Voice Trainer install failed — treated as optional DEGRADED component."
+    warn "  Retry with: curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
+    OPTIONAL_FAIL=1
+    VOICE_TRAINER_OK=0
   fi
 else
   warn "Voice Trainer skipped (OTACON_INSTALL_VOICE_TRAINER=0)."
   warn "  Standalone later: curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
+  VOICE_TRAINER_OK=0
 fi
 
+# Install otacon CLI helper (doctor)
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/otacon" <<CLIEOF
+#!/usr/bin/env bash
+set -euo pipefail
+INSTALL_DIR="${INSTALL_DIR}"
+VPY="${VENV_DIR}/bin/python"
+export PYTHONPATH="\$INSTALL_DIR"
+case "\${1:-}" in
+  doctor|"") exec "\$VPY" -m installer.backend_entry doctor "\${@:2}" ;;
+  *) exec "\$VPY" -m installer.backend_entry "\$@" ;;
+esac
+CLIEOF
+chmod +x "$HOME/.local/bin/otacon"
+ok "CLI helper: ~/.local/bin/otacon doctor"
+
 # ------------------------------------------------------------------------------
-# Final summary
+# Final summary — READY / DEGRADED / FAILED
 # ------------------------------------------------------------------------------
 
+FINAL_STATE=READY
+FINAL_RC=0
+if [[ "$REQUIRED_FAIL" == "1" ]] || [[ "$LAUNCH_WIZARD" == "1" && "$HEALTH_OK" != "1" ]]; then
+  FINAL_STATE=FAILED
+  FINAL_RC=1
+elif [[ "$OPTIONAL_FAIL" == "1" ]]; then
+  FINAL_STATE=DEGRADED
+  FINAL_RC=2
+fi
+
+# When Default Model selected, READY requires real E2E inference.
+if [[ "$INSTALL_DEFAULT_MODEL" == "1" && "$E2E_OK" != "1" ]]; then
+  FINAL_STATE=FAILED
+  FINAL_RC=1
+fi
+
 printf '\n\033[1;35m'
-cat <<'DONE_ASCII'
+case "$FINAL_STATE" in
+  READY)
+    cat <<'DONE_ASCII'
 ==============================================================================
               OTACON AI ECOSYSTEM // INSTALL COMPLETE
 ==============================================================================
@@ -840,20 +1067,47 @@ cat <<'DONE_ASCII'
                            SYSTEM READY
 ==============================================================================
 DONE_ASCII
+    ;;
+  DEGRADED)
+    cat <<'DONE_ASCII'
+==============================================================================
+              OTACON AI ECOSYSTEM // INSTALL DEGRADED
+==============================================================================
+                   ANTONIO G. GARCIA // OTACONSKEEP
+              CORE UP — OPTIONAL COMPONENT FAILED
+==============================================================================
+DONE_ASCII
+    ;;
+  *)
+    cat <<'DONE_ASCII'
+==============================================================================
+              OTACON AI ECOSYSTEM // INSTALL FAILED
+==============================================================================
+                   ANTONIO G. GARCIA // OTACONSKEEP
+              REQUIRED VALIDATION DID NOT PASS
+==============================================================================
+DONE_ASCII
+    ;;
+esac
 printf '\033[0m'
 
+printf 'Final state      : %s (exit %s)\n' "$FINAL_STATE" "$FINAL_RC"
+printf 'Install log      : %s\n' "$INSTALL_LOG"
 printf 'Repository       : %s\n' "$INSTALL_DIR"
 printf 'Python venv      : %s\n' "$VENV_DIR"
 printf 'Detected GPU     : %s\n' "$GPU_NAME"
 printf 'Detected VRAM    : %s GB\n' "$GPU_VRAM_GB"
 printf 'Default LLM      : %s (%s)\n' "$RECOMMENDED_MODEL" "$MODEL_TIER"
+printf 'Profile          : %s (native=%s)\n' "$OTACON_PROFILE" "$BUILD_NATIVE"
+printf 'LAN mode         : %s\n' "$([[ "$LAN_MODE" == "1" ]] && echo enabled || echo local-only)"
 if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
-  printf 'Default Model    : installed (Ollama @ %s)\n' "$OLLAMA_ENDPOINT"
+  printf 'Default Model    : %s (Ollama @ %s)\n' "$([[ "$MODEL_OK" == "1" ]] && echo installed || echo FAILED)" "$OLLAMA_ENDPOINT"
+  printf 'E2E LLM proof    : %s\n' "$([[ "$E2E_OK" == "1" ]] && echo PASS || echo FAIL)"
 else
   printf 'Default Model    : skipped (OTACON_INSTALL_DEFAULT_MODEL=0)\n'
 fi
 if [[ "$INSTALL_VOICE_TRAINER" == "1" ]]; then
-  printf 'Voice Trainer    : included (or attempted)\n'
+  printf 'Voice Trainer    : %s\n' "$([[ "$VOICE_TRAINER_OK" == "1" ]] && echo OK || echo FAILED/optional)"
 else
   printf 'Voice Trainer    : skipped (OTACON_INSTALL_VOICE_TRAINER=0)\n'
 fi
@@ -866,6 +1120,7 @@ else
   printf 'Wizard log       : %s\n' "$LOG_FILE"
 fi
 printf 'Hardware profile : %s\n' "$HOME/.config/otacon/bootstrap-hardware.env"
+printf 'Doctor           : ~/.local/bin/otacon doctor\n'
 
 if [[ -n "$DEB_PATH" ]]; then
   printf 'Native .deb      : %s\n' "$DEB_PATH"
@@ -877,4 +1132,11 @@ printf '\033[1;33mQuestions, help, and Otaconskeep Services (architecture, deplo
 printf '\033[1;33msupport) all live in one place -- come say hi: %s\033[0m\n' "$DISCORD_URL"
 printf '\n'
 printf '[ANTONIO G. GARCIA] Rerunning this installer is safe; completed prerequisites are reused.\n'
-printf '[ANTONIO G. GARCIA] Otacon bootstrap complete. Welcome to the Keep.\n'
+if [[ "$FINAL_RC" -eq 0 ]]; then
+  printf '[ANTONIO G. GARCIA] Otacon bootstrap complete. Welcome to the Keep.\n'
+elif [[ "$FINAL_RC" -eq 2 ]]; then
+  printf '[ANTONIO G. GARCIA] Otacon core is up but degraded. Check the log and optional components.\n'
+else
+  printf '[ANTONIO G. GARCIA] Otacon install did not reach READY. See log: %s\n' "$INSTALL_LOG"
+fi
+exit "$FINAL_RC"
