@@ -9,7 +9,8 @@ from core.config import build_config, save, load
 from core.storage import volumes, recommended_volume
 from core.deployment import local_deployment
 from core.agent_service import chat, chat_with_optional_speech
-from core.providers import TestProvider
+from core.providers import TestProvider, OllamaProvider
+from core.models import recommend as recommend_model
 from core.voice import (
     synthesize_voice,
     public_result,
@@ -32,6 +33,61 @@ from core.nodes import NodeRegistry
 CONFIG_ROOT = Path.home() / '.config' / 'otacon'
 MEMORY = MemoryStore(CONFIG_ROOT / 'runtime' / 'memory.sqlite')
 NODES = NodeRegistry()
+
+
+def _llm_settings() -> tuple[str, str, str]:
+    """Return (provider, endpoint, ollama_model_tag) from env/config/hardware."""
+    provider = os.getenv('OTACON_LLM_PROVIDER', 'ollama').strip().lower() or 'ollama'
+    endpoint = os.getenv('OTACON_LLM_ENDPOINT', 'http://127.0.0.1:11434').rstrip('/')
+    model = os.getenv('OTACON_LLM_MODEL', '').strip()
+
+    cfg_path = CONFIG_ROOT / 'config.json'
+    if cfg_path.is_file():
+        try:
+            cfg = json.loads(cfg_path.read_text())
+            svc = cfg.get('llm_service') or {}
+            provider = (svc.get('provider') or provider).strip().lower() or provider
+            endpoint = (svc.get('endpoint') or endpoint).rstrip('/')
+            model = (svc.get('model') or model).strip()
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    if not model:
+        boot = CONFIG_ROOT / 'bootstrap-hardware.env'
+        if boot.is_file():
+            for line in boot.read_text().splitlines():
+                if line.startswith('OTACON_BOOTSTRAP_RECOMMENDED_MODEL='):
+                    model = line.split('=', 1)[1].strip()
+                    break
+    if not model:
+        try:
+            model = recommend_model(detect()).source_id
+        except Exception:
+            model = 'qwen2.5:1.5b'
+    return provider, endpoint, model
+
+
+def _chat_provider():
+    """Prefer real Ollama; opt into TestProvider with OTACON_USE_TEST_LLM=1."""
+    if os.getenv('OTACON_USE_TEST_LLM', '').strip() in ('1', 'true', 'yes'):
+        return TestProvider()
+    provider, endpoint, _model = _llm_settings()
+    if provider == 'test' or endpoint.startswith('test://'):
+        return TestProvider()
+    return OllamaProvider(endpoint)
+
+
+def _deployment():
+    provider, endpoint, model = _llm_settings()
+    if os.getenv('OTACON_USE_TEST_LLM', '').strip() in ('1', 'true', 'yes'):
+        provider, endpoint, model = 'test', 'test://', model or 'chat_small'
+    return local_deployment(
+        llm_provider=provider,
+        llm_endpoint=endpoint,
+        llm_model=model,
+        tts_endpoint=os.getenv('OTACON_TTS_ENDPOINT', 'test://tts'),
+        tts_provider=os.getenv('OTACON_TTS_PROVIDER', 'test'),
+    )
 
 
 def _load_agents() -> list[dict]:
@@ -63,14 +119,6 @@ def _agent_from_request(data: dict) -> dict:
         saved = next((a for a in agents if a['id'] == agent['id']), None)
         agent['voice_id'] = data.get('voice_id') or (saved or {}).get('voice_id') or 'voice_001'
     return agent
-
-
-def _deployment():
-    # Sandbox uses TestTTSProvider via provider=test; real Piper via OTACON_TTS_* env.
-    return local_deployment(
-        tts_endpoint=os.getenv('OTACON_TTS_ENDPOINT', 'test://tts'),
-        tts_provider=os.getenv('OTACON_TTS_PROVIDER', 'test'),
-    )
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -124,6 +172,13 @@ class Handler(BaseHTTPRequestHandler):
                     data.get('name', 'Assistant'),
                     data.get('features', []),
                     storage=st,
+                    llm_service={
+                        'id': 'service_llm_001',
+                        'provider': 'ollama',
+                        'endpoint': 'http://127.0.0.1:11434',
+                        'model': recommend_model(h).source_id,
+                        'model_id': recommend_model(h).id,
+                    },
                 ),
                 'storage': st,
             })
@@ -177,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 result = chat_with_optional_speech(
                     d, agent, data.get('message', ''), cid,
-                    provider=TestProvider(), memory=MEMORY,
+                    provider=_chat_provider(), memory=MEMORY,
                     user_id=data.get('user_id', 'local_user'),
                     auto_speak=bool(auto_speak),
                 )

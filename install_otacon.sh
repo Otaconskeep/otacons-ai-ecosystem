@@ -31,6 +31,7 @@ set -Eeuo pipefail
 #   - Builds the native .deb package
 #   - Optionally installs the generated .deb
 #   - Launches the setup wizard and checks http://127.0.0.1:8787
+#   - Installs Ollama (if missing) and pulls a default chat model sized for your VRAM
 #   - Optionally installs Genome Voice Trainer when OTACON_INSTALL_VOICE_TRAINER=1
 #
 # Rerunnable:
@@ -47,6 +48,8 @@ set -Eeuo pipefail
 #   OTACON_INSTALL_STT=0
 #   OTACON_RUN_TESTS=1
 #   OTACON_INSTALL_VOICE_TRAINER=0   # set 1 to also install Genome Voice Trainer (GPU Piper)
+#   OTACON_INSTALL_OLLAMA=1         # set 0 to skip Ollama install + model pull
+#   OTACON_LLM_MODEL=""             # override auto model (e.g. qwen2.5:7b)
 #
 # Notes:
 #   The current public repository still marks real Ollama/Piper acceptance and
@@ -70,9 +73,11 @@ LAUNCH_WIZARD="${OTACON_LAUNCH_WIZARD:-1}"
 INSTALL_STT="${OTACON_INSTALL_STT:-0}"
 RUN_TESTS="${OTACON_RUN_TESTS:-1}"
 INSTALL_VOICE_TRAINER="${OTACON_INSTALL_VOICE_TRAINER:-0}"
+INSTALL_OLLAMA="${OTACON_INSTALL_OLLAMA:-1}"
 CHAT_HOST="${OTACON_CHAT_HOST:-0.0.0.0}"
 CHAT_PORT="${OTACON_CHAT_PORT:-5757}"
 VOICE_TRAINER_INSTALLER_URL="${OTACON_VOICE_TRAINER_URL:-https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh}"
+OLLAMA_ENDPOINT="${OTACON_LLM_ENDPOINT:-http://127.0.0.1:11434}"
 
 log()  { printf '\n\033[1;36m[AGG::OTACON]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[AGG::OK]\033[0m %s\n' "$*"; }
@@ -208,14 +213,32 @@ if command_exists nvidia-smi; then
   fi
 fi
 
-# Mirror the public project's broad model recommendation:
-# >= 8 GB NVIDIA VRAM -> qwen2.5:7b; otherwise -> qwen2.5:1.5b
+# Default chat model by NVIDIA VRAM (matches core/models.py):
+#   <6 GB or CPU -> qwen2.5:1.5b
+#   >=6 GB       -> qwen2.5:3b
+#   >=8 GB       -> qwen2.5:7b
+#   >=16 GB      -> qwen2.5:14b
 RECOMMENDED_MODEL="qwen2.5:1.5b"
+MODEL_ID="chat_small"
 MODEL_TIER="Conversational Small"
 
-if awk -v v="$GPU_VRAM_GB" 'BEGIN{exit !(v>=8)}'; then
+if awk -v v="$GPU_VRAM_GB" 'BEGIN{exit !(v>=16)}'; then
+  RECOMMENDED_MODEL="qwen2.5:14b"
+  MODEL_ID="chat_large"
+  MODEL_TIER="Conversational Large"
+elif awk -v v="$GPU_VRAM_GB" 'BEGIN{exit !(v>=8)}'; then
   RECOMMENDED_MODEL="qwen2.5:7b"
+  MODEL_ID="chat_standard"
   MODEL_TIER="Conversational Standard"
+elif awk -v v="$GPU_VRAM_GB" 'BEGIN{exit !(v>=6)}'; then
+  RECOMMENDED_MODEL="qwen2.5:3b"
+  MODEL_ID="chat_medium"
+  MODEL_TIER="Conversational Medium"
+fi
+
+if [[ -n "${OTACON_LLM_MODEL:-}" ]]; then
+  RECOMMENDED_MODEL="$OTACON_LLM_MODEL"
+  MODEL_TIER="User override"
 fi
 
 printf '\n'
@@ -228,7 +251,7 @@ printf '  GPU         : %s\n' "$GPU_NAME"
 printf '  GPU VRAM    : %s GB\n' "$GPU_VRAM_GB"
 printf '  GPU state   : %s\n' "$GPU_STATUS"
 printf '  Model tier  : %s\n' "$MODEL_TIER"
-printf '  Model hint  : %s\n' "$RECOMMENDED_MODEL"
+printf '  Default LLM : %s\n' "$RECOMMENDED_MODEL"
 
 # ------------------------------------------------------------------------------
 # System packages
@@ -339,9 +362,126 @@ OTACON_BOOTSTRAP_GPU_NAME=$GPU_NAME
 OTACON_BOOTSTRAP_GPU_VRAM_GB=$GPU_VRAM_GB
 OTACON_BOOTSTRAP_RAM_GB=$RAM_GB
 OTACON_BOOTSTRAP_RECOMMENDED_MODEL=$RECOMMENDED_MODEL
+OTACON_BOOTSTRAP_MODEL_ID=$MODEL_ID
+OTACON_LLM_ENDPOINT=$OLLAMA_ENDPOINT
+OTACON_LLM_MODEL=$RECOMMENDED_MODEL
+OTACON_LLM_PROVIDER=ollama
 EOF
 
 ok "Python environment ready"
+
+# ------------------------------------------------------------------------------
+# Ollama + default chat model (VRAM-sized)
+# ------------------------------------------------------------------------------
+
+ensure_ollama_running() {
+  if curl -fsS --max-time 2 "$OLLAMA_ENDPOINT/api/tags" >/dev/null 2>&1; then
+    return 0
+  fi
+  if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+    $SUDO systemctl enable ollama >/dev/null 2>&1 || true
+    $SUDO systemctl restart ollama >/dev/null 2>&1 || true
+  fi
+  if ! curl -fsS --max-time 2 "$OLLAMA_ENDPOINT/api/tags" >/dev/null 2>&1; then
+    # User-session fallback when systemd unit is missing
+    nohup ollama serve >"$HOME/.config/otacon/ollama.log" 2>&1 &
+    sleep 2
+  fi
+  for _ in $(seq 1 30); do
+    if curl -fsS --max-time 2 "$OLLAMA_ENDPOINT/api/tags" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+write_otacon_llm_config() {
+  local model="$1"
+  local model_id="$2"
+  PYTHONPATH=. "$VPY" - "$model" "$model_id" "$OLLAMA_ENDPOINT" <<'PY'
+import json, sys
+from pathlib import Path
+from core.platform import detect
+from core.planner import recommend_hardware_plan
+from core.config import build_config, save, load
+
+model, model_id, endpoint = sys.argv[1], sys.argv[2], sys.argv[3]
+root = Path.home() / '.config' / 'otacon'
+root.mkdir(parents=True, exist_ok=True)
+cfg_path = root / 'config.json'
+
+llm = {
+    'id': 'service_llm_001',
+    'provider': 'ollama',
+    'endpoint': endpoint,
+    'model': model,
+    'model_id': model_id,
+}
+
+if cfg_path.is_file():
+    try:
+        cfg = load(cfg_path)
+    except Exception:
+        cfg = {}
+    cfg['llm_service'] = llm
+    if not cfg.get('agents'):
+        cfg['agents'] = [
+            {'id': 'agent_001', 'display_name': 'Billy', 'voice_id': 'voice_001', 'role': 'primary', 'personality': 'friendly'},
+            {'id': 'agent_002', 'display_name': 'Sarah', 'voice_id': 'voice_002', 'role': 'secondary', 'personality': 'friendly'},
+        ]
+    feats = cfg.setdefault('features', {})
+    feats.setdefault('chat', True)
+    feats.setdefault('memory', True)
+    cfg_path.write_text(json.dumps(cfg, indent=2) + '\n')
+else:
+    plan = recommend_hardware_plan(detect())
+    cfg = build_config(
+        plan,
+        'Billy',
+        ['chat', 'memory'],
+        branding={'product_name': 'Otacon', 'tagline': 'Local AI Command System', 'creator': 'Antonio G. Garcia', 'show_creator_credit': True},
+        agents=[
+            {'id': 'agent_001', 'display_name': 'Billy', 'voice_id': 'voice_001', 'role': 'primary', 'personality': 'friendly'},
+            {'id': 'agent_002', 'display_name': 'Sarah', 'voice_id': 'voice_002', 'role': 'secondary', 'personality': 'friendly'},
+        ],
+        llm_service=llm,
+    )
+    save(cfg, root)
+print(cfg_path)
+PY
+}
+
+if [[ "$INSTALL_OLLAMA" == "1" ]]; then
+  log "Installing Ollama and pulling your default chat model ($RECOMMENDED_MODEL)"
+
+  if ! command_exists ollama; then
+    curl -fsSL https://ollama.com/install.sh | sh
+  else
+    ok "Ollama already installed"
+  fi
+
+  if ensure_ollama_running; then
+    ok "Ollama is reachable at $OLLAMA_ENDPOINT"
+    log "Pulling $RECOMMENDED_MODEL (sized for ${GPU_VRAM_GB} GB VRAM / $MODEL_TIER)"
+    if ollama pull "$RECOMMENDED_MODEL"; then
+      ok "Model ready: $RECOMMENDED_MODEL"
+    else
+      warn "Could not pull $RECOMMENDED_MODEL. Chat will wait until the model is available."
+      warn "Retry later with: ollama pull $RECOMMENDED_MODEL"
+    fi
+  else
+    warn "Ollama installed but did not answer at $OLLAMA_ENDPOINT yet."
+    warn "Start it with: sudo systemctl start ollama   (or: ollama serve)"
+    warn "Then: ollama pull $RECOMMENDED_MODEL"
+  fi
+
+  write_otacon_llm_config "$RECOMMENDED_MODEL" "$MODEL_ID"
+  ok "Otacon config points chat at Ollama ($RECOMMENDED_MODEL)"
+else
+  warn "Ollama install skipped (OTACON_INSTALL_OLLAMA=0)."
+  write_otacon_llm_config "$RECOMMENDED_MODEL" "$MODEL_ID" || true
+fi
 
 # ------------------------------------------------------------------------------
 # Project tests
@@ -569,7 +709,8 @@ if [[ "$LAUNCH_WIZARD" == "1" ]]; then
     $SUDO tee "$SERVICE_FILE" >/dev/null <<SERVICEEOF
 [Unit]
 Description=Otacon AI Ecosystem
-After=network.target
+After=network.target ollama.service
+Wants=ollama.service
 
 [Service]
 Type=simple
@@ -578,6 +719,9 @@ WorkingDirectory=$INSTALL_DIR
 Environment=PYTHONPATH=$INSTALL_DIR
 Environment=OTACON_HOST=$CHAT_HOST
 Environment=OTACON_PORT=$CHAT_PORT
+Environment=OTACON_LLM_PROVIDER=ollama
+Environment=OTACON_LLM_ENDPOINT=$OLLAMA_ENDPOINT
+Environment=OTACON_LLM_MODEL=$RECOMMENDED_MODEL
 ExecStart=$VPY -m installer.server
 Restart=always
 RestartSec=3
@@ -608,6 +752,9 @@ SERVICEEOF
         PYTHONPATH="$INSTALL_DIR" \
         OTACON_HOST="$CHAT_HOST" \
         OTACON_PORT="$CHAT_PORT" \
+        OTACON_LLM_PROVIDER=ollama \
+        OTACON_LLM_ENDPOINT="$OLLAMA_ENDPOINT" \
+        OTACON_LLM_MODEL="$RECOMMENDED_MODEL" \
         "$VPY" -m installer.server \
         >"$LOG_FILE" 2>&1 &
 
@@ -695,7 +842,8 @@ printf 'Repository       : %s\n' "$INSTALL_DIR"
 printf 'Python venv      : %s\n' "$VENV_DIR"
 printf 'Detected GPU     : %s\n' "$GPU_NAME"
 printf 'Detected VRAM    : %s GB\n' "$GPU_VRAM_GB"
-printf 'Recommended LLM  : %s\n' "$RECOMMENDED_MODEL"
+printf 'Default LLM      : %s (%s)\n' "$RECOMMENDED_MODEL" "$MODEL_TIER"
+printf 'Ollama endpoint  : %s\n' "$OLLAMA_ENDPOINT"
 printf 'Local web UI     : %s
 ' "$LOCAL_URL"
 if [[ "$USE_SYSTEMD" == "1" ]]; then

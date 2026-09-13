@@ -82,20 +82,39 @@ def local_deployment(
     tts_endpoint: str | None = None,
     tts_provider: str | None = None,
     tts_defaults: dict | None = None,
+    llm_endpoint: str | None = None,
+    llm_model: str | None = None,
+    llm_provider: str | None = None,
 ) -> Deployment:
     services: list[Service] = []
     if include_llm:
-        services.append(
-            Service(
-                id='service_llm_test',
-                service_type='llm',
-                placement_resource_id='host_local',
-                capabilities=['conversational_llm'],
-                required_capabilities=['conversational_llm'],
-                metadata={'endpoint': 'test://', 'model': 'chat_small', 'provider': 'test'},
-                endpoints=[ServiceEndpoint('ep_llm_test', 'service_llm_test', 'http', 'test://')],
+        provider = llm_provider or os.getenv('OTACON_LLM_PROVIDER', 'ollama')
+        endpoint = llm_endpoint or os.getenv('OTACON_LLM_ENDPOINT', 'http://127.0.0.1:11434')
+        model = llm_model or os.getenv('OTACON_LLM_MODEL', 'qwen2.5:1.5b')
+        if provider == 'test' or endpoint.startswith('test://'):
+            services.append(
+                Service(
+                    id='service_llm_test',
+                    service_type='llm',
+                    placement_resource_id='host_local',
+                    capabilities=['conversational_llm'],
+                    required_capabilities=['conversational_llm'],
+                    metadata={'endpoint': endpoint if endpoint.startswith('test://') else 'test://', 'model': model, 'provider': 'test'},
+                    endpoints=[ServiceEndpoint('ep_llm_test', 'service_llm_test', 'http', 'test://')],
+                )
             )
-        )
+        else:
+            services.append(
+                Service(
+                    id='service_llm_001',
+                    service_type='llm',
+                    placement_resource_id='host_local',
+                    capabilities=['conversational_llm'],
+                    required_capabilities=['conversational_llm'],
+                    metadata={'endpoint': endpoint, 'model': model, 'provider': provider},
+                    endpoints=[ServiceEndpoint('ep_llm_001', 'service_llm_001', 'http', endpoint)],
+                )
+            )
     if include_tts:
         services.append(
             tts_service(endpoint=tts_endpoint, provider=tts_provider, defaults=tts_defaults)
