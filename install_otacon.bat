@@ -108,16 +108,49 @@ echo skips whatever's already done, and it never resets an existing
 echo Ubuntu environment.
 echo.
 wsl.exe -d "%UBUNTU_NAME%" -- bash -lc "curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash"
+set "INSTALL_RC=%errorlevel%"
+
+if "%INSTALL_RC%"=="42" (
+    echo.
+    echo Enabling a Linux feature Otacon needs to auto-start. Restarting
+    echo this Linux environment once ^(this does not touch Windows^)...
+    wsl.exe --shutdown
+    timeout /t 3 /nobreak >nul
+    wsl.exe -d "%UBUNTU_NAME%" -- bash -lc "curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash"
+    set "INSTALL_RC=!errorlevel!"
+)
+
+if not "%INSTALL_RC%"=="0" (
+    echo.
+    echo ============================================================
+    echo  SOMETHING WENT WRONG
+    echo ============================================================
+    echo The installer exited with an error inside Ubuntu. Scroll up to
+    echo see what it said, or come share it in Discord.
+    pause
+    exit /b
+)
+
+echo.
+echo Setting up Otacon to start automatically with Windows...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%deploy\install-wake-task.ps1" -DistroName "%UBUNTU_NAME%" -Port 5757 >nul 2>&1
+if errorlevel 1 (
+    echo Couldn't register the auto-start task ^(this doesn't affect the
+    echo install itself -- Otacon still works, you'll just need to open
+    echo it manually after a restart^). See README.md for the manual steps.
+) else (
+    echo Done. Otacon will already be running the next time you log in.
+)
 
 echo.
 echo ============================================================
-echo  OTACON SHOULD NOW BE RUNNING
+echo  OTACON IS READY
 echo ============================================================
-echo Open this in your regular Windows browser:
-echo   http://127.0.0.1:5757
+echo Open Otacon:  http://localhost:5757
 echo.
-echo (WSL shares that port with Windows automatically -- no extra
-echo  setup needed.)
+echo Come back to this address any time -- Otacon starts itself with
+echo Windows from now on. Run this file again if you ever need to
+echo repair or update the install; it's always safe to rerun.
 echo.
 pause
 exit /b
