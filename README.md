@@ -17,16 +17,50 @@ Pick your OS:
 
 ### Windows
 
-1. Download [`install_otacon.bat`](install_otacon.bat) (right-click →
-   Save Link As, or clone the repo).
-2. Double-click it.
+**Primary path (recommended):**
 
-That's it. It checks whether WSL2 and an Ubuntu environment are already set
-up; if not, it sets them up for you, walks you through the one unavoidable
-manual step (a Windows restart and/or a one-time Ubuntu username/password,
-which is Microsoft's own requirement, not something any script can skip),
-then automatically continues and finishes the real install the moment
-that's done. You do not need to know what WSL or Ubuntu even are.
+1. Download **[OtaconsKeep-Setup.bat](https://github.com/Otaconskeep/otacons-ai-ecosystem/raw/main/OtaconsKeep-Setup.bat)**  
+   Prefer the big button on [otaconskeep.com](https://otaconskeep.com/) / the public site — it saves the file with the correct name instead of opening source code in the browser.
+2. Double-click `OtaconsKeep-Setup.bat`.
+3. Approve the Windows permission popup if it appears (click **Yes**).
+4. Follow the on-screen stages. Leave the window open unless it tells you to restart.
+5. If Windows asks for **one restart**, save your work, restart, then sign back in — setup resumes automatically.
+6. If Windows Ubuntu asks for a **username and password**, that is only for the OtaconsKeep Linux environment inside Windows (not Proxmox, not your Microsoft account). Typing a password may show nothing on screen — that is normal.
+7. Wait until the window says **OTACON IS READY**.
+8. Open `http://localhost:5757` (or press **O** when offered).
+
+Typical time: **10–30 minutes**. Otacon then starts itself with Windows.
+
+**Having trouble downloading?**  
+Download the [GitHub ZIP](https://github.com/Otaconskeep/otacons-ai-ecosystem/archive/refs/heads/main.zip), extract it, then double-click `OtaconsKeep-Setup.bat` in the folder.
+
+**Useful commands** (Command Prompt or double-click with args):
+
+```bat
+OtaconsKeep-Setup.bat --status
+OtaconsKeep-Setup.bat --diagnostics
+OtaconsKeep-Setup.bat --open
+```
+
+- `--status` — plain-English readiness report  
+- `--diagnostics` — writes a support file under `%LOCALAPPDATA%\OtaconsKeep\Diagnostics\`  
+- `--open` — opens Otacon only if the health check passes; otherwise offers to continue setup  
+
+**Logs:** `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`  
+**Installer state:** `%LOCALAPPDATA%\OtaconsKeep\installer-state.json` (no passwords)
+
+#### Windows troubleshooting
+
+| Situation | What to do |
+| --- | --- |
+| Browser showed installer **source code** | Use the site **Download OtaconsKeep Setup** button, or right-click the `.bat` link → Save link as…, or use the ZIP. |
+| Windows SmartScreen warning | More info → Run anyway (the file is the public installer from this repo). |
+| Window said “press any key” and closed | Old installer. Download the new `OtaconsKeep-Setup.bat`. New builds explain restarts and never exit silently. |
+| Restart required | Normal. Otacon is **not** installed yet. Save work, restart, setup continues. |
+| Ubuntu username / blank password typing | Normal Linux behavior. Characters are accepted even when invisible. |
+| `localhost:5757` before setup finishes | Will not work. Wait for **OTACON IS READY**, or run `--status`. |
+| “I already have Ubuntu in Proxmox” | Unrelated. OtaconsKeep uses **Ubuntu inside Windows (WSL)**, a separate environment. |
+| Where are the logs? | `%LOCALAPPDATA%\OtaconsKeep\Logs\` |
 
 **Install once, and Otacon starts itself from then on.** The installer sets
 Otacon up as a real background service and adds a small Windows task that
@@ -90,7 +124,7 @@ Override the chat model tag with `OTACON_LLM_MODEL=qwen2.5:7b` if needed.
 
 **Both paths are completely safe to run more than once.** If anything
 interrupts it, or you just want to update later, run the same
-`install_otacon.bat` / `install_otacon.sh` again: every step skips whatever's
+`OtaconsKeep-Setup.bat` / `install_otacon.sh` again: every step skips whatever's
 already done, and neither one resets or deletes an existing install.
 
 Prefer to download the script first and read it before running it (always a
@@ -104,7 +138,7 @@ chmod +x install_otacon.sh
 
 ### Windows/WSL manual path (only if the `.bat` doesn't work for you)
 
-`install_otacon.bat` automates all of this, so you shouldn't normally need
+`OtaconsKeep-Setup.bat` automates all of this, so you shouldn't normally need
 it, but if you want to do it by hand or something goes wrong:
 
 1. Open PowerShell **as Administrator**, run `wsl --install`, and restart
@@ -147,7 +181,7 @@ additive, neither touching your Ubuntu distro's identity or data:
   It never opens a terminal window and never opens your browser for you.
 
 **Repair.** Something not starting right, or you skipped the auto-start
-setup earlier? Just run `install_otacon.bat` again. It re-checks and
+setup earlier? Just run `OtaconsKeep-Setup.bat` (or `install_otacon.bat`) again. It re-checks and
 re-creates the systemd service and the logon task if either is missing,
 without resetting your existing install, your agents, or your WSL distro.
 
