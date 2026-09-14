@@ -1,5 +1,9 @@
 # Otacon
 
+[![Otaconskeep trailer](https://img.youtube.com/vi/vYXsi4ZRStw/maxresdefault.jpg)](https://youtu.be/vYXsi4ZRStw)
+
+**[Watch the trailer on YouTube](https://youtu.be/vYXsi4ZRStw)** · **[Website](https://otaconskeep-site.otaconskeep.workers.dev/)** · **[Install Otacon](https://otaconskeep-site.otaconskeep.workers.dev/#install-otacon)**
+
 **A local-first platform for building persistent, voice-enabled AI agents.**
 
 **Designed & Engineered by Antonio Garcia (Otaconskeep)**
@@ -20,7 +24,7 @@ Pick your OS:
 **Primary path (recommended):**
 
 1. Download **[OtaconsKeep-Setup.bat](https://github.com/Otaconskeep/otacons-ai-ecosystem/raw/main/OtaconsKeep-Setup.bat)**  
-   Prefer the big button on [otaconskeep.com](https://otaconskeep.com/) / the public site — it saves the file with the correct name instead of opening source code in the browser.
+   Prefer the big **Download OtaconsKeep Setup** button on the [website](https://otaconskeep-site.otaconskeep.workers.dev/#install-otacon) — it saves the file with the correct name instead of opening source code in the browser.
 2. Double-click `OtaconsKeep-Setup.bat`.
 3. Approve the Windows permission popup if it appears (click **Yes**).
 4. Follow the on-screen stages. Leave the window open unless it tells you to restart.
