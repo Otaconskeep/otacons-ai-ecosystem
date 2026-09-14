@@ -44,11 +44,13 @@ Download the [GitHub ZIP](https://github.com/Otaconskeep/otacons-ai-ecosystem/ar
 OtaconsKeep-Setup.bat --status
 OtaconsKeep-Setup.bat --diagnostics
 OtaconsKeep-Setup.bat --open
+OtaconsKeep-Setup.bat --debug
 ```
 
 - `--status` — plain-English readiness report  
 - `--diagnostics` — writes a support file under `%LOCALAPPDATA%\OtaconsKeep\Diagnostics\`  
 - `--open` — opens Otacon only if the health check passes; otherwise offers to continue setup  
+- `--debug` — echoes commands, keeps the window open after failures, writes detailed fetch logs to `installer.log`  
 
 **Logs:** `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`  
 **Installer state:** `%LOCALAPPDATA%\OtaconsKeep\installer-state.json` (no passwords)
@@ -57,6 +59,7 @@ OtaconsKeep-Setup.bat --open
 
 | Situation | What to do |
 | --- | --- |
+| Window closes during **fetching** | Fixed in current installer. Re-download from the website. If it still fails, run `OtaconsKeep-Setup.bat --debug` and send `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`. |
 | Browser showed installer **source code** | Use the site **Download OtaconsKeep Setup** button, or right-click the `.bat` link → Save link as…, or use the ZIP. |
 | Windows SmartScreen warning | More info → Run anyway (the file is the public installer from this repo). |
 | Window said “press any key” and closed | Old installer. Download the new `OtaconsKeep-Setup.bat`. New builds explain restarts and never exit silently. |
