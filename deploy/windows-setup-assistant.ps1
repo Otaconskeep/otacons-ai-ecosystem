@@ -336,7 +336,7 @@ function Show-StatusReport {
     Write-Host ""
     Write-Host "otaconskeep setup status" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host ("windows            {0}" -f $(if ($s.admin -or $true) { "ready" }))
+    Write-Host ("windows            {0}" -f $(if ($s.admin) { "admin session" } else { "ready (will ask for admin if needed)" }))
     Write-Host ("virtualization     {0}" -f $(if ($s.wsl -or $s.reboot_pending) { "ready/pending" } else { "needed" }))
     Write-Host ("wsl                {0}" -f $(if ($s.wsl) { "ready" } else { "missing" }))
     Write-Host ("ubuntu             {0}" -f $(if ($s.ubuntu_ready) { "ready" } elseif ($s.ubuntu_name) { "needs setup" } else { "missing" }))
@@ -524,7 +524,19 @@ function Ensure-Admin {
     $bat = Join-Path $RepoRoot "OtaconsKeep-Setup.bat"
     if (-not (Test-Path $bat)) { $bat = Join-Path $RepoRoot "install_otacon.bat" }
     Start-Process -FilePath $bat -Verb RunAs
-    return $false
+    Write-Host ""
+    Write-Host "  A new elevated Setup window should open after you click Yes." -ForegroundColor Green
+    Write-Host "  You can close THIS window now — setup continues in the new one." -ForegroundColor Green
+    Write-Host "  If you clicked No on the Windows popup, press X to exit, or R to try again." -ForegroundColor DarkYellow
+    Write-Host ""
+    while ($true) {
+        $c = Read-Choice "  Choice [R/X]: " @("R","X")
+        if ($c -eq "X") { return $false }
+        if ($c -eq "R") {
+            Start-Process -FilePath $bat -Verb RunAs
+            continue
+        }
+    }
 }
 
 function Step-EnableWsl {
@@ -532,8 +544,12 @@ function Step-EnableWsl {
     Save-InstallerState @{ stage = "waiting_for_windows"; step = 3 }
     $started = Get-Date
     Show-WorkingPanel -Step 3 -StepName "PREPARING WINDOWS" -Detail "Windows is currently enabling Linux support" -Started $started -Typical "2 to 10 minutes"
-    # Run inline (needs admin); pulse messages
-    $p = Start-Process -FilePath "wsl.exe" -ArgumentList "--install","-d","Ubuntu" -PassThru -Wait -NoNewWindow
+    $p = Start-Process -FilePath "wsl.exe" -ArgumentList "--install","-d","Ubuntu" -PassThru -NoNewWindow
+    while (-not $p.HasExited) {
+        Show-WorkingPanel -Step 3 -StepName "PREPARING WINDOWS" -Detail "Windows is currently enabling Linux support" -Started $started -Typical "2 to 10 minutes"
+        Write-Host "  [ OTACON ] still working — do not close this window" -ForegroundColor DarkGray
+        Start-Sleep -Seconds 4
+    }
     Write-KeepLog "wsl --install exit=$($p.ExitCode)" -Stage "WAITING_FOR_WINDOWS"
     return $p.ExitCode
 }
