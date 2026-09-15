@@ -1,9 +1,5 @@
 # Otacon
 
-[![Otaconskeep trailer](https://img.youtube.com/vi/vYXsi4ZRStw/maxresdefault.jpg)](https://youtu.be/vYXsi4ZRStw)
-
-**[Watch the trailer on YouTube](https://youtu.be/vYXsi4ZRStw)** · **[Website](https://otaconskeep-site.otaconskeep.workers.dev/)** · **[Install Otacon](https://otaconskeep-site.otaconskeep.workers.dev/#install-otacon)**
-
 **A local-first platform for building persistent, voice-enabled AI agents.**
 
 **Designed & Engineered by Antonio Garcia (Otaconskeep)**
@@ -21,59 +17,16 @@ Pick your OS:
 
 ### Windows
 
-**Primary path (recommended):**
+1. Download [`install_otacon.bat`](install_otacon.bat) (right-click →
+   Save Link As, or clone the repo).
+2. Double-click it.
 
-1. Download **[OtaconsKeep-Setup.bat](https://github.com/Otaconskeep/otacons-ai-ecosystem/raw/main/OtaconsKeep-Setup.bat)**  
-   Prefer the big **Download OtaconsKeep Setup** button on the [website](https://otaconskeep-site.otaconskeep.workers.dev/#install-otacon) — it saves the file with the correct name instead of opening source code in the browser.
-2. Double-click `OtaconsKeep-Setup.bat`.
-3. Approve the Windows permission popup if it appears (click **Yes**).
-4. Follow the on-screen stages. Leave the window open unless it tells you to restart.
-5. If Windows asks for **one restart**, save your work, restart, then sign back in — setup resumes automatically.
-6. If Windows Ubuntu asks for a **username and password**, that is only for the OtaconsKeep Linux environment inside Windows (not Proxmox, not your Microsoft account). Typing a password may show nothing on screen — that is normal.
-7. Wait until the window says **OTACON IS READY**.
-8. Open `http://localhost:5757` (or press **O** when offered).
-
-Typical time: **10–30 minutes**. Otacon then starts itself with Windows.
-
-**Having trouble downloading?**  
-Download the [GitHub ZIP](https://github.com/Otaconskeep/otacons-ai-ecosystem/archive/refs/heads/main.zip), extract it, then double-click `OtaconsKeep-Setup.bat` in the folder.
-
-**Useful commands** (Command Prompt or double-click with args):
-
-```bat
-OtaconsKeep-Setup.bat --status
-OtaconsKeep-Setup.bat --diagnostics
-OtaconsKeep-Setup.bat --open
-OtaconsKeep-Setup.bat --debug
-OtaconsKeep-Setup.bat --syntax-check
-```
-
-- `--status` — plain-English readiness report  
-- `--diagnostics` — writes a support file under `%LOCALAPPDATA%\OtaconsKeep\Diagnostics\`  
-- `--open` — opens Otacon only if the health check passes; otherwise offers to continue setup  
-- `--debug` — echoes commands, keeps the window open after failures, writes detailed fetch logs to `installer.log`
-- `--syntax-check` — parses major BAT branches without installing
-
-Before publishing the website BAT, run `bash deploy/verify-windows-installer.sh` (encoding + CMD structure).  
-
-**Logs:** `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`  
-**Installer state:** `%LOCALAPPDATA%\OtaconsKeep\installer-state.json` (no passwords)
-
-#### Windows troubleshooting
-
-| Situation | What to do |
-| --- | --- |
-| Wrong encoding / Save As from raw GitHub | Re-download via the website **Download OtaconsKeep Setup** button only. Installer bats are UTF-8 with BOM. Do not Save As from raw.githubusercontent.com. |
-| Window closes during **fetching** / exit code **1** | Fixed: installer no longer overwrites the running download helper. Re-download from the website. If it still fails, run `OtaconsKeep-Setup.bat --debug
-OtaconsKeep-Setup.bat --syntax-check` and send `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`. |
-| Browser showed installer **source code** | Use the site **Download OtaconsKeep Setup** button, or right-click the `.bat` link → Save link as…, or use the ZIP. |
-| Windows SmartScreen warning | More info → Run anyway (the file is the public installer from this repo). |
-| Window said “press any key” and closed | Old installer. Download the new `OtaconsKeep-Setup.bat`. New builds explain restarts and never exit silently. |
-| Restart required | Normal. Otacon is **not** installed yet. Save work, restart, setup continues. |
-| Ubuntu username / blank password typing | Normal Linux behavior. Characters are accepted even when invisible. |
-| `localhost:5757` before setup finishes | Will not work. Wait for **OTACON IS READY**, or run `--status`. |
-| “I already have Ubuntu in Proxmox” | Unrelated. OtaconsKeep uses **Ubuntu inside Windows (WSL)**, a separate environment. |
-| Where are the logs? | `%LOCALAPPDATA%\OtaconsKeep\Logs\` |
+That's it. It checks whether WSL2 and an Ubuntu environment are already set
+up; if not, it sets them up for you, walks you through the one unavoidable
+manual step (a Windows restart and/or a one-time Ubuntu username/password,
+which is Microsoft's own requirement, not something any script can skip),
+then automatically continues and finishes the real install the moment
+that's done. You do not need to know what WSL or Ubuntu even are.
 
 **Install once, and Otacon starts itself from then on.** The installer sets
 Otacon up as a real background service and adds a small Windows task that
@@ -81,17 +34,13 @@ wakes it at logon, so after that first install: shut your PC down, turn it
 back on tomorrow, sign in, and open `http://localhost:5757`: Otacon is
 already running. No terminal, no "start the server," nothing to remember.
 
-### Linux (Ubuntu 22.04/24.04, or already inside WSL)
+### Linux (Ubuntu/Debian, or already inside WSL)
 
 Copy the block below exactly, paste it into a terminal, and press Enter:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash
 ```
-
-**Supported OS:** Ubuntu 22.04/24.04 supported. Debian 12 supported if verified.
-Linux Mint / Pop!_OS best-effort. Older releases are unsupported unless you set
-`OTACON_ALLOW_UNSUPPORTED_OS=1` (Core web-only may still work).
 
 **New to terminals? Here's the whole thing, step by step:**
 
@@ -109,22 +58,11 @@ Linux Mint / Pop!_OS best-effort. Older releases are unsupported unless you set
    tries to open it in your browser automatically. If it doesn't open on
    its own, copy that address into your browser yourself.
 
-That's the entire Otacon install. Default profile is **CORE**
-(`OTACON_PROFILE=core`, `OTACON_BUILD_NATIVE=0`): it detects your GPU (if
-NVIDIA), installs Ollama, pulls a default chat model sized to your VRAM
+That's the entire Otacon install. It detects your GPU (if NVIDIA), installs
+Ollama, pulls a default chat model sized to your VRAM
 (`qwen2.5:1.5b` / `3b` / `7b` / `14b`), installs Genome Voice Trainer when
-possible, runs self-tests, and registers `otacon.service` to start on boot.
-Desktop/native `.deb` packaging is opt-in via `OTACON_PROFILE=desktop` or
-`OTACON_BUILD_NATIVE=1`. When it finishes, open Otacon and chat.
-
-Installer final states: **READY** (exit 0), **DEGRADED** (exit 2 — core up,
-optional component failed), **FAILED** (exit 1). Health check anytime:
-`otacon doctor` (`~/.local/bin/otacon doctor`).
-
-**Default bind is localhost only.** LAN access requires `OTACON_LAN_MODE=1`,
-writes `~/.config/otacon/lan_token`, and requires
-`Authorization: Bearer <token>` for API mutations/chat. Optional bind host:
-`OTACON_CHAT_HOST` (defaults to `127.0.0.1`; becomes `0.0.0.0` when LAN is on).
+possible, runs self-tests, builds a native `.deb` when enabled, and registers
+`otacon.service` to start on boot. When it finishes, open Otacon and chat.
 
 Skip pieces if you want a lighter install:
 
@@ -137,7 +75,7 @@ Override the chat model tag with `OTACON_LLM_MODEL=qwen2.5:7b` if needed.
 
 **Both paths are completely safe to run more than once.** If anything
 interrupts it, or you just want to update later, run the same
-`OtaconsKeep-Setup.bat` / `install_otacon.sh` again: every step skips whatever's
+`install_otacon.bat` / `install_otacon.sh` again: every step skips whatever's
 already done, and neither one resets or deletes an existing install.
 
 Prefer to download the script first and read it before running it (always a
@@ -151,7 +89,7 @@ chmod +x install_otacon.sh
 
 ### Windows/WSL manual path (only if the `.bat` doesn't work for you)
 
-`OtaconsKeep-Setup.bat` automates all of this, so you shouldn't normally need
+`install_otacon.bat` automates all of this, so you shouldn't normally need
 it, but if you want to do it by hand or something goes wrong:
 
 1. Open PowerShell **as Administrator**, run `wsl --install`, and restart
@@ -171,14 +109,10 @@ you want to change the defaults):
 | Variable | Default | What it changes |
 |---|---|---|
 | `OTACON_INSTALL_DIR` | `~/otacon-ai-ecosystem` | Where Otacon gets installed |
-| `OTACON_PROFILE` | `core` | `core` (default) or `desktop` (enables native `.deb` build) |
-| `OTACON_BUILD_NATIVE` | `0` | Default 0 for CORE; set `1` (or `OTACON_PROFILE=desktop`) to build the native `.deb` |
-| `OTACON_LAN_MODE` | `0` | Set `1` to bind for LAN; writes `~/.config/otacon/lan_token` and requires Bearer auth |
-| `OTACON_CHAT_HOST` | `127.0.0.1` | Bind host; overridden to `0.0.0.0` when LAN mode=1 |
+| `OTACON_BUILD_NATIVE` | `1` | Set to `0` to skip building the native `.deb` app |
 | `OTACON_INSTALL_DEB` | `0` | Set to `1` to also install the built `.deb` automatically |
 | `OTACON_LAUNCH_WIZARD` | `1` | Set to `0` to skip auto-launching the web UI at the end |
 | `OTACON_RUN_TESTS` | `1` | Set to `0` to skip the self-test suite (faster, less safe) |
-| `OTACON_ALLOW_UNSUPPORTED_OS` | `0` | Set `1` to continue on unsupported distros |
 
 ### How the always-on part actually works (Windows)
 
@@ -194,33 +128,23 @@ additive, neither touching your Ubuntu distro's identity or data:
   It never opens a terminal window and never opens your browser for you.
 
 **Repair.** Something not starting right, or you skipped the auto-start
-setup earlier? Just run `OtaconsKeep-Setup.bat` (or `install_otacon.bat`) again. It re-checks and
+setup earlier? Just run `install_otacon.bat` again. It re-checks and
 re-creates the systemd service and the logon task if either is missing,
 without resetting your existing install, your agents, or your WSL distro.
 
-**Uninstall auto-start only.** Run
+**Uninstall the auto-start pieces.** Run
 [`uninstall_otacon.bat`](uninstall_otacon.bat). It removes the
 `OtaconAutoStart` logon task and the `otacon.service` systemd unit only.
-It does **not** remove binaries, your Ubuntu environment, your Otacon install
-directory, your venv, or your data — only stops automatic start.
-
-**Full uninstall is manual** (after disabling auto-start), for example in
-Ubuntu/WSL:
-
-```bash
-systemctl disable --now otacon.service
-sudo rm -f /etc/systemd/system/otacon.service
-sudo systemctl daemon-reload
-rm -rf ~/otacon-ai-ecosystem ~/.config/otacon ~/.local/share/otacon
-rm -f ~/.local/bin/otacon
-```
+Your Ubuntu environment, your Otacon install directory, your venv, and all
+your data are left exactly as they are; this only stops Otacon from
+starting automatically, it doesn't remove Otacon itself.
 
 ## Otacon Core, Otacon Expansion, the Keep Blueprint, and Otaconskeep Services
 
 | | **Otacon Core** (this repo) | **Otacon Expansion** | **Keep Blueprint** | **Otaconskeep Services** |
 |---|---|---|---|---|
 | What it is | Free, open source, self-hosted | Premium multi-agent/emotional/orchestration layer — five-agent roster, relationship engine, command-center surfaces, free local Video Studio ([full spec](docs/EXPANSION.md)) | The broader ecosystem architecture demonstrated by Antonio's real Keep (agent rooms, media/home automation, remote GPU nodes, and more) | Architecture, deployment, and support engagements |
-| Status | Install today, this repo | Specification complete, not yet installable — see [docs/EXPANSION.md](docs/EXPANSION.md) | Reference only, not a public installer | Available now |
+| Status | Install today, this repo | Foundation layer installs today; full product (Dashboard/Codec/etc.) spec complete, not yet built — see [docs/EXPANSION.md](docs/EXPANSION.md) | Reference only, not a public installer | Available now |
 | Price | Free | Not yet available (licensed, priced later) | Not offered publicly | Contact for scope/pricing |
 
 There's no license key or artificial limit baked into Otacon Core. It's the
@@ -339,9 +263,16 @@ User → Agent (identity, memory, voice, preferences)
 
 An early implementation slice of Otacon Expansion's canonical agent
 schema, hierarchy validation, bounded relationship/mood formulas, motion
-manifest schema, decision-audit record, and readiness state lives in
-[`expansion/`](expansion/), covered by 42 passing tests in
-[`tests/test_expansion_*.py`](tests/). Full spec: [docs/EXPANSION.md](docs/EXPANSION.md).
+manifest schema, decision-audit record, readiness state, and a validated
+default-roster seeder lives in [`expansion/`](expansion/), covered by 50
+passing tests in [`tests/test_expansion_*.py`](tests/). One-command
+install (requires Core already installed):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon_expansion.sh | bash
+```
+
+Full spec: [docs/EXPANSION.md](docs/EXPANSION.md).
 
 Otacon: Designed & Engineered by Antonio Garcia
 
