@@ -1,6 +1,6 @@
 # OtaconsKeep Windows Setup Assistant
 # Guided, nontechnical installer UX for Otacon Core on Windows 11.
-# Invoked by OtaconsKeep-Setup.bat / install_otacon.bat — do not store credentials.
+# Invoked by OtaconsKeep-Setup.bat / install_otacon.bat - do not store credentials.
 
 [CmdletBinding()]
 param(
@@ -110,32 +110,35 @@ function Show-WorkingPanel {
     $em = "{0:00}m {1:00}s" -f [int]$elapsed.TotalMinutes, $elapsed.Seconds
     Clear-Host
     Write-Host ""
-    Write-Host ("╔" + ("═" * 60) + "╗") -ForegroundColor DarkYellow
-    Write-Host ("║{0}║" -f ("OTACONSKEEP".PadLeft(35).PadRight(60))) -ForegroundColor Yellow
-    Write-Host ("║{0}║" -f ("WINDOWS SETUP ASSISTANT".PadLeft(41).PadRight(60))) -ForegroundColor Yellow
-    Write-Host ("╠" + ("═" * 60) + "╣") -ForegroundColor DarkYellow
-    Write-Host ("║{0}║" -f ("").PadRight(60))
+    # Plain ASCII panel only -- CMD/console code pages break box-drawing glyphs.
+    Write-Host ("+" + ("-" * 60) + "+") -ForegroundColor DarkYellow
+    Write-Host ("|{0}|" -f ("OTACONSKEEP".PadLeft(35).PadRight(60))) -ForegroundColor Yellow
+    Write-Host ("|{0}|" -f ("WINDOWS SETUP ASSISTANT".PadLeft(41).PadRight(60))) -ForegroundColor Yellow
+    Write-Host ("+" + ("-" * 60) + "+") -ForegroundColor DarkYellow
+    Write-Host ("|{0}|" -f ("").PadRight(60))
     $stepLabel = ("[{0}/{1}] {2}" -f $Step, $TotalSteps, $StepName.ToUpper())
     if ($stepLabel.Length -gt 58) { $stepLabel = $stepLabel.Substring(0, 58) }
-    Write-Host ("║  {0}{1}║" -f $stepLabel, (" " * [Math]::Max(0, 58 - $stepLabel.Length))) -ForegroundColor Cyan
-    Write-Host ("║{0}║" -f ("").PadRight(60))
-    Write-Host ("║  Otacon is NOT ready yet{0}║" -f (" " * 35)) -ForegroundColor White
-    Write-Host ("║{0}║" -f ("").PadRight(60))
-    Write-Host ("║  {0}{1}║" -f $Detail, (" " * [Math]::Max(0, 58 - $Detail.Length)))
-    Write-Host ("║{0}║" -f ("").PadRight(60))
-    Write-Host ("║  This is normal{0}║" -f (" " * 44))
-    Write-Host ("║  Nothing has crashed{0}║" -f (" " * 39))
-    Write-Host ("║  Do not close this window{0}║" -f (" " * 34)) -ForegroundColor Green
-    Write-Host ("║{0}║" -f ("").PadRight(60))
-    Write-Host ("║  Elapsed time     {0}{1}║" -f $em, (" " * [Math]::Max(0, 41 - $em.Length)))
-    Write-Host ("║  Typical time     {0}{1}║" -f $Typical, (" " * [Math]::Max(0, 41 - $Typical.Length)))
-    Write-Host ("║{0}║" -f ("").PadRight(60))
-    Write-Host ("║  Your Ubuntu VM in Proxmox is separate{0}║" -f (" " * 21))
-    Write-Host ("║  We prepare Ubuntu inside Windows automatically{0}║" -f (" " * 12))
-    Write-Host ("║{0}║" -f ("").PadRight(60))
-    Write-Host ("║{0}║" -f ("[ STILL WORKING ]".PadLeft(38).PadRight(60))) -ForegroundColor Green
-    Write-Host ("║{0}║" -f ("").PadRight(60))
-    Write-Host ("╚" + ("═" * 60) + "╝") -ForegroundColor DarkYellow
+    Write-Host ("|  {0}{1}|" -f $stepLabel, (" " * [Math]::Max(0, 58 - $stepLabel.Length))) -ForegroundColor Cyan
+    Write-Host ("|{0}|" -f ("").PadRight(60))
+    Write-Host ("|  Otacon is NOT ready yet{0}|" -f (" " * 35)) -ForegroundColor White
+    Write-Host ("|{0}|" -f ("").PadRight(60))
+    $detail = $Detail
+    if ($detail.Length -gt 58) { $detail = $detail.Substring(0, 58) }
+    Write-Host ("|  {0}{1}|" -f $detail, (" " * [Math]::Max(0, 58 - $detail.Length)))
+    Write-Host ("|{0}|" -f ("").PadRight(60))
+    Write-Host ("|  This is normal{0}|" -f (" " * 44))
+    Write-Host ("|  Nothing has crashed{0}|" -f (" " * 39))
+    Write-Host ("|  Do not close this window{0}|" -f (" " * 34)) -ForegroundColor Green
+    Write-Host ("|{0}|" -f ("").PadRight(60))
+    Write-Host ("|  Elapsed time     {0}{1}|" -f $em, (" " * [Math]::Max(0, 41 - $em.Length)))
+    Write-Host ("|  Typical time     {0}{1}|" -f $Typical, (" " * [Math]::Max(0, 41 - $Typical.Length)))
+    Write-Host ("|{0}|" -f ("").PadRight(60))
+    Write-Host ("|  Your Ubuntu VM in Proxmox is separate{0}|" -f (" " * 21))
+    Write-Host ("|  We prepare Ubuntu inside Windows automatically{0}|" -f (" " * 12))
+    Write-Host ("|{0}|" -f ("").PadRight(60))
+    Write-Host ("|{0}|" -f ("[ STILL WORKING ]".PadLeft(38).PadRight(60))) -ForegroundColor Green
+    Write-Host ("|{0}|" -f ("").PadRight(60))
+    Write-Host ("+" + ("-" * 60) + "+") -ForegroundColor DarkYellow
     Write-Host ""
 }
 
@@ -164,12 +167,12 @@ function Invoke-WithHeartbeat {
     )
     $started = Get-Date
     Save-InstallerState @{ stage = $Stage; step = $Step; step_name = $StepName }
-    Write-KeepLog "begin: $StepName — $Detail" -Stage $Stage
+    Write-KeepLog "begin: $StepName - $Detail" -Stage $Stage
     $job = Start-Job -ScriptBlock $Script
     try {
         while ($job.State -eq "Running") {
             Show-WorkingPanel -Step $Step -StepName $StepName -Detail $Detail -Started $started -Typical $Typical
-            Write-Host "  [ OTACON ] still working — do not close this window" -ForegroundColor DarkGray
+            Write-Host "  [ OTACON ] still working - do not close this window" -ForegroundColor DarkGray
             Start-Sleep -Seconds 4
         }
         $result = Receive-Job $job -ErrorAction SilentlyContinue
@@ -298,9 +301,9 @@ function Show-WhereYouAre {
     $otL  = if ($Snap.web_health) { "running" } elseif ($Snap.otacon_files) { "installed (starting)" } else { "not installed yet" }
     $webL = if ($Snap.web_health) { "responding" } else { "not available yet" }
 
-    $next = "please wait — setup will continue"
+    $next = "please wait - setup will continue"
     if ($Snap.overall -eq "COMPLETE" -or $Snap.web_health) {
-        $next = "open http://localhost:$Port — Otacon is ready"
+        $next = "open http://localhost:$Port - Otacon is ready"
     } elseif ($Snap.reboot_pending) {
         $next = "restart Windows, then this installer continues"
     } elseif (-not $Snap.ubuntu_ready) {
@@ -472,7 +475,7 @@ function Request-RestartConfirmation {
         return
     }
     Write-Host ""
-    Write-Host "  OK — restart later when you can." -ForegroundColor Green
+    Write-Host "  OK - restart later when you can." -ForegroundColor Green
     Write-Host "  After you restart and sign in, setup should reopen by itself." -ForegroundColor Green
     Write-Host "  If it does not, double-click OtaconsKeep-Setup.bat again." -ForegroundColor Green
     Write-Host ""
@@ -519,14 +522,14 @@ function Ensure-Admin {
         "",
         "Click Yes on the next Windows popup.",
         "",
-        "This does not install Otacon yet — it only unlocks the next step."
+        "This does not install Otacon yet - it only unlocks the next step."
     ) -Color Yellow
     $bat = Join-Path $RepoRoot "OtaconsKeep-Setup.bat"
     if (-not (Test-Path $bat)) { $bat = Join-Path $RepoRoot "install_otacon.bat" }
     Start-Process -FilePath $bat -Verb RunAs
     Write-Host ""
     Write-Host "  A new elevated Setup window should open after you click Yes." -ForegroundColor Green
-    Write-Host "  You can close THIS window now — setup continues in the new one." -ForegroundColor Green
+    Write-Host "  You can close THIS window now - setup continues in the new one." -ForegroundColor Green
     Write-Host "  If you clicked No on the Windows popup, press X to exit, or R to try again." -ForegroundColor DarkYellow
     Write-Host ""
     while ($true) {
@@ -547,7 +550,7 @@ function Step-EnableWsl {
     $p = Start-Process -FilePath "wsl.exe" -ArgumentList "--install","-d","Ubuntu" -PassThru -NoNewWindow
     while (-not $p.HasExited) {
         Show-WorkingPanel -Step 3 -StepName "PREPARING WINDOWS" -Detail "Windows is currently enabling Linux support" -Started $started -Typical "2 to 10 minutes"
-        Write-Host "  [ OTACON ] still working — do not close this window" -ForegroundColor DarkGray
+        Write-Host "  [ OTACON ] still working - do not close this window" -ForegroundColor DarkGray
         Start-Sleep -Seconds 4
     }
     Write-KeepLog "wsl --install exit=$($p.ExitCode)" -Stage "WAITING_FOR_WINDOWS"
@@ -584,7 +587,7 @@ function Step-WaitUbuntuInit {
     }
     $started = Get-Date
     Write-Host "  Waiting for Ubuntu inside Windows to finish first-time setup..." -ForegroundColor DarkYellow
-    Write-Host "  (Proxmox Ubuntu is unrelated — ignore it for this installer.)" -ForegroundColor DarkGray
+    Write-Host "  (Proxmox Ubuntu is unrelated - ignore it for this installer.)" -ForegroundColor DarkGray
     for ($i = 0; $i -lt 180; $i++) {
         if (Test-UbuntuReady $Name) {
             Write-KeepLog "ubuntu ready: $Name" -Stage "WAITING_FOR_UBUNTU_SETUP"
@@ -647,7 +650,7 @@ env $envPass bash "`$TMP"
             $tail = Get-Content $logPipe -Tail 3 -ErrorAction SilentlyContinue
             foreach ($t in $tail) { if ($t) { Write-Host ("  > {0}" -f ($t.Substring(0, [Math]::Min(90, $t.Length)))) -ForegroundColor DarkGray } }
         }
-        Write-Host "  [ OTACON ] bringing the keep online — do not close this window" -ForegroundColor DarkGray
+        Write-Host "  [ OTACON ] bringing the keep online - do not close this window" -ForegroundColor DarkGray
         Start-Sleep -Seconds 5
     }
 
@@ -667,7 +670,7 @@ function Step-RegisterWakeTask {
     param([string]$Name)
     $ps1 = Join-Path $RepoRoot "deploy\install-wake-task.ps1"
     if (-not (Test-Path $ps1)) {
-        Write-KeepLog "install-wake-task.ps1 missing — skip" -Level "WARN" -Stage "STARTING"
+        Write-KeepLog "install-wake-task.ps1 missing - skip" -Level "WARN" -Stage "STARTING"
         return $false
     }
     & powershell -NoProfile -ExecutionPolicy Bypass -File $ps1 -DistroName $Name -Port $Port | Out-Null
@@ -828,7 +831,7 @@ function Start-GuidedSetup {
                 "",
                 "This is NOT your Proxmox Ubuntu VM."
             ) -Color Yellow
-            Write-Host "  Press any letter key to close (paused — not failed)." -ForegroundColor DarkYellow
+            Write-Host "  Press any letter key to close (paused - not failed)." -ForegroundColor DarkYellow
             [void][Console]::ReadKey($true)
             return 0
         }
@@ -864,7 +867,7 @@ function Start-GuidedSetup {
     Write-Host "  [8/$TotalSteps] verifying otacon" -ForegroundColor Cyan
     Write-Host "  [ OTACON ] performing final systems check" -ForegroundColor Cyan
     if (-not (Step-Verify -Name $ubuntu)) {
-        $act = Show-SetupNeedsHelp -Step "starting otacon" -PlainError "Otacon did not answer http://localhost:$Port yet. The install may still be finishing — retry in a minute."
+        $act = Show-SetupNeedsHelp -Step "starting otacon" -PlainError "Otacon did not answer http://localhost:$Port yet. The install may still be finishing - retry in a minute."
         if ($act -eq "retry") { return (Start-GuidedSetup) }
         return 1
     }
