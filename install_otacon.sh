@@ -56,6 +56,16 @@ set -Eeuo pipefail
 #   OTACON_CHAT_HOST=127.0.0.1      # overridden to 0.0.0.0 when LAN mode=1
 #   OTACON_RELEASE=                 # optional release tag; empty follows release.json / main
 #   OTACON_ALLOW_UNSUPPORTED_OS=0   # set 1 to continue on unsupported distros
+#   OTACON_INSTALL_PHASE=auto|privileged|user|finalize
+#       auto       — interactive Linux (sudo may prompt on a real TTY)
+#       privileged — MUST run as root (apt, wsl.conf, ollama pkg). Used by Windows via wsl -u root
+#       user       — MUST run as normal user (repo, venv, models, config). No apt/sudo.
+#       finalize   — MUST run as root (install systemd unit prepared by user phase)
+#
+# Windows one-click elevation (no NOPASSWD:ALL):
+#   wsl -u root  → privileged
+#   wsl (default user) → user
+#   wsl -u root  → finalize
 #
 # Final states / exit codes:
 #   READY    (0) — all required selected components passed functional validation
@@ -97,7 +107,11 @@ CHAT_PORT="${OTACON_CHAT_PORT:-5757}"
 VOICE_TRAINER_INSTALLER_URL="${OTACON_VOICE_TRAINER_URL:-https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh}"
 OLLAMA_ENDPOINT="${OTACON_LLM_ENDPOINT:-http://127.0.0.1:11434}"
 ALLOW_UNSUPPORTED_OS="${OTACON_ALLOW_UNSUPPORTED_OS:-0}"
-
+INSTALL_PHASE="${OTACON_INSTALL_PHASE:-auto}"
+TARGET_USER="${OTACON_TARGET_USER:-}"
+PRIV_MARKER_DIR="/var/lib/otacon"
+PRIV_MARKER="$PRIV_MARKER_DIR/privileged-bootstrap.done"
+SERVICE_DRAFT_NAME="otacon.service.draft"
 # Install outcome tracking
 REQUIRED_FAIL=0
 OPTIONAL_FAIL=0
@@ -258,6 +272,12 @@ run_apt() {
 trap 'printf "\n\033[1;31m[AGG::FAIL]\033[0m Installer stopped on line %s. Log: %s\n" "$LINENO" "$INSTALL_LOG" >&2' ERR
 log "Install log → $INSTALL_LOG"
 
+case "${INSTALL_PHASE,,}" in
+  auto|privileged|user|finalize) INSTALL_PHASE="${INSTALL_PHASE,,}" ;;
+  *) die "Invalid OTACON_INSTALL_PHASE='$INSTALL_PHASE' (use auto|privileged|user|finalize)" ;;
+esac
+log "Install phase: $INSTALL_PHASE"
+
 printf '\033[1;35m'
 cat <<'OTACON_ASCII'
   ___ _____  _    ____ ___  _   _
@@ -354,31 +374,66 @@ case "$OS_SUPPORT" in
 esac
 
 if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-  warn "Running the whole installer as root is not recommended."
-  warn "Use a normal user account; sudo will be requested only for system packages."
+  if [[ "$INSTALL_PHASE" == "auto" ]]; then
+    warn "Running the full installer as root is not recommended for auto mode."
+    warn "Prefer: privileged phase as root, then user phase as the normal account."
+  fi
 fi
 
+# Elevation model:
+#   - Windows one-click: privileged/finalize via `wsl -u root` (no sudoers change)
+#   - user phase: never calls apt/sudo
+#   - auto (interactive Linux TTY): may use sudo with a password prompt
+# Permanent NOPASSWD:ALL is NOT required and NOT configured by this installer.
 SUDO=""
-if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-  if command_exists sudo; then
+NEED_PRIVILEGED_HELPER=0
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+  SUDO=""
+elif [[ "$INSTALL_PHASE" == "user" ]]; then
+  SUDO=""
+  NEED_PRIVILEGED_HELPER=0
+elif [[ "$INSTALL_PHASE" == "privileged" || "$INSTALL_PHASE" == "finalize" ]]; then
+  die "OTACON_INSTALL_PHASE=$INSTALL_PHASE must run as root (Windows: wsl.exe -u root). Do not use sudo NOPASSWD:ALL."
+elif command_exists sudo; then
+  if [[ -t 0 ]] && [[ -t 1 ]]; then
     SUDO="sudo"
+    ok "Interactive TTY detected — sudo may ask for your password for system packages only"
+  elif sudo -n true >/dev/null 2>&1; then
+    SUDO="sudo -n"
+    ok "Existing passwordless sudo detected (not created by Otacon); using sudo -n"
   else
-    die "This installer needs 'sudo' to install a few system packages, and it isn't available for your user. What to do: ask whoever set up this computer to add your account to the sudo group (on Ubuntu: 'usermod -aG sudo yourusername', then log out and back in), then rerun this script."
+    NEED_PRIVILEGED_HELPER=1
+    warn "No TTY and no passwordless sudo — system package steps must be done via root phase (wsl -u root)."
   fi
+else
+  die "This installer needs root for a few system packages, and 'sudo' isn't available. What to do: install sudo or rerun the privileged phase as root."
 fi
 
-# Unattended Windows→WSL installs have no TTY. A password prompt here hangs forever
-# with the last visible line stuck on "Checking Linux build dependencies".
-if [[ -n "$SUDO" ]]; then
-  stage "6.0" "START" "Verifying passwordless sudo (required for unattended install)"
-  if ! $SUDO -n true >/dev/null 2>&1; then
-    stage "6.0" "FAIL" "sudo requires a password (no TTY available)"
-    die "sudo needs a password, but Otacon Setup runs unattended from Windows with no keyboard prompt. That is why Stage 6 can sit forever after 'Checking Linux build dependencies'. Fix (one-time, inside Ubuntu): run 'sudo -v' once to confirm your password works, then: echo \"\$(whoami) ALL=(ALL) NOPASSWD:ALL\" | sudo tee /etc/sudoers.d/otacon-nopasswd && sudo chmod 440 /etc/sudoers.d/otacon-nopasswd — then double-click OtaconsKeep-Setup.bat again. Log: $INSTALL_LOG"
+resolve_target_user() {
+  if [[ -n "$TARGET_USER" ]]; then
+    printf '%s\n' "$TARGET_USER"
+    return 0
   fi
-  SUDO="$SUDO -n"
-  stage "6.0" "PASS" "passwordless sudo OK"
-  ok "sudo is passwordless (safe for unattended install)"
-fi
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    # Prefer the default WSL user from /etc/wsl.conf or the first non-system user with a home.
+    if [[ -f /etc/wsl.conf ]]; then
+      local conf_user
+      conf_user="$(awk -F= '/^[[:space:]]*default=/ {gsub(/[[:space:]]/,"",$2); print $2; exit}' /etc/wsl.conf 2>/dev/null || true)"
+      if [[ -n "$conf_user" ]] && id "$conf_user" >/dev/null 2>&1; then
+        printf '%s\n' "$conf_user"
+        return 0
+      fi
+    fi
+    local cand
+    cand="$(getent passwd | awk -F: '$3>=1000 && $3<65534 && $6 ~ /^\/home\// {print $1; exit}')"
+    if [[ -n "$cand" ]]; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+    die "Could not determine OTACON_TARGET_USER while running as root. Set OTACON_TARGET_USER explicitly."
+  fi
+  id -un
+}
 
 # ------------------------------------------------------------------------------
 # WSL: make sure systemd is active before doing anything else. Enabling it
@@ -389,19 +444,129 @@ fi
 # every step below is safe to redo, so the rerun just picks up from here.
 # ------------------------------------------------------------------------------
 
-if grep -qi microsoft /proc/version 2>/dev/null; then
-  WSL_CONF="/etc/wsl.conf"
-  if ! grep -qE '^\s*systemd\s*=\s*true' "$WSL_CONF" 2>/dev/null; then
-    log "Enabling systemd in WSL (needed so Otacon can auto-start with Windows)"
-    if [[ -f "$WSL_CONF" ]] && grep -q '^\[boot\]' "$WSL_CONF"; then
-      $SUDO sed -i '/^\[boot\]/a systemd=true' "$WSL_CONF"
-    else
-      printf '[boot]\nsystemd=true\n' | $SUDO tee -a "$WSL_CONF" >/dev/null
-    fi
-    warn "This Linux environment needs to restart once to activate that. If you're seeing this from install_otacon.bat, it will handle the restart and continue automatically."
-    exit 42
+ensure_wsl_systemd() {
+  if ! grep -qi microsoft /proc/version 2>/dev/null; then
+    return 0
   fi
+  local WSL_CONF="/etc/wsl.conf"
+  if grep -qE '^\s*systemd\s*=\s*true' "$WSL_CONF" 2>/dev/null; then
+    return 0
+  fi
+  log "Enabling systemd in WSL (needed so Otacon can auto-start with Windows)"
+  if [[ "${EUID:-$(id -u)}" -ne 0 && -z "$SUDO" ]]; then
+    die "Need root to edit /etc/wsl.conf. Windows Setup should run the privileged phase as wsl -u root."
+  fi
+  if [[ -f "$WSL_CONF" ]] && grep -q '^\[boot\]' "$WSL_CONF"; then
+    $SUDO sed -i '/^\[boot\]/a systemd=true' "$WSL_CONF"
+  else
+    printf '[boot]\nsystemd=true\n' | $SUDO tee -a "$WSL_CONF" >/dev/null
+  fi
+  warn "This Linux environment needs to restart once to activate that. If you're seeing this from install_otacon.bat, it will handle the restart and continue automatically."
+  exit 42
+}
+
+install_apt_packages() {
+  stage "6.3" "START" "Installing Linux build dependencies via apt"
+  log "Checking Linux build dependencies"
+  export DEBIAN_FRONTEND=noninteractive
+  export NEEDRESTART_MODE=a
+  export APT_LISTCHANGES_FRONTEND=none
+
+  local APT_PACKAGES=(
+    ca-certificates curl file git build-essential pkg-config
+    python3 python3-venv python3-pip libssl-dev zstd
+  )
+  if [[ "$BUILD_NATIVE" == "1" ]]; then
+    APT_PACKAGES+=(
+      libwebkit2gtk-4.1-dev
+      libayatana-appindicator3-dev
+      librsvg2-dev
+      libxdo-dev
+    )
+  fi
+  printf '[AGG::PROGRESS] apt packages (%s): %s\n' "${#APT_PACKAGES[@]}" "${APT_PACKAGES[*]}"
+  run_apt 600 "apt-get update" update -y
+  run_apt 1200 "apt-get install build dependencies" install -y "${APT_PACKAGES[@]}"
+  stage "6.3" "PASS" "Linux build dependencies installed"
+  ok "System dependencies are installed"
+}
+
+phase_privileged() {
+  [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "privileged phase requires root (wsl.exe -u root)"
+  TARGET_USER="$(resolve_target_user)"
+  id "$TARGET_USER" >/dev/null 2>&1 || die "OTACON_TARGET_USER='$TARGET_USER' does not exist"
+  stage "6.0" "PASS" "Running privileged bootstrap as root for user=$TARGET_USER"
+  ensure_wsl_systemd
+  install_apt_packages
+  if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
+    stage "6.3b" "START" "Installing Ollama (system)"
+    if ! command_exists ollama; then
+      run_watched 300 "ollama install script" -- bash -c 'curl -fsSL --connect-timeout 30 --max-time 240 https://ollama.com/install.sh | sh'
+    else
+      ok "Ollama already installed"
+    fi
+    if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+      systemctl enable ollama >/dev/null 2>&1 || true
+      systemctl restart ollama >/dev/null 2>&1 || true
+    fi
+    stage "6.3b" "PASS" "Ollama present"
+  fi
+  mkdir -p "$PRIV_MARKER_DIR"
+  printf 'user=%s\nts=%s\n' "$TARGET_USER" "$(date -Iseconds)" > "$PRIV_MARKER"
+  chmod 644 "$PRIV_MARKER"
+  stage "6.0" "PASS" "Privileged bootstrap complete"
+  ok "Privileged bootstrap complete (no sudoers changes were made)"
+  exit 0
+}
+
+phase_finalize() {
+  [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "finalize phase requires root (wsl.exe -u root)"
+  TARGET_USER="$(resolve_target_user)"
+  local user_home service_draft service_file
+  user_home="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+  [[ -n "$user_home" && -d "$user_home" ]] || die "Cannot resolve home for $TARGET_USER"
+  service_draft="$user_home/.config/otacon/$SERVICE_DRAFT_NAME"
+  service_file="/etc/systemd/system/otacon.service"
+  stage "6.7" "START" "Installing systemd unit for user=$TARGET_USER"
+  if [[ ! -f "$service_draft" ]]; then
+    die "Missing service draft at $service_draft — run the user phase first."
+  fi
+  # Ownership check: draft must belong to target user (not planted by another account).
+  local draft_owner
+  draft_owner="$(stat -c '%U' "$service_draft" 2>/dev/null || true)"
+  if [[ "$draft_owner" != "$TARGET_USER" ]]; then
+    die "Service draft owner is '$draft_owner', expected '$TARGET_USER'. Aborting finalize."
+  fi
+  install -m 644 "$service_draft" "$service_file"
+  if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+    systemctl daemon-reload
+    systemctl enable otacon.service >/dev/null 2>&1 || true
+    systemctl restart otacon.service
+    if command_exists ollama; then
+      systemctl enable ollama >/dev/null 2>&1 || true
+      systemctl restart ollama >/dev/null 2>&1 || true
+    fi
+    ok "otacon.service installed and started as user=$TARGET_USER"
+  else
+    warn "systemd not active yet; unit installed to $service_file for next boot"
+  fi
+  stage "6.7" "PASS" "Finalize complete"
+  exit 0
+}
+
+if [[ "$INSTALL_PHASE" == "privileged" ]]; then
+  phase_privileged
 fi
+if [[ "$INSTALL_PHASE" == "finalize" ]]; then
+  phase_finalize
+fi
+
+# user / auto continue below
+if [[ "$INSTALL_PHASE" == "user" && "${EUID:-$(id -u)}" -eq 0 ]]; then
+  die "user phase must not run as root (file ownership would be wrong). Use the default WSL user."
+fi
+
+ensure_wsl_systemd
 
 # ------------------------------------------------------------------------------
 # Hardware scan
@@ -543,42 +708,26 @@ else
   warn "If Windows nvidia-smi shows an RTX card but this does not, install/update the NVIDIA Windows driver and ensure WSL2 GPU support is enabled, then reopen Ubuntu."
 fi
 
-stage "6.3" "START" "Installing Linux build dependencies via apt"
-log "Checking Linux build dependencies"
-
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
-export APT_LISTCHANGES_FRONTEND=none
-
-APT_PACKAGES=(
-  ca-certificates
-  curl
-  file
-  git
-  build-essential
-  pkg-config
-  python3
-  python3-venv
-  python3-pip
-  libssl-dev
-  zstd
-)
-
-# Native/desktop profile needs WebKit/Tauri libs; Core skips them to reduce failure surface.
-if [[ "$BUILD_NATIVE" == "1" ]]; then
-  APT_PACKAGES+=(
-    libwebkit2gtk-4.1-dev
-    libayatana-appindicator3-dev
-    librsvg2-dev
-    libxdo-dev
-  )
+SKIP_APT=0
+if [[ "$INSTALL_PHASE" == "user" ]]; then
+  SKIP_APT=1
+elif [[ -f "$PRIV_MARKER" ]]; then
+  SKIP_APT=1
+  ok "Privileged bootstrap marker present — skipping apt in user/auto phase"
 fi
 
-printf '[AGG::PROGRESS] apt packages (%s): %s\n' "${#APT_PACKAGES[@]}" "${APT_PACKAGES[*]}"
-run_apt 600 "apt-get update" update -y
-run_apt 1200 "apt-get install build dependencies" install -y "${APT_PACKAGES[@]}"
-stage "6.3" "PASS" "Linux build dependencies installed"
-ok "System dependencies are installed"
+if [[ "$SKIP_APT" == "1" ]]; then
+  stage "6.3" "PASS" "System packages already provided by privileged phase / skip"
+  # Sanity: critical tools must exist
+  for req in git python3 curl; do
+    command_exists "$req" || die "Missing required tool '$req' after privileged bootstrap. Re-run Windows Setup so the root phase can install packages."
+  done
+else
+  if [[ "$NEED_PRIVILEGED_HELPER" == "1" ]]; then
+    die "Cannot install system packages without a TTY or root. Windows Setup should run OTACON_INSTALL_PHASE=privileged via wsl.exe -u root first (no NOPASSWD:ALL required)."
+  fi
+  install_apt_packages
+fi
 
 # ------------------------------------------------------------------------------
 # Git clone / update
@@ -685,11 +834,17 @@ ensure_ollama_running() {
     return 0
   fi
   if command_exists systemctl && [[ -d /run/systemd/system ]]; then
-    $SUDO systemctl enable ollama >/dev/null 2>&1 || true
-    $SUDO systemctl restart ollama >/dev/null 2>&1 || true
+    if [[ -n "$SUDO" || "${EUID:-$(id -u)}" -eq 0 ]]; then
+      $SUDO systemctl enable ollama >/dev/null 2>&1 || true
+      $SUDO systemctl restart ollama >/dev/null 2>&1 || true
+    else
+      # user phase: may lack permission to restart the system unit; try unprivileged status only
+      systemctl is-active --quiet ollama 2>/dev/null || true
+    fi
   fi
   if ! curl -fsS --max-time 2 "$OLLAMA_ENDPOINT/api/tags" >/dev/null 2>&1; then
-    # User-session fallback when systemd unit is missing
+    # User-session fallback when systemd unit is missing / not restartable
+    mkdir -p "$HOME/.config/otacon"
     nohup ollama serve >"$HOME/.config/otacon/ollama.log" 2>&1 &
     sleep 2
   fi
@@ -763,6 +918,9 @@ if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
   log "Default Model: installing Ollama + pulling $RECOMMENDED_MODEL"
 
   if ! command_exists ollama; then
+    if [[ "$INSTALL_PHASE" == "user" ]]; then
+      die "Ollama is not installed. The privileged root phase must install it first (Windows: wsl.exe -u root OTACON_INSTALL_PHASE=privileged)."
+    fi
     run_watched 300 "ollama install script" -- bash -c 'curl -fsSL --connect-timeout 30 --max-time 240 https://ollama.com/install.sh | sh'
   else
     ok "Ollama already installed"
@@ -969,9 +1127,13 @@ if [[ "$BUILD_NATIVE" == "1" ]]; then
   fi
 
   if [[ "$INSTALL_DEB" == "1" && -n "$DEB_PATH" && -f "$DEB_PATH" ]]; then
-    log "Installing generated Otacon .deb"
-    run_apt 600 "apt-get install otacon .deb" install -y "$DEB_PATH"
-    ok "Native package installed"
+    if [[ "$INSTALL_PHASE" == "user" ]] || { [[ -z "$SUDO" ]] && [[ "${EUID:-$(id -u)}" -ne 0 ]]; }; then
+      warn "Skipping .deb system install in unprivileged phase (package left at $DEB_PATH)"
+    else
+      log "Installing generated Otacon .deb"
+      run_apt 600 "apt-get install otacon .deb" install -y "$DEB_PATH"
+      ok "Native package installed"
+    fi
   fi
 else
   warn "Native Tauri build disabled (OTACON_BUILD_NATIVE=0)."
@@ -1030,20 +1192,16 @@ if [[ "$LAN_MODE" == "1" ]]; then
   ok "LAN auth token stored at $LAN_TOKEN_FILE"
 fi
 
-if [[ "$LAUNCH_WIZARD" == "1" ]]; then
-  if [[ "$USE_SYSTEMD" == "1" ]]; then
-    log "Installing Otacon as a systemd service (auto-starts, restarts itself on crash)"
-
-    SERVICE_FILE="/etc/systemd/system/$SYSTEMD_SERVICE_NAME"
-    RUN_USER="$(id -un)"
-    ENV_EXTRA=""
-    if [[ "$LAN_MODE" == "1" ]]; then
-      ENV_EXTRA="Environment=OTACON_LAN_MODE=1"
-    else
-      ENV_EXTRA="Environment=OTACON_LAN_MODE=0"
-    fi
-
-    $SUDO tee "$SERVICE_FILE" >/dev/null <<SERVICEEOF
+write_otacon_service_unit() {
+  local out_path="$1"
+  local run_user="$2"
+  local ENV_EXTRA
+  if [[ "$LAN_MODE" == "1" ]]; then
+    ENV_EXTRA="Environment=OTACON_LAN_MODE=1"
+  else
+    ENV_EXTRA="Environment=OTACON_LAN_MODE=0"
+  fi
+  cat > "$out_path" <<SERVICEEOF
 [Unit]
 Description=Otacon AI Ecosystem
 After=network.target ollama.service
@@ -1051,7 +1209,7 @@ Wants=ollama.service
 
 [Service]
 Type=simple
-User=$RUN_USER
+User=$run_user
 WorkingDirectory=$INSTALL_DIR
 Environment=PYTHONPATH=$INSTALL_DIR
 Environment=OTACON_HOST=$CHAT_HOST
@@ -1067,42 +1225,60 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 SERVICEEOF
+}
 
+start_otacon_background() {
+  log "Starting your local Otacon web UI"
+  if [[ -f "$PID_FILE" ]]; then
+    OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" >/dev/null 2>&1 \
+      && curl -fsS --max-time 2 "${LOCAL_URL}/api/branding" 2>/dev/null | grep -q '"product_name"'; then
+      ok "Otacon web UI is already running (PID $OLD_PID)"
+      return 0
+    fi
+    warn "Stale or unhealthy Otacon PID file — restarting web UI"
+    if [[ -n "$OLD_PID" ]]; then kill "$OLD_PID" >/dev/null 2>&1 || true; fi
+    rm -f "$PID_FILE"
+  fi
+  nohup env \
+    PYTHONPATH="$INSTALL_DIR" \
+    OTACON_HOST="$CHAT_HOST" \
+    OTACON_PORT="$CHAT_PORT" \
+    OTACON_LAN_MODE="$LAN_MODE" \
+    OTACON_LLM_PROVIDER=ollama \
+    OTACON_LLM_ENDPOINT="$OLLAMA_ENDPOINT" \
+    OTACON_LLM_MODEL="$RECOMMENDED_MODEL" \
+    "$VPY" -m installer.server \
+    >"$LOG_FILE" 2>&1 &
+  WIZARD_PID=$!
+  printf '%s\n' "$WIZARD_PID" > "$PID_FILE"
+}
+
+if [[ "$LAUNCH_WIZARD" == "1" ]]; then
+  RUN_USER="$(id -un)"
+  SERVICE_DRAFT="$HOME/.config/otacon/$SERVICE_DRAFT_NAME"
+  mkdir -p "$HOME/.config/otacon"
+
+  if [[ "$INSTALL_PHASE" == "user" ]]; then
+    # Unprivileged: write unit draft for finalize (wsl -u root); start process for health check now.
+    log "Preparing systemd unit draft for root finalize (no sudoers changes)"
+    write_otacon_service_unit "$SERVICE_DRAFT" "$RUN_USER"
+    chmod 644 "$SERVICE_DRAFT"
+    ok "Service draft written to $SERVICE_DRAFT (finalize phase installs it as root)"
+    start_otacon_background
+  elif [[ "$USE_SYSTEMD" == "1" ]] && { [[ -n "$SUDO" ]] || [[ "${EUID:-$(id -u)}" -eq 0 ]]; }; then
+    log "Installing Otacon as a systemd service (auto-starts, restarts itself on crash)"
+    SERVICE_FILE="/etc/systemd/system/$SYSTEMD_SERVICE_NAME"
+    write_otacon_service_unit "$SERVICE_DRAFT" "$RUN_USER"
+    $SUDO install -m 644 "$SERVICE_DRAFT" "$SERVICE_FILE"
     $SUDO systemctl daemon-reload
     $SUDO systemctl enable "$SYSTEMD_SERVICE_NAME" >/dev/null 2>&1 || true
     $SUDO systemctl restart "$SYSTEMD_SERVICE_NAME"
     ok "otacon.service enabled -- starts automatically whenever this Linux environment boots"
   else
-    log "Starting your local Otacon web UI"
-    warn "No live systemd found here, so this won't auto-start on the next boot. Falling back to a plain background process for this session."
-
-    if [[ -f "$PID_FILE" ]]; then
-      OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-      if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" >/dev/null 2>&1 \
-        && curl -fsS --max-time 2 "${LOCAL_URL}/api/branding" 2>/dev/null | grep -q '"product_name"'; then
-        ok "Otacon web UI is already running (PID $OLD_PID)"
-      else
-        warn "Stale or unhealthy Otacon PID file — restarting web UI"
-        if [[ -n "$OLD_PID" ]]; then kill "$OLD_PID" >/dev/null 2>&1 || true; fi
-        rm -f "$PID_FILE"
-      fi
-    fi
-
-    if [[ ! -f "$PID_FILE" ]]; then
-      nohup env \
-        PYTHONPATH="$INSTALL_DIR" \
-        OTACON_HOST="$CHAT_HOST" \
-        OTACON_PORT="$CHAT_PORT" \
-        OTACON_LAN_MODE="$LAN_MODE" \
-        OTACON_LLM_PROVIDER=ollama \
-        OTACON_LLM_ENDPOINT="$OLLAMA_ENDPOINT" \
-        OTACON_LLM_MODEL="$RECOMMENDED_MODEL" \
-        "$VPY" -m installer.server \
-        >"$LOG_FILE" 2>&1 &
-
-      WIZARD_PID=$!
-      printf '%s\n' "$WIZARD_PID" > "$PID_FILE"
-    fi
+    write_otacon_service_unit "$SERVICE_DRAFT" "$RUN_USER" || true
+    warn "No live systemd / no root here, so this won't auto-start on the next boot. Falling back to a plain background process for this session."
+    start_otacon_background
   fi
 
   HEALTH_OK=0
