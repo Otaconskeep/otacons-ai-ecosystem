@@ -671,31 +671,106 @@ function Get-WslNvidiaName {
     return "not visible in WSL"
 }
 
-function Test-WslPasswordlessSudo {
+function Get-WslDefaultUser {
     param([string]$Name)
-    & wsl.exe -d $Name -- bash -lc "sudo -n true" 2>$null | Out-Null
-    return ($LASTEXITCODE -eq 0)
+    $u = (& wsl.exe -d $Name -- bash -lc "whoami" 2>$null | Select-Object -Last 1)
+    if ($u) { return ("{0}" -f $u).Trim() }
+    return ""
 }
 
-function Ensure-WslPasswordlessSudo {
-    param([string]$Name)
-    if (Test-WslPasswordlessSudo -Name $Name) { return $true }
-    Show-Box "SUDO PASSWORD BLOCKER" @(
-        "Stage 6 installs Linux packages using sudo.",
-        "Your Ubuntu user still requires a sudo password.",
-        "Otacon Setup has no keyboard for that prompt, so it",
-        "hangs forever after Checking Linux build dependencies.",
-        "",
-        "Fix once (open Ubuntu from Start, paste):",
-        "  sudo -v",
-        '  echo "$(whoami) ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/otacon-nopasswd',
-        "  sudo chmod 440 /etc/sudoers.d/otacon-nopasswd",
-        "",
-        "Then press R here to retry, or X to close and rerun Setup."
-    ) -Color Yellow
-    $c = Read-Choice "  Press R to retry sudo check, X to close: " @("R","X")
-    if ($c -eq "X") { return $false }
-    return (Test-WslPasswordlessSudo -Name $Name)
+function Invoke-WslInstallPhase {
+    param(
+        [string]$Name,
+        [string]$Phase,
+        [string]$AsUser,   # "" = default WSL user; "root" = -u root
+        [string]$TargetUser,
+        [string]$EnvPass,
+        [datetime]$Started,
+        [string]$GpuWin,
+        [string]$GpuWsl,
+        [string]$LogPipe,
+        [int]$OverallTimeoutMin = 120,
+        [int]$StallTimeoutMin = 25
+    )
+
+    $userArg = @()
+    if ($AsUser -eq "root") {
+        $userArg = @("-u", "root")
+    } elseif ($AsUser -and $AsUser -ne "") {
+        $userArg = @("-u", $AsUser)
+    }
+
+    $targetEnv = ""
+    if ($TargetUser) { $targetEnv = "OTACON_TARGET_USER=$TargetUser" }
+
+    $bash = @"
+set -euo pipefail
+TMP=`$(mktemp /tmp/otacon-install.XXXXXX.sh)
+trap 'rm -f "`$TMP"' EXIT
+curl -fsSL --connect-timeout 30 --max-time 120 https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/$Branch/install_otacon.sh -o "`$TMP"
+test -s "`$TMP" || { echo 'Download failed or empty installer' >&2; exit 1; }
+head -n1 "`$TMP" | grep -q bash || { echo 'Downloaded file does not look like the Otacon installer' >&2; exit 1; }
+env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
+"@
+
+    if (Test-Path $LogPipe) { Remove-Item -LiteralPath $LogPipe -Force -ErrorAction SilentlyContinue }
+    Write-KeepLog "starting linux phase=$Phase as=$AsUser target=$TargetUser in $Name" -Stage "INSTALLING_OTACON"
+
+    $bashWrapped = $bash + " 2>&1"
+    $argList = @("-d", $Name) + $userArg + @("--", "bash", "-lc", $bashWrapped)
+    $proc = Start-Process -FilePath "wsl.exe" -ArgumentList $argList `
+        -NoNewWindow -PassThru -RedirectStandardOutput $LogPipe
+
+    $lastProgress = Get-Date
+    $lastByteLen = 0L
+    $currentSub = "phase $Phase starting"
+
+    while (-not $proc.HasExited) {
+        $recent = @()
+        if (Test-Path $LogPipe) {
+            $item = Get-Item -LiteralPath $LogPipe -ErrorAction SilentlyContinue
+            if ($item -and $item.Length -gt $lastByteLen) {
+                $lastByteLen = $item.Length
+                $lastProgress = Get-Date
+            }
+            $all = @(Get-Content $LogPipe -ErrorAction SilentlyContinue)
+            foreach ($line in $all) {
+                if ($line -match '\[STAGE\]\s+(\S+)\s+(\S+)\s+(.*)$') {
+                    $currentSub = ("{0} [{1}] {2}" -f $Matches[1], $Matches[2], $Matches[3])
+                    $lastProgress = Get-Date
+                } elseif ($line -match '\[AGG::HEARTBEAT\]') {
+                    $lastProgress = Get-Date
+                    $currentSub = $line.Substring(0, [Math]::Min(90, $line.Length))
+                } elseif ($line -match '\[AGG::PROGRESS\]') {
+                    $lastProgress = Get-Date
+                } elseif ($line -match 'pulling|Downloading|Get:|Unpacking|Setting up') {
+                    $lastProgress = Get-Date
+                }
+            }
+            $recent = @($all | Select-Object -Last 5)
+        }
+
+        Show-Stage6Panel -Started $Started -Substep ("[{0}] {1}" -f $Phase, $currentSub) -RecentLines $recent `
+            -LastProgress $lastProgress -GpuWin $GpuWin -GpuWsl $GpuWsl
+
+        $elapsedMin = ((Get-Date) - $Started).TotalMinutes
+        $stallMin = ((Get-Date) - $lastProgress).TotalMinutes
+        if ($elapsedMin -ge $OverallTimeoutMin) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Write-KeepLog "stage6 overall timeout ${OverallTimeoutMin}m phase=$Phase" -Level "ERROR" -Stage "INSTALLING_OTACON"
+            return 124
+        }
+        if ($stallMin -ge $StallTimeoutMin) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Write-KeepLog "stage6 stall timeout ${StallTimeoutMin}m phase=$Phase substep=$currentSub" -Level "ERROR" -Stage "INSTALLING_OTACON"
+            return 125
+        }
+        Start-Sleep -Seconds 5
+    }
+
+    $code = $proc.ExitCode
+    Write-KeepLog "linux phase=$Phase exit=$code" -Stage "INSTALLING_OTACON"
+    return $code
 }
 
 function Step-InstallOtacon {
@@ -706,12 +781,19 @@ function Step-InstallOtacon {
     $gpuWsl = Get-WslNvidiaName -Name $Name
     Write-KeepLog "GPU windows='$gpuWin' wsl='$gpuWsl'" -Stage "INSTALLING_OTACON"
 
-    if (-not (Ensure-WslPasswordlessSudo -Name $Name)) {
-        Write-KeepLog "passwordless sudo missing - abort stage 6" -Level "ERROR" -Stage "INSTALLING_OTACON"
+    # Elevation architecture: never configure NOPASSWD:ALL.
+    # privileged + finalize run as WSL root via wsl.exe -u root; user phase runs as the normal account.
+    $targetUser = Get-WslDefaultUser -Name $Name
+    if (-not $targetUser -or $targetUser -eq "root") {
+        Write-KeepLog "could not resolve non-root WSL default user (got='$targetUser')" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        Show-SetupNeedsHelp -Step "installing otacon (no default user)" -PlainError (
+            "Could not determine the normal Ubuntu username. Finish Ubuntu first-run setup, then rerun OtaconsKeep Setup."
+        ) | Out-Null
         return 1
     }
+    Write-KeepLog "WSL default user=$targetUser (no NOPASSWD:ALL; using wsl -u root for privileged steps)" -Stage "INSTALLING_OTACON"
 
-    Show-Stage6Panel -Started $started -Substep "Preparing Linux installer" -GpuWin $gpuWin -GpuWsl $gpuWsl -LastProgress $started
+    Show-Stage6Panel -Started $started -Substep "Preparing Linux installer (root bootstrap)" -GpuWin $gpuWin -GpuWsl $gpuWsl -LastProgress $started
 
     $envPass = @(
         "OTACON_INSTALL_DEFAULT_MODEL=$($env:OTACON_INSTALL_DEFAULT_MODEL)",
@@ -729,106 +811,76 @@ function Step-InstallOtacon {
         "OTACON_RELEASE=$($env:OTACON_RELEASE)"
     ) -join " "
 
-    $bash = @"
-set -euo pipefail
-TMP=`$(mktemp /tmp/otacon-install.XXXXXX.sh)
-trap 'rm -f "`$TMP"' EXIT
-curl -fsSL --connect-timeout 30 --max-time 120 https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/$Branch/install_otacon.sh -o "`$TMP"
-test -s "`$TMP" || { echo 'Download failed or empty installer' >&2; exit 1; }
-head -n1 "`$TMP" | grep -q bash || { echo 'Downloaded file does not look like the Otacon installer' >&2; exit 1; }
-env $envPass bash "`$TMP"
-"@
-
     $logPipe = Join-Path $LogDir "linux-install-tail.log"
-    if (Test-Path $logPipe) { Remove-Item -LiteralPath $logPipe -Force -ErrorAction SilentlyContinue }
-    Write-KeepLog "starting linux installer in $Name" -Stage "INSTALLING_OTACON"
-
-    $bashWrapped = $bash + " 2>&1"
-    $proc = Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", $Name, "--", "bash", "-lc", $bashWrapped) `
-        -NoNewWindow -PassThru -RedirectStandardOutput $logPipe
-
-    $lastProgress = Get-Date
-    $lastByteLen = 0L
-    $currentSub = "starting Linux installer"
     $overallTimeoutMin = 120
     $stallTimeoutMin = 25
     if ($env:OTACON_STAGE6_OVERALL_MIN) { [void][int]::TryParse($env:OTACON_STAGE6_OVERALL_MIN, [ref]$overallTimeoutMin) }
     if ($env:OTACON_STAGE6_STALL_MIN) { [void][int]::TryParse($env:OTACON_STAGE6_STALL_MIN, [ref]$stallTimeoutMin) }
 
-    while (-not $proc.HasExited) {
-        $recent = @()
+    # --- Phase 1: privileged (wsl -u root) ---
+    $privAttempts = 0
+    while ($true) {
+        $privAttempts++
+        if ($privAttempts -gt 3) {
+            Show-SetupNeedsHelp -Step "installing otacon (privileged)" -PlainError (
+                "Privileged bootstrap kept requesting a WSL restart. Log: $logPipe"
+            ) | Out-Null
+            return 1
+        }
+        $code = Invoke-WslInstallPhase -Name $Name -Phase "privileged" -AsUser "root" -TargetUser $targetUser `
+            -EnvPass $envPass -Started $started -GpuWin $gpuWin -GpuWsl $gpuWsl -LogPipe $logPipe `
+            -OverallTimeoutMin $overallTimeoutMin -StallTimeoutMin $stallTimeoutMin
+        if ($code -eq 42) {
+            Write-Host "  Restarting the Windows Ubuntu environment once (systemd enable)..." -ForegroundColor Yellow
+            & wsl.exe --terminate $Name 2>$null
+            Start-Sleep -Seconds 3
+            continue
+        }
+        break
+    }
+    if ($code -ne 0) {
         if (Test-Path $logPipe) {
-            $item = Get-Item -LiteralPath $logPipe -ErrorAction SilentlyContinue
-            if ($item -and $item.Length -gt $lastByteLen) {
-                $lastByteLen = $item.Length
-                $lastProgress = Get-Date
-            }
-            $all = @(Get-Content $logPipe -ErrorAction SilentlyContinue)
-            foreach ($line in $all) {
-                if ($line -match '\[STAGE\]\s+(\S+)\s+(\S+)\s+(.*)$') {
-                    $currentSub = ("{0} [{1}] {2}" -f $Matches[1], $Matches[2], $Matches[3])
-                    $lastProgress = Get-Date
-                } elseif ($line -match '\[AGG::HEARTBEAT\]') {
-                    $lastProgress = Get-Date
-                    $currentSub = $line.Substring(0, [Math]::Min(90, $line.Length))
-                } elseif ($line -match '\[AGG::PROGRESS\]') {
-                    $lastProgress = Get-Date
-                } elseif ($line -match 'pulling|Downloading|Get:|Unpacking|Setting up') {
-                    $lastProgress = Get-Date
-                }
-            }
-            $recent = @($all | Select-Object -Last 5)
+            Write-Host "---- last 50 log lines (privileged) ----" -ForegroundColor Yellow
+            Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
         }
-
-        Show-Stage6Panel -Started $started -Substep $currentSub -RecentLines $recent `
-            -LastProgress $lastProgress -GpuWin $gpuWin -GpuWsl $gpuWsl
-
-        $elapsedMin = ((Get-Date) - $started).TotalMinutes
-        $stallMin = ((Get-Date) - $lastProgress).TotalMinutes
-        if ($elapsedMin -ge $overallTimeoutMin) {
-            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-            Write-KeepLog "stage6 overall timeout ${overallTimeoutMin}m" -Level "ERROR" -Stage "INSTALLING_OTACON"
-            Show-SetupNeedsHelp -Step "installing otacon (overall timeout)" -PlainError (
-                "Stage 6 exceeded $overallTimeoutMin minutes. Last substep: $currentSub. Log: $logPipe"
-            ) | Out-Null
-            if (Test-Path $logPipe) {
-                Write-Host "---- last 50 log lines ----" -ForegroundColor Yellow
-                Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-            }
-            return 1
-        }
-        if ($stallMin -ge $stallTimeoutMin) {
-            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-            Write-KeepLog "stage6 stall timeout ${stallTimeoutMin}m substep=$currentSub" -Level "ERROR" -Stage "INSTALLING_OTACON"
-            Show-SetupNeedsHelp -Step "installing otacon (no progress)" -PlainError (
-                "No installer progress for $stallTimeoutMin minutes. Last substep: $currentSub. Often caused by sudo password, apt lock, or dead network. Log: $logPipe"
-            ) | Out-Null
-            if (Test-Path $logPipe) {
-                Write-Host "---- last 50 log lines ----" -ForegroundColor Yellow
-                Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-            }
-            return 1
-        }
-        Start-Sleep -Seconds 5
+        Show-SetupNeedsHelp -Step "installing otacon (privileged bootstrap)" -PlainError (
+            "Root bootstrap failed (exit $code). No sudo password was required; this uses wsl -u root. Log: $logPipe"
+        ) | Out-Null
+        return $code
     }
 
-    $code = $proc.ExitCode
-    Write-KeepLog "linux installer exit=$code" -Stage "INSTALLING_OTACON"
-
-    if ($code -eq 42) {
-        Write-Host "  Restarting the Windows Ubuntu environment once (feature enable)..." -ForegroundColor Yellow
-        & wsl.exe --terminate $Name 2>$null
-        Start-Sleep -Seconds 3
-        return (Step-InstallOtacon -Name $Name)
-    }
+    # --- Phase 2: user (default WSL account) ---
+    $code = Invoke-WslInstallPhase -Name $Name -Phase "user" -AsUser $targetUser -TargetUser $targetUser `
+        -EnvPass $envPass -Started $started -GpuWin $gpuWin -GpuWsl $gpuWsl -LogPipe $logPipe `
+        -OverallTimeoutMin $overallTimeoutMin -StallTimeoutMin $stallTimeoutMin
     if ($code -ne 0 -and $code -ne 2) {
         if (Test-Path $logPipe) {
-            Write-Host "---- last 50 log lines ----" -ForegroundColor Yellow
+            Write-Host "---- last 50 log lines (user) ----" -ForegroundColor Yellow
             Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-            Write-Host "Full log: $logPipe" -ForegroundColor DarkYellow
         }
+        Show-SetupNeedsHelp -Step "installing otacon (user phase)" -PlainError (
+            "User install phase failed (exit $code). Log: $logPipe"
+        ) | Out-Null
+        return $code
     }
-    return $code
+    $userCode = $code
+
+    # --- Phase 3: finalize (wsl -u root) — install systemd unit drafted by user phase ---
+    $code = Invoke-WslInstallPhase -Name $Name -Phase "finalize" -AsUser "root" -TargetUser $targetUser `
+        -EnvPass $envPass -Started $started -GpuWin $gpuWin -GpuWsl $gpuWsl -LogPipe $logPipe `
+        -OverallTimeoutMin 15 -StallTimeoutMin 10
+    if ($code -ne 0) {
+        if (Test-Path $logPipe) {
+            Write-Host "---- last 50 log lines (finalize) ----" -ForegroundColor Yellow
+            Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+        }
+        Write-KeepLog "finalize failed exit=$code (user phase was $userCode); service may still be running via nohup" -Level "WARN" -Stage "INSTALLING_OTACON"
+        # Degraded: user phase may have started Otacon via nohup; don't hard-fail READY if user was 0/2
+        if ($userCode -eq 0 -or $userCode -eq 2) { return $userCode }
+        return $code
+    }
+
+    return $userCode
 }
 
 function Step-RegisterWakeTask {
