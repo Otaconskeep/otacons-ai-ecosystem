@@ -8,8 +8,19 @@ REM ============================================================
 setlocal EnableExtensions EnableDelayedExpansion
 title OtaconsKeep Setup
 
-REM Encoding self-check at top level only - never inside IF (...).
-powershell -NoProfile -ExecutionPolicy Bypass -Command " $b=[IO.File]::ReadAllBytes($args[0]); if($b.Length -lt 8){ Write-Host 'ERROR: installer file empty'; exit 2 }; if($b[0] -eq 255 -and $b[1] -eq 254){ Write-Host 'ERROR: UTF-16 encoding'; exit 3 }; if($b[0] -eq 254 -and $b[1] -eq 255){ Write-Host 'ERROR: UTF-16 encoding'; exit 3 }; if(-not ($b[0] -eq 239 -and $b[1] -eq 187 -and $b[2] -eq 191)){ Write-Host 'ERROR: missing UTF-8 BOM. Re-download from the Otaconskeep website.'; exit 4 }; exit 0 " "%~f0"
+REM --- encoding check: NEVER append %~f0 after powershell -Command ---
+REM powershell.exe concatenates tokens after -Command into script text.
+REM Paths like OtaconsKeep-Setup (1).bat then parse as PowerShell code.
+set "OTACON_SETUP_SELF=%~f0"
+set "ENC_PS1=%~dp0deploy\check-bat-encoding.ps1"
+if exist "%ENC_PS1%" goto ENC_VIA_FILE
+goto ENC_VIA_ENV
+:ENC_VIA_FILE
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ENC_PS1%" -Path "%~f0"
+goto ENC_AFTER_CHECK
+:ENC_VIA_ENV
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $p = $env:OTACON_SETUP_SELF; if ([string]::IsNullOrWhiteSpace($p)) { Write-Host 'ERROR: installer path missing'; exit 2 }; if (-not (Test-Path -LiteralPath $p)) { Write-Host 'ERROR: installer file not found'; exit 2 }; $b = [IO.File]::ReadAllBytes($p); if ($b.Length -lt 8) { Write-Host 'ERROR: installer file empty'; exit 2 }; if ($b[0] -eq 255 -and $b[1] -eq 254) { Write-Host 'ERROR: UTF-16 encoding'; exit 3 }; if ($b[0] -eq 254 -and $b[1] -eq 255) { Write-Host 'ERROR: UTF-16 encoding'; exit 3 }; if (-not ($b[0] -eq 239 -and $b[1] -eq 187 -and $b[2] -eq 191)) { Write-Host 'ERROR: missing UTF-8 BOM. Re-download from the Otaconskeep website.'; exit 4 }; exit 0 }"
+:ENC_AFTER_CHECK
 if errorlevel 1 goto ENC_FAIL
 goto ENC_OK
 :ENC_FAIL

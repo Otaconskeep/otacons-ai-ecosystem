@@ -7,17 +7,98 @@ on:
       - "deploy/**"
       - ".gitattributes"
       - ".editorconfig"
+      - ".github/workflows/validate-windows-installer.yml"
   pull_request:
     paths:
       - "*.bat"
       - "deploy/**"
       - ".gitattributes"
       - ".editorconfig"
+      - ".github/workflows/validate-windows-installer.yml"
 
 jobs:
-  validate-windows-installer:
+  static-checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Encoding + CMD structural checks
-        run: bash deploy/verify-windows-installer.sh
+      - name: Encoding + CMD structure + PS boundaries
+        run: SKIP_SITE_CHECK=1 bash deploy/verify-windows-installer.sh
+
+  windows-path-regression:
+    runs-on: windows-latest
+    needs: static-checks
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare awkward install path copies
+        shell: pwsh
+        run: |
+          $src = Join-Path $env:GITHUB_WORKSPACE "OtaconsKeep-Setup.bat"
+          $cases = @(
+            (Join-Path $env:RUNNER_TEMP "plain\OtaconsKeep-Setup.bat"),
+            (Join-Path $env:RUNNER_TEMP "Downloads\OtaconsKeep-Setup (1).bat"),
+            (Join-Path $env:RUNNER_TEMP "My Downloads\OtaconsKeep Setup.bat"),
+            (Join-Path $env:RUNNER_TEMP "Test (1)\OtaconsKeep-Setup.bat"),
+            (Join-Path $env:RUNNER_TEMP "Test & Stuff\OtaconsKeep-Setup.bat")
+          )
+          foreach ($dst in $cases) {
+            $dir = Split-Path -Parent $dst
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Copy-Item -LiteralPath $src -Destination $dst -Force
+            Write-Host "Prepared $dst"
+          }
+          $cases | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "bat-paths.txt") -Encoding ASCII
+
+      - name: Run --syntax-check from each awkward path
+        shell: cmd
+        run: |
+          setlocal EnableExtensions
+          set FAIL=0
+          for /f "usebackq delims=" %%P in ("%RUNNER_TEMP%\bat-paths.txt") do (
+            echo ============================================================
+            echo SYNTAX CHECK FROM:
+            echo %%P
+            echo ============================================================
+            call "%%P" --syntax-check
+            if errorlevel 1 (
+              echo FAIL: %%P
+              set FAIL=1
+            ) else (
+              echo PASS: %%P
+            )
+          )
+          if "%FAIL%"=="1" exit /b 1
+          echo ALL PATH REGRESSION SYNTAX CHECKS PASSED
+
+      - name: Prove encoding check uses -File/-env not -Command+path
+        shell: pwsh
+        run: |
+          $lines = Get-Content -LiteralPath "OtaconsKeep-Setup.bat" |
+            Where-Object { $_ -notmatch '^\s*REM' }
+          $joined = ($lines -join "`n")
+          if ($joined -match '(?is)powershell[^\n]*-Command[^\n]*%~f0') {
+            throw "Antipattern still present: -Command with %~f0"
+          }
+          if ($joined -match '(?is)-Command[\s\S]{0,500}"%~f0"') {
+            throw "Antipattern still present: -Command block ending with %~f0"
+          }
+          $helper = Join-Path $env:GITHUB_WORKSPACE "deploy\check-bat-encoding.ps1"
+          $target = Join-Path $env:RUNNER_TEMP "Downloads\OtaconsKeep-Setup (1).bat"
+          & powershell -NoProfile -ExecutionPolicy Bypass -File $helper -Path $target
+          if ($LASTEXITCODE -ne 0) { throw "check-bat-encoding.ps1 failed for (1).bat path exit=$LASTEXITCODE" }
+          Write-Host "Encoding helper OK for OtaconsKeep-Setup (1).bat"
+
+      - name: Construct elevation Start-Process for awkward paths (no UAC)
+        shell: pwsh
+        run: |
+          $paths = Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "bat-paths.txt")
+          foreach ($p in $paths) {
+            if (-not (Test-Path -LiteralPath $p)) { throw "missing $p" }
+            # Mirror Ensure-Admin construction without -Verb RunAs
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $p
+            $psi.WorkingDirectory = [IO.Path]::GetDirectoryName($p)
+            $psi.UseShellExecute = $false
+            if ([string]::IsNullOrWhiteSpace($psi.FileName)) { throw "empty FileName for $p" }
+            Write-Host "Elevation FileName OK: $($psi.FileName)"
+          }
