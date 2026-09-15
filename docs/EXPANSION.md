@@ -1,14 +1,19 @@
 # Otacon Expansion
 
-**Status: specification complete. Not yet available to install or purchase.**
+**Status: foundation layer real and one-command installable (schema,
+formulas, validated default roster). The product itself — Dashboard,
+Codec, War Room, Video Studio, and the rest — is specification complete,
+not yet built. Not yet available to purchase.**
 
 This document is the engineering contract for Otacon Expansion — the
 premium, licensed multi-agent/emotional/orchestration layer that installs
 on top of the free Otacon Core. It exists so the direction is public before
-the build is, in keeping with this project's policy of not shipping
+the full build is, in keeping with this project's policy of not shipping
 marketing claims ahead of working software (see the [status
 table](https://github.com/Otaconskeep/otacons-ai-ecosystem#readme) in the
-main README).
+main README) — and so far as the foundation layer goes, that policy is why
+it ships as real, tested code and a real installer rather than a promise.
+See *Install the foundation layer today*, below.
 
 Companion page: https://otaconskeep-site.otaconskeep.workers.dev/expansion/
 
@@ -61,7 +66,7 @@ below.
 
 A first implementation slice of this ships in this repo today, at
 [`expansion/`](../expansion/), with a full test suite in
-[`tests/test_expansion_*.py`](../tests/) (42 tests, all passing against
+[`tests/test_expansion_*.py`](../tests/) (50 tests, all passing against
 this repo's existing `pytest` setup as of this write-up):
 
 - **`expansion/schema.py`** — the versioned `Agent` dataclass
@@ -114,6 +119,33 @@ this repo's existing `pytest` setup as of this write-up):
   "the Dashboard is healthy"; optional ones (`MOTION`, `VIDEO_STUDIO`,
   `DISCORD`, `HOME_ASSISTANT`, `N8N`, `INFRA_DASHBOARD`) never do — one
   optional subsystem being down must never make the rest look broken.
+- **`expansion/seed_defaults.py`** — builds Aria/Vector/Ledger/Muse/Sentry
+  through the schema above, validates each individually and the reporting
+  hierarchy as a whole, and writes them to disk as JSON. Idempotent:
+  `created_at` is preserved across reruns, only `updated_at` moves forward.
+
+## Install the foundation layer today
+
+This is real, and it's one command — but read the fine print. It installs
+and verifies the schema/formula/roster layer above; it does **not** install
+a Dashboard, Codec, War Room, Video Studio, or any UI wired to that roster.
+Requires Otacon Core already installed (Expansion is never standalone):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon_expansion.sh | bash
+```
+
+What it does, end to end, verified working against a real clone of this
+repo: confirms Core is installed, fast-forwards the same repository Core
+already cloned, reuses Core's Python environment, runs the `expansion/`
+test suite (50 tests) as a real acceptance gate, and generates + validates
+the five default agents, writing them to
+`~/.config/otacon/expansion/agents/`. Rerunning it is safe — the test
+suite and roster are re-validated, and each agent's `created_at` is
+preserved rather than reset. Exit codes: `0` = foundation ready, `2` =
+roster written but the test suite didn't fully pass, `1` = failed (most
+commonly: Core isn't installed yet, or `OTACON_INSTALL_DIR` doesn't match
+where you installed it).
 
 This is a first slice, not the whole system. Still to design and build as
 concrete, testable modules on top of this foundation: the provisioning
