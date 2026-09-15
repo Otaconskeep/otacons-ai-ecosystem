@@ -1,0 +1,23 @@
+name: Validate Windows installer
+
+on:
+  push:
+    paths:
+      - "*.bat"
+      - "deploy/**"
+      - ".gitattributes"
+      - ".editorconfig"
+  pull_request:
+    paths:
+      - "*.bat"
+      - "deploy/**"
+      - ".gitattributes"
+      - ".editorconfig"
+
+jobs:
+  validate-windows-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Encoding + CMD structural checks
+        run: bash deploy/verify-windows-installer.sh

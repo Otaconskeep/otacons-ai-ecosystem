@@ -45,12 +45,16 @@ OtaconsKeep-Setup.bat --status
 OtaconsKeep-Setup.bat --diagnostics
 OtaconsKeep-Setup.bat --open
 OtaconsKeep-Setup.bat --debug
+OtaconsKeep-Setup.bat --syntax-check
 ```
 
 - `--status` — plain-English readiness report  
 - `--diagnostics` — writes a support file under `%LOCALAPPDATA%\OtaconsKeep\Diagnostics\`  
 - `--open` — opens Otacon only if the health check passes; otherwise offers to continue setup  
-- `--debug` — echoes commands, keeps the window open after failures, writes detailed fetch logs to `installer.log`  
+- `--debug` — echoes commands, keeps the window open after failures, writes detailed fetch logs to `installer.log`
+- `--syntax-check` — parses major BAT branches without installing
+
+Before publishing the website BAT, run `bash deploy/verify-windows-installer.sh` (encoding + CMD structure).  
 
 **Logs:** `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`  
 **Installer state:** `%LOCALAPPDATA%\OtaconsKeep\installer-state.json` (no passwords)
@@ -60,7 +64,8 @@ OtaconsKeep-Setup.bat --debug
 | Situation | What to do |
 | --- | --- |
 | Wrong encoding / Save As from raw GitHub | Re-download via the website **Download OtaconsKeep Setup** button only. Installer bats are UTF-8 with BOM. Do not Save As from raw.githubusercontent.com. |
-| Window closes during **fetching** / exit code **1** | Fixed: installer no longer overwrites the running download helper. Re-download from the website. If it still fails, run `OtaconsKeep-Setup.bat --debug` and send `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`. |
+| Window closes during **fetching** / exit code **1** | Fixed: installer no longer overwrites the running download helper. Re-download from the website. If it still fails, run `OtaconsKeep-Setup.bat --debug
+OtaconsKeep-Setup.bat --syntax-check` and send `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`. |
 | Browser showed installer **source code** | Use the site **Download OtaconsKeep Setup** button, or right-click the `.bat` link → Save link as…, or use the ZIP. |
 | Windows SmartScreen warning | More info → Run anyway (the file is the public installer from this repo). |
 | Window said “press any key” and closed | Old installer. Download the new `OtaconsKeep-Setup.bat`. New builds explain restarts and never exit silently. |
