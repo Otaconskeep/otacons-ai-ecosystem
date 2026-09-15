@@ -74,13 +74,19 @@ $full = @(
     "deploy/windows-setup-assistant.ps1",
     "deploy/find-ubuntu.ps1",
     "deploy/install-wake-task.ps1",
-    "deploy/wake-otacon.ps1"
+    "deploy/wake-otacon.ps1",
+    "deploy/download-one.ps1",
+    "deploy/tail-log.ps1",
+    "deploy/check-bat-encoding.ps1"
 )
 $deployOnly = @(
     "deploy/windows-setup-assistant.ps1",
     "deploy/find-ubuntu.ps1",
     "deploy/install-wake-task.ps1",
-    "deploy/wake-otacon.ps1"
+    "deploy/wake-otacon.ps1",
+    "deploy/download-one.ps1",
+    "deploy/tail-log.ps1",
+    "deploy/check-bat-encoding.ps1"
 )
 
 $files = if ($Manifest -eq "deploy") { $deployOnly } else { $full }

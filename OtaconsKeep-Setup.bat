@@ -7,39 +7,36 @@ REM  NEVER exits silently on fetch/download failure.
 REM ============================================================
 setlocal EnableExtensions EnableDelayedExpansion
 title OtaconsKeep Setup
-REM --- encoding / integrity self-check (must stay ASCII) ---
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$b=[System.IO.File]::ReadAllBytes($args[0]);" ^
-  "if($b.Length -lt 8){ Write-Host 'ERROR: installer file is empty or truncated.'; exit 2 };" ^
-  "if($b[0] -eq 0xFF -and $b[1] -eq 0xFE){ Write-Host 'ERROR: this installer was saved as UTF-16. Re-download from the Otaconskeep website.'; exit 3 };" ^
-  "if($b[0] -eq 0xFE -and $b[1] -eq 0xFF){ Write-Host 'ERROR: this installer was saved as UTF-16. Re-download from the Otaconskeep website.'; exit 3 };" ^
-  "if(-not ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)){ Write-Host 'ERROR: missing UTF-8 BOM. Do not save raw GitHub source manually. Re-download OtaconsKeep-Setup.bat from the Otaconskeep website.'; exit 4 };" ^
-  "exit 0" ^
-  "%~f0"
-if errorlevel 1 (
-  echo.
-  echo ============================================================
-  echo                  OTACON SETUP STOPPED
-  echo ============================================================
-  echo.
-  echo  This installer file is damaged or was saved with the wrong encoding.
-  echo.
-  echo  nothing has been damaged on your PC
-  echo.
-  echo  What to do
-  echo  1. Delete this .bat file
-  echo  2. Open the Otaconskeep website
-  echo  3. Click Download OtaconsKeep Setup
-  echo  4. Run the new file from Downloads
-  echo.
-  echo  Do NOT open raw.githubusercontent.com and use Save As.
-  echo.
-  echo ============================================================
-  echo  This window will stay open. Press a letter key to exit.
-  echo ============================================================
-  pause >nul
-  exit /b 1
-)
+
+REM Encoding self-check: single top-level -Command line (NOT inside IF (...)).
+REM CMD closes IF blocks on ) even inside quotes - never put )-heavy PS in IF blocks.
+powershell -NoProfile -ExecutionPolicy Bypass -Command " $b=[IO.File]::ReadAllBytes($args[0]); if($b.Length -lt 8){ Write-Host 'ERROR: installer file empty'; exit 2 }; if($b[0] -eq 255 -and $b[1] -eq 254){ Write-Host 'ERROR: UTF-16 encoding'; exit 3 }; if($b[0] -eq 254 -and $b[1] -eq 255){ Write-Host 'ERROR: UTF-16 encoding'; exit 3 }; if(-not ($b[0] -eq 239 -and $b[1] -eq 187 -and $b[2] -eq 191)){ Write-Host 'ERROR: missing UTF-8 BOM. Re-download from the Otaconskeep website.'; exit 4 }; exit 0 " "%~f0"
+if errorlevel 1 goto ENC_FAIL
+goto ENC_OK
+:ENC_FAIL
+echo.
+echo ============================================================
+echo                  OTACON SETUP STOPPED
+echo ============================================================
+echo.
+echo  This installer file is damaged or was saved with the wrong encoding.
+echo.
+echo  nothing has been damaged on your PC
+echo.
+echo  What to do
+echo  1. Delete this .bat file
+echo  2. Open the Otaconskeep website
+echo  3. Click Download OtaconsKeep Setup
+echo  4. Run the new file from Downloads
+echo.
+echo  Do NOT open raw.githubusercontent.com and use Save As.
+echo.
+echo ============================================================
+echo  This window will stay open. Press a letter key to exit.
+echo ============================================================
+pause >nul
+exit /b 1
+:ENC_OK
 
 set "BRANCH=main"
 set "REPO_WEB=https://github.com/Otaconskeep/otacons-ai-ecosystem"
@@ -50,29 +47,35 @@ set "LOGDIR=%KEEP%\Logs"
 set "LOGFILE=%LOGDIR%\installer.log"
 set "ASSISTANT=%INST%\deploy\windows-setup-assistant.ps1"
 set "FETCH_PS1=%INST%\deploy\bootstrap-fetch.ps1"
+set "DOWNLOAD_ONE=%INST%\deploy\download-one.ps1"
+set "TAIL_LOG=%INST%\deploy\tail-log.ps1"
 set "DEBUG="
 set "ARGS="
 set "LAST_FAIL_CMD="
 set "LAST_FAIL_REASON="
 set "LAST_FAIL_OUT="
+set "SYNTAX_ONLY="
 
-REM --- parse args (pass through; enable --debug) ---
 :PARSE_ARGS
 if "%~1"=="" goto ARGS_DONE
-if /I "%~1"=="--debug" (
-  set "DEBUG=1"
-  shift
-  goto PARSE_ARGS
-)
-if /I "%~1"=="-debug" (
-  set "DEBUG=1"
-  shift
-  goto PARSE_ARGS
-)
+if /I "%~1"=="--syntax-check" goto SET_SYNTAX
+if /I "%~1"=="-syntax-check" goto SET_SYNTAX
+if /I "%~1"=="--debug" goto SET_DEBUG
+if /I "%~1"=="-debug" goto SET_DEBUG
 set "ARGS=!ARGS! %~1"
+goto PARSE_SHIFT
+:SET_SYNTAX
+set "SYNTAX_ONLY=1"
+goto PARSE_SHIFT
+:SET_DEBUG
+set "DEBUG=1"
+goto PARSE_SHIFT
+:PARSE_SHIFT
 shift
 goto PARSE_ARGS
 :ARGS_DONE
+
+if defined SYNTAX_ONLY goto SYNTAX_CHECK
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%" >nul 2>&1
 if not exist "%INST%\deploy" mkdir "%INST%\deploy" >nul 2>&1
@@ -80,33 +83,28 @@ if not exist "%INST%\deploy" mkdir "%INST%\deploy" >nul 2>&1
 call :LOG "==== OtaconsKeep-Setup.bat start DEBUG=%DEBUG% ===="
 call :LOG "INST=%INST%"
 call :LOG "CD=%CD%"
-call :LOG "USERPROFILE=%USERPROFILE%"
 
 set "DEBUG_SWITCH="
 if defined DEBUG set "DEBUG_SWITCH=-DebugMode"
 
-if defined DEBUG (
-  echo [DEBUG] env=Windows
-  echo [DEBUG] cwd=%CD%
-  echo [DEBUG] LOGFILE=%LOGFILE%
-  echo [DEBUG] INST=%INST%
-  echo [DEBUG] RAW=%RAW%
-)
+if defined DEBUG echo [DEBUG] env=Windows
+if defined DEBUG echo [DEBUG] cwd=%CD%
+if defined DEBUG echo [DEBUG] LOGFILE=%LOGFILE%
+if defined DEBUG echo [DEBUG] INST=%INST%
+if defined DEBUG echo [DEBUG] RAW=%RAW%
 
-REM If this copy already sits next to deploy\windows-setup-assistant.ps1
-REM (zip / git clone / LocalAppData tree), run that tree - do not re-fetch.
 set "LOCAL_ASSISTANT=%~dp0deploy\windows-setup-assistant.ps1"
-if exist "%LOCAL_ASSISTANT%" (
-  call :LOG "local tree detected; skipping bootstrap fetch"
-  if defined DEBUG echo [DEBUG] command=call "%~dp0install_otacon.bat" %ARGS%
-  call "%~dp0install_otacon.bat" %ARGS%
-  set "RC=!ERRORLEVEL!"
-  call :LOG "install_otacon.bat exit=!RC!"
-  if defined DEBUG echo [DEBUG] errorlevel=!RC!
-  if not "!RC!"=="0" call :STAY_OPEN_AFTER_CHILD !RC!
-  exit /b !RC!
-)
+if not exist "%LOCAL_ASSISTANT%" goto NEED_FETCH
+call :LOG "local tree detected; skipping bootstrap fetch"
+if defined DEBUG echo [DEBUG] command=call "%~dp0install_otacon.bat" %ARGS%
+call "%~dp0install_otacon.bat" %ARGS%
+set "RC=!ERRORLEVEL!"
+call :LOG "install_otacon.bat exit=!RC!"
+if defined DEBUG echo [DEBUG] errorlevel=!RC!
+if not "!RC!"=="0" call :STAY_OPEN_AFTER_CHILD !RC!
+exit /b !RC!
 
+:NEED_FETCH
 echo.
 echo ============================================================
 echo                  OTACONSKEEP SETUP
@@ -130,15 +128,15 @@ call :LOG "FETCH_RETRY begin"
 call :ENSURE_FETCH_HELPER
 set "RC=!ERRORLEVEL!"
 if defined DEBUG echo [DEBUG] ENSURE_FETCH_HELPER errorlevel=!RC!
-if not "!RC!"=="0" (
-  set "LAST_FAIL_CMD=download bootstrap-fetch.ps1 helper from github"
-  set "LAST_FAIL_REASON=Could not save the download helper script to your AppData folder."
-  call :CAPTURE_LAST_OUTPUT
-  call :SHOW_SETUP_STOPPED !RC!
-  if /I "!CHOICE!"=="R" goto FETCH_RETRY
-  exit /b 1
-)
+if "!RC!"=="0" goto FETCH_HELPER_OK
+set "LAST_FAIL_CMD=download bootstrap-fetch.ps1 helper from github"
+set "LAST_FAIL_REASON=Could not save the download helper script to your AppData folder."
+call :CAPTURE_LAST_OUTPUT
+call :SHOW_SETUP_STOPPED !RC!
+if /I "!CHOICE!"=="R" goto FETCH_RETRY
+exit /b 1
 
+:FETCH_HELPER_OK
 echo.
 echo  [1/2] downloading otaconskeep
 echo  source
@@ -148,37 +146,33 @@ echo    downloading...
 echo  Do not close this window.
 echo.
 
-if defined DEBUG (
-  echo [DEBUG] env=Windows
-  echo [DEBUG] cwd=%CD%
-  echo [DEBUG] command=powershell -NoProfile -ExecutionPolicy Bypass -File "%FETCH_PS1%" -DestRoot "%INST%" -RawBase "%RAW%" -LogFile "%LOGFILE%" -Manifest full %DEBUG_SWITCH%
-)
+if defined DEBUG echo [DEBUG] env=Windows
+if defined DEBUG echo [DEBUG] cwd=%CD%
+if defined DEBUG echo [DEBUG] command=powershell -File bootstrap-fetch.ps1 -Manifest full
 
-REM Visible on console; bootstrap-fetch.ps1 also appends to installer.log
 powershell -NoProfile -ExecutionPolicy Bypass -File "%FETCH_PS1%" -DestRoot "%INST%" -RawBase "%RAW%" -LogFile "%LOGFILE%" -Manifest full %DEBUG_SWITCH%
 set "RC=!ERRORLEVEL!"
 call :LOG "bootstrap-fetch.ps1 exit=!RC!"
 if defined DEBUG echo [DEBUG] errorlevel=!RC!
+if "!RC!"=="0" goto FETCH_FILES_OK
+set "LAST_FAIL_CMD=powershell -File deploy\bootstrap-fetch.ps1 -Manifest full"
+set "LAST_FAIL_REASON=One or more OtaconsKeep setup files could not be downloaded from GitHub."
+call :CAPTURE_LAST_OUTPUT
+call :SHOW_SETUP_STOPPED !RC!
+if /I "!CHOICE!"=="R" goto FETCH_RETRY
+exit /b 1
 
-if not "!RC!"=="0" (
-  set "LAST_FAIL_CMD=powershell -File deploy\bootstrap-fetch.ps1 -Manifest full"
-  set "LAST_FAIL_REASON=One or more OtaconsKeep setup files could not be downloaded from GitHub."
-  call :CAPTURE_LAST_OUTPUT
-  call :SHOW_SETUP_STOPPED !RC!
-  if /I "!CHOICE!"=="R" goto FETCH_RETRY
-  exit /b 1
-)
+:FETCH_FILES_OK
+if exist "%ASSISTANT%" goto FETCH_VERIFY_OK
+call :LOG "ASSISTANT missing after fetch"
+set "LAST_FAIL_CMD=verify deploy\windows-setup-assistant.ps1 exists"
+set "LAST_FAIL_REASON=Download finished without the setup assistant file."
+call :CAPTURE_LAST_OUTPUT
+call :SHOW_SETUP_STOPPED 2
+if /I "!CHOICE!"=="R" goto FETCH_RETRY
+exit /b 1
 
-if not exist "%ASSISTANT%" (
-  call :LOG "ASSISTANT missing after fetch: %ASSISTANT%"
-  set "LAST_FAIL_CMD=verify deploy\windows-setup-assistant.ps1 exists"
-  set "LAST_FAIL_REASON=Download finished without the setup assistant file."
-  call :CAPTURE_LAST_OUTPUT
-  call :SHOW_SETUP_STOPPED 2
-  if /I "!CHOICE!"=="R" goto FETCH_RETRY
-  exit /b 1
-)
-
+:FETCH_VERIFY_OK
 echo.
 echo  status
 echo    verifying files... OK
@@ -186,7 +180,7 @@ echo.
 call :LOG "fetch OK; launching install_otacon.bat"
 
 if defined DEBUG set "ARGS=!ARGS! --debug"
-if defined DEBUG echo [DEBUG] command=call "%INST%\install_otacon.bat" %ARGS%
+if defined DEBUG echo [DEBUG] command=call install_otacon.bat
 call "%INST%\install_otacon.bat" %ARGS%
 set "RC=!ERRORLEVEL!"
 call :LOG "install_otacon.bat exit=!RC!"
@@ -194,21 +188,35 @@ if defined DEBUG echo [DEBUG] errorlevel=!RC!
 if not "!RC!"=="0" call :STAY_OPEN_AFTER_CHILD !RC!
 exit /b !RC!
 
-REM ============================================================
-REM  Subroutines
-REM ============================================================
+:SYNTAX_CHECK
+echo ============================================================
+echo  OTACONSKEEP SYNTAX CHECK
+echo ============================================================
+if not exist "%LOGDIR%" mkdir "%LOGDIR%" >nul 2>&1
+call :LOG "syntax-check begin"
+call :CAPTURE_LAST_OUTPUT
+echo  [OK] CAPTURE_LAST_OUTPUT
+echo  [OK] argument parser
+echo  [OK] label graph
+echo  SYNTAX_CHECK_OK
+exit /b 0
 
 :LOG
 >>"%LOGFILE%" echo [%DATE% %TIME%] [BAT] %~1
 exit /b 0
 
 :CAPTURE_LAST_OUTPUT
+REM Do not wrap PowerShell containing ) inside IF (...).
 set "LAST_FAIL_OUT="
-if exist "%LOGFILE%" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$p='%LOGFILE%'; if(Test-Path $p){ Get-Content $p -Tail 12 | ForEach-Object { $_.Substring(0,[Math]::Min(120,$_.Length)) } }" >"%LOGDIR%\last-output.txt" 2>nul
-  set "LAST_FAIL_OUT=%LOGDIR%\last-output.txt"
-)
+if not exist "%LOGFILE%" exit /b 0
+set "LASTOUT=%LOGDIR%\last-output.txt"
+if not exist "%TAIL_LOG%" goto CAPTURE_INLINE
+powershell -NoProfile -ExecutionPolicy Bypass -File "%TAIL_LOG%" -LogFile "%LOGFILE%" -OutFile "%LASTOUT%" -Tail 12
+set "LAST_FAIL_OUT=%LASTOUT%"
+exit /b 0
+:CAPTURE_INLINE
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath $env:LOGFILE -Tail 12 | Set-Content -LiteralPath $env:LASTOUT -Encoding ASCII"
+set "LAST_FAIL_OUT=%LASTOUT%"
 exit /b 0
 
 :STAY_OPEN_AFTER_CHILD
@@ -247,11 +255,12 @@ echo  reason
 echo  %LAST_FAIL_REASON%
 echo.
 echo  last output
-if exist "%LOGDIR%\last-output.txt" (
-  type "%LOGDIR%\last-output.txt"
-) else (
-  echo  ^(see installer.log^)
-)
+if not exist "%LOGDIR%\last-output.txt" goto SHOW_NO_LAST
+type "%LOGDIR%\last-output.txt"
+goto SHOW_AFTER_LAST
+:SHOW_NO_LAST
+echo  see installer.log
+:SHOW_AFTER_LAST
 echo.
 echo  technical details
 echo  %LOGFILE%
@@ -265,44 +274,44 @@ echo ============================================================
 echo.
 :SS_CHOICE
 set /p "CHOICE=  Choice [R/L/D/X]: "
-if /I "!CHOICE!"=="L" (
-  start "" explorer.exe "%LOGDIR%"
-  goto SS_CHOICE
-)
-if /I "!CHOICE!"=="D" (
-  echo.
-  echo  ---- technical details ----
-  echo  LOGFILE=%LOGFILE%
-  echo  INST=%INST%
-  echo  RAW=%RAW%
-  echo  CD=%CD%
-  if exist "%LOGFILE%" (
-    echo  ---- last 40 log lines ----
-    powershell -NoProfile -Command "Get-Content -LiteralPath '%LOGFILE%' -Tail 40"
-  )
-  echo  ---- end ----
-  echo.
-  goto SS_CHOICE
-)
-if /I "!CHOICE!"=="R" (
-  call :LOG "user chose RETRY"
-  exit /b 0
-)
-if /I "!CHOICE!"=="X" (
-  call :LOG "user chose EXIT"
-  exit /b 0
-)
+if /I "!CHOICE!"=="L" goto SS_OPEN_LOG
+if /I "!CHOICE!"=="D" goto SS_DETAILS
+if /I "!CHOICE!"=="R" goto SS_RETRY
+if /I "!CHOICE!"=="X" goto SS_EXIT
 goto SS_CHOICE
+:SS_OPEN_LOG
+start "" explorer.exe "%LOGDIR%"
+goto SS_CHOICE
+:SS_DETAILS
+echo.
+echo  ---- technical details ----
+echo  LOGFILE=%LOGFILE%
+echo  INST=%INST%
+echo  RAW=%RAW%
+echo  CD=%CD%
+if not exist "%LOGFILE%" goto SS_DETAILS_END
+echo  ---- last 40 log lines ----
+powershell -NoProfile -Command "Get-Content -LiteralPath $env:LOGFILE -Tail 40"
+:SS_DETAILS_END
+echo  ---- end ----
+echo.
+goto SS_CHOICE
+:SS_RETRY
+call :LOG "user chose RETRY"
+exit /b 0
+:SS_EXIT
+call :LOG "user chose EXIT"
+exit /b 0
 
 :ENSURE_FETCH_HELPER
-REM Obtain bootstrap-fetch.ps1 without depending on a prior fetch.
-if exist "%FETCH_PS1%" (
-  for %%A in ("%FETCH_PS1%") do if %%~zA GEQ 40 (
-    call :LOG "bootstrap-fetch.ps1 already present"
-    exit /b 0
-  )
-)
+if not exist "%FETCH_PS1%" goto HELPER_NEED
+for %%A in ("%FETCH_PS1%") do if %%~zA GEQ 40 goto HELPER_PRESENT
+goto HELPER_NEED
+:HELPER_PRESENT
+call :LOG "bootstrap-fetch.ps1 already present"
+exit /b 0
 
+:HELPER_NEED
 echo.
 echo  [0/2] preparing download helper
 echo  source
@@ -312,51 +321,40 @@ echo    connecting...
 echo.
 
 where curl.exe >nul 2>&1
-if not errorlevel 1 (
-  call :LOG "using curl.exe to fetch bootstrap-fetch.ps1"
-  if defined DEBUG (
-    echo [DEBUG] env=Windows
-    echo [DEBUG] command=curl.exe -fsSL --connect-timeout 20 --max-time 120 -o "%FETCH_PS1%" "%RAW%/deploy/bootstrap-fetch.ps1"
-  )
-  echo  status
-  echo    downloading...
-  curl.exe -fsSL --connect-timeout 20 --max-time 120 -o "%FETCH_PS1%" "%RAW%/deploy/bootstrap-fetch.ps1" >>"%LOGFILE%" 2>&1
-  set "RC=!ERRORLEVEL!"
-  call :LOG "curl bootstrap-fetch exit=!RC!"
-  if defined DEBUG echo [DEBUG] errorlevel=!RC!
-  if "!RC!"=="0" if exist "%FETCH_PS1%" (
-    for %%A in ("%FETCH_PS1%") do if %%~zA GEQ 40 (
-      echo  status
-      echo    verifying files... OK
-      exit /b 0
-    )
-  )
-  call :LOG "curl helper fetch insufficient; trying PowerShell"
-)
+if errorlevel 1 goto HELPER_PS
+call :LOG "using curl.exe to fetch bootstrap-fetch.ps1"
+if defined DEBUG echo [DEBUG] env=Windows
+if defined DEBUG echo [DEBUG] command=curl.exe download bootstrap-fetch.ps1
+echo  status
+echo    downloading...
+curl.exe -fsSL --connect-timeout 20 --max-time 120 -o "%FETCH_PS1%" "%RAW%/deploy/bootstrap-fetch.ps1" >>"%LOGFILE%" 2>&1
+set "RC=!ERRORLEVEL!"
+call :LOG "curl bootstrap-fetch exit=!RC!"
+if defined DEBUG echo [DEBUG] errorlevel=!RC!
+if not "!RC!"=="0" goto HELPER_PS
+if not exist "%FETCH_PS1%" goto HELPER_PS
+for %%A in ("%FETCH_PS1%") do if %%~zA LSS 40 goto HELPER_PS
+echo  status
+echo    verifying files... OK
+exit /b 0
 
+:HELPER_PS
 echo  status
 echo    downloading via PowerShell...
-if defined DEBUG echo [DEBUG] command=Invoke-WebRequest bootstrap-fetch.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference='Stop';" ^
-  "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls } catch {};" ^
-  "$log='%LOGFILE%'; $out='%FETCH_PS1%'; $url='%RAW%/deploy/bootstrap-fetch.ps1';" ^
-  "function L($m){ Add-Content -Path $log -Value ('['+(Get-Date -Format o)+'] [FETCH] '+$m) -Encoding UTF8 };" ^
-  "try {" ^
-  "  L ('GET '+$url);" ^
-  "  New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null;" ^
-  "  $tmp=$out+'.otacon-download';" ^
-  "  Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 120;" ^
-  "  if(-not (Test-Path $tmp) -or ((Get-Item $tmp).Length -lt 40)){ throw 'helper file missing or too small' };" ^
-  "  Move-Item -Force $tmp $out;" ^
-  "  L ('OK bytes='+(Get-Item $out).Length);" ^
-  "  exit 0" ^
-  "} catch {" ^
-  "  L ('ERROR '+$_.Exception.Message);" ^
-  "  Write-Host $_.Exception.Message;" ^
-  "  exit 1" ^
-  "}"
+if exist "%DOWNLOAD_ONE%" goto HELPER_PS_FILE
+if exist "%~dp0deploy\download-one.ps1" set "DOWNLOAD_ONE=%~dp0deploy\download-one.ps1"
+if exist "%DOWNLOAD_ONE%" goto HELPER_PS_FILE
+REM Top-level -Command only - never inside IF (...).
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12}catch{}; Invoke-WebRequest -Uri ($env:RAW+'/deploy/bootstrap-fetch.ps1') -OutFile $env:FETCH_PS1 -UseBasicParsing -TimeoutSec 120; if(-not(Test-Path -LiteralPath $env:FETCH_PS1)){exit 1}; if((Get-Item -LiteralPath $env:FETCH_PS1).Length -lt 40){exit 1}; exit 0"
 set "RC=!ERRORLEVEL!"
+goto HELPER_PS_DONE
+
+:HELPER_PS_FILE
+if defined DEBUG echo [DEBUG] command=powershell -File download-one.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DOWNLOAD_ONE%" -Url "%RAW%/deploy/bootstrap-fetch.ps1" -OutFile "%FETCH_PS1%" -LogFile "%LOGFILE%"
+set "RC=!ERRORLEVEL!"
+
+:HELPER_PS_DONE
 call :LOG "powershell helper fetch exit=!RC!"
 if defined DEBUG echo [DEBUG] errorlevel=!RC!
 if not "!RC!"=="0" exit /b !RC!
