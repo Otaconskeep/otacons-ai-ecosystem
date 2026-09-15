@@ -121,6 +121,140 @@ die()  {
   exit 1
 }
 
+# Machine-parseable stage markers for the Windows UI (and humans).
+# Format: [STAGE] <id> <status> <detail>
+# status: START | PASS | FAIL | WAIT | INFO
+stage() {
+  local id="$1" status="$2"; shift 2
+  printf '[STAGE] %s %s %s\n' "$id" "$status" "$*"
+  printf '[AGG::PROGRESS] [%s] %s — %s\n' "$id" "$status" "$*"
+}
+
+# Run a long command with heartbeats + hard timeout. Survives quiet tools (apt).
+# Usage: run_watched TIMEOUT_SEC LABEL [--soft] -- command args...
+# --soft: return non-zero instead of die() so callers can mark DEGRADED/REQUIRED_FAIL.
+run_watched() {
+  local timeout_sec="$1" label="$2"
+  shift 2
+  local soft=0
+  if [[ "${1:-}" == "--soft" ]]; then soft=1; shift; fi
+  if [[ "${1:-}" == "--" ]]; then shift; fi
+  [[ "$#" -ge 1 ]] || die "run_watched: missing command for $label"
+
+  local start_ts now elapsed last_hb=0
+  start_ts="$(date +%s)"
+  log "$label (timeout ${timeout_sec}s)"
+  stage "watch" "START" "$label (timeout ${timeout_sec}s)"
+
+  "$@" &
+  local cmd_pid=$!
+
+  while kill -0 "$cmd_pid" 2>/dev/null; do
+    now="$(date +%s)"
+    elapsed=$((now - start_ts))
+    if (( elapsed >= timeout_sec )); then
+      warn "$label exceeded ${timeout_sec}s — sending TERM to PID $cmd_pid"
+      kill -TERM "$cmd_pid" 2>/dev/null || true
+      sleep 5
+      kill -KILL "$cmd_pid" 2>/dev/null || true
+      wait "$cmd_pid" 2>/dev/null || true
+      stage "watch" "FAIL" "$label timed out after ${timeout_sec}s"
+      if [[ "$soft" -eq 1 ]]; then
+        warn "$label timed out after ${timeout_sec}s"
+        return 124
+      fi
+      die "$label timed out after ${timeout_sec}s with no completion. Last label: $label. Log: $INSTALL_LOG. Recovery: fix network/apt mirrors/sudo, then rerun the installer."
+    fi
+    if (( now - last_hb >= 15 )); then
+      printf '[AGG::HEARTBEAT] %s still running — elapsed %sm%ss (pid %s)\n' \
+        "$label" "$((elapsed / 60))" "$((elapsed % 60))" "$cmd_pid"
+      last_hb=$now
+    fi
+    sleep 2
+  done
+
+  local rc=0
+  wait "$cmd_pid" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    stage "watch" "FAIL" "$label exit=$rc"
+    if [[ "$soft" -eq 1 ]]; then
+      warn "$label failed with exit code $rc"
+      return "$rc"
+    fi
+    die "$label failed with exit code $rc. Log: $INSTALL_LOG"
+  fi
+  stage "watch" "PASS" "$label"
+  ok "$label"
+  return 0
+}
+
+apt_has_lock() {
+  local f
+  for f in \
+    /var/lib/dpkg/lock-frontend \
+    /var/lib/dpkg/lock \
+    /var/lib/apt/lists/lock \
+    /var/cache/apt/archives/lock
+  do
+    if [[ -e "$f" ]] && command_exists fuser; then
+      if $SUDO fuser "$f" >/dev/null 2>&1; then
+        return 0
+      fi
+    elif [[ -e "$f" ]] && command_exists lsof; then
+      if $SUDO lsof "$f" >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+  done
+  # Fallback: look for apt/dpkg processes
+  if pgrep -x apt-get >/dev/null 2>&1 || pgrep -x apt >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+wait_for_apt_lock() {
+  local timeout_sec="${1:-180}"
+  local start_ts now elapsed
+  start_ts="$(date +%s)"
+  if ! apt_has_lock; then
+    return 0
+  fi
+  stage "6.3a" "WAIT" "Waiting for apt/dpkg lock (another package manager is busy)"
+  while apt_has_lock; do
+    now="$(date +%s)"
+    elapsed=$((now - start_ts))
+    if (( elapsed >= timeout_sec )); then
+      stage "6.3a" "FAIL" "apt/dpkg lock held >${timeout_sec}s"
+      die "apt/dpkg is locked by another process for over ${timeout_sec}s. Close Ubuntu Software / unattended-upgrades, or reboot WSL (wsl --shutdown), then rerun. Log: $INSTALL_LOG"
+    fi
+    printf '[AGG::HEARTBEAT] waiting for apt/dpkg lock — elapsed %ss\n' "$elapsed"
+    sleep 5
+  done
+  stage "6.3a" "PASS" "apt/dpkg lock clear"
+}
+
+run_apt() {
+  # Bounded, noninteractive apt with heartbeats. Never waits on a TTY prompt.
+  local timeout_sec="$1"; shift
+  local label="$1"; shift
+  export DEBIAN_FRONTEND=noninteractive
+  export NEEDRESTART_MODE="${NEEDRESTART_MODE:-a}"
+  export APT_LISTCHANGES_FRONTEND=none
+  wait_for_apt_lock 180
+  # shellcheck disable=SC2086
+  run_watched "$timeout_sec" "$label" -- $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+    apt-get \
+    -o Acquire::Retries=3 \
+    -o Acquire::http::Timeout=30 \
+    -o Acquire::https::Timeout=30 \
+    -o Acquire::ftp::Timeout=30 \
+    -o Dpkg::Use-Pty=0 \
+    -o Dpkg::Options::=--force-confdef \
+    -o Dpkg::Options::=--force-confold \
+    "$@"
+}
+
 trap 'printf "\n\033[1;31m[AGG::FAIL]\033[0m Installer stopped on line %s. Log: %s\n" "$LINENO" "$INSTALL_LOG" >&2' ERR
 log "Install log → $INSTALL_LOG"
 
@@ -231,6 +365,19 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   else
     die "This installer needs 'sudo' to install a few system packages, and it isn't available for your user. What to do: ask whoever set up this computer to add your account to the sudo group (on Ubuntu: 'usermod -aG sudo yourusername', then log out and back in), then rerun this script."
   fi
+fi
+
+# Unattended Windows→WSL installs have no TTY. A password prompt here hangs forever
+# with the last visible line stuck on "Checking Linux build dependencies".
+if [[ -n "$SUDO" ]]; then
+  stage "6.0" "START" "Verifying passwordless sudo (required for unattended install)"
+  if ! $SUDO -n true >/dev/null 2>&1; then
+    stage "6.0" "FAIL" "sudo requires a password (no TTY available)"
+    die "sudo needs a password, but Otacon Setup runs unattended from Windows with no keyboard prompt. That is why Stage 6 can sit forever after 'Checking Linux build dependencies'. Fix (one-time, inside Ubuntu): run 'sudo -v' once to confirm your password works, then: echo \"\$(whoami) ALL=(ALL) NOPASSWD:ALL\" | sudo tee /etc/sudoers.d/otacon-nopasswd && sudo chmod 440 /etc/sudoers.d/otacon-nopasswd — then double-click OtaconsKeep-Setup.bat again. Log: $INSTALL_LOG"
+  fi
+  SUDO="$SUDO -n"
+  stage "6.0" "PASS" "passwordless sudo OK"
+  ok "sudo is passwordless (safe for unattended install)"
 fi
 
 # ------------------------------------------------------------------------------
@@ -385,9 +532,23 @@ fi
 # System packages
 # ------------------------------------------------------------------------------
 
+stage "6.2" "START" "GPU visibility check (Windows WSL path)"
+if command_exists nvidia-smi && nvidia-smi >/dev/null 2>&1; then
+  GPU_PROBE="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1 | tr -d '\r' || true)"
+  stage "6.2" "PASS" "nvidia-smi OK in Linux: ${GPU_PROBE:-detected}"
+  ok "WSL/Linux can see NVIDIA GPU: ${GPU_PROBE:-detected}"
+else
+  stage "6.2" "INFO" "nvidia-smi not usable in this Linux environment (Core continues; Voice Trainer may skip)"
+  warn "nvidia-smi is missing or failed inside this Linux environment."
+  warn "If Windows nvidia-smi shows an RTX card but this does not, install/update the NVIDIA Windows driver and ensure WSL2 GPU support is enabled, then reopen Ubuntu."
+fi
+
+stage "6.3" "START" "Installing Linux build dependencies via apt"
 log "Checking Linux build dependencies"
 
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export APT_LISTCHANGES_FRONTEND=none
 
 APT_PACKAGES=(
   ca-certificates
@@ -413,9 +574,10 @@ if [[ "$BUILD_NATIVE" == "1" ]]; then
   )
 fi
 
-$SUDO apt-get update -y
-$SUDO apt-get install -y "${APT_PACKAGES[@]}"
-
+printf '[AGG::PROGRESS] apt packages (%s): %s\n' "${#APT_PACKAGES[@]}" "${APT_PACKAGES[*]}"
+run_apt 600 "apt-get update" update -y
+run_apt 1200 "apt-get install build dependencies" install -y "${APT_PACKAGES[@]}"
+stage "6.3" "PASS" "Linux build dependencies installed"
 ok "System dependencies are installed"
 
 # ------------------------------------------------------------------------------
@@ -423,13 +585,14 @@ ok "System dependencies are installed"
 # ------------------------------------------------------------------------------
 
 log "Synchronizing Otacon public repository"
+stage "6.4" "START" "Cloning/updating Otacon repository"
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
-  git -C "$INSTALL_DIR" fetch --prune origin
+  run_watched 300 "git fetch" -- git -C "$INSTALL_DIR" fetch --prune origin
   CURRENT_BRANCH="$(git -C "$INSTALL_DIR" branch --show-current || true)"
 
   if [[ "$CURRENT_BRANCH" == "main" ]]; then
-    git -C "$INSTALL_DIR" pull --ff-only
+    run_watched 300 "git pull" -- git -C "$INSTALL_DIR" pull --ff-only
   else
     warn "Repository is on branch '${CURRENT_BRANCH:-detached}'."
     warn "Leaving local branch selection untouched; fetched origin only."
@@ -437,9 +600,10 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
 elif [[ -e "$INSTALL_DIR" ]]; then
   die "$INSTALL_DIR already exists but isn't an Otacon install this script recognizes. What to do: rename or delete that folder (if it's not something you need), or set OTACON_INSTALL_DIR=/some/other/path before rerunning this script to install somewhere else."
 else
-  git clone "$REPO_URL" "$INSTALL_DIR"
+  run_watched 600 "git clone" -- git clone "$REPO_URL" "$INSTALL_DIR"
 fi
 
+stage "6.4" "PASS" "Repository ready"
 ok "Repository ready: $INSTALL_DIR"
 
 cd "$INSTALL_DIR"
@@ -595,10 +759,11 @@ PY
 }
 
 if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
+  stage "6.5" "START" "Installing Ollama + pulling $RECOMMENDED_MODEL"
   log "Default Model: installing Ollama + pulling $RECOMMENDED_MODEL"
 
   if ! command_exists ollama; then
-    curl -fsSL https://ollama.com/install.sh | sh
+    run_watched 300 "ollama install script" -- bash -c 'curl -fsSL --connect-timeout 30 --max-time 240 https://ollama.com/install.sh | sh'
   else
     ok "Ollama already installed"
   fi
@@ -606,14 +771,17 @@ if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
   if ensure_ollama_running; then
     ok "Ollama is reachable at $OLLAMA_ENDPOINT"
     log "Pulling $RECOMMENDED_MODEL (sized for ${GPU_VRAM_GB} GB VRAM / $MODEL_TIER)"
-    if ollama pull "$RECOMMENDED_MODEL"; then
+    # RTX 4090 selects 14b — can take a long time; heartbeats keep Stage 6 honest.
+    if run_watched 3600 "ollama pull $RECOMMENDED_MODEL" --soft -- ollama pull "$RECOMMENDED_MODEL"; then
       ok "Model ready: $RECOMMENDED_MODEL"
       MODEL_OK=1
+      stage "6.5" "PASS" "Model ready: $RECOMMENDED_MODEL"
     else
       warn "Could not pull $RECOMMENDED_MODEL."
       warn "Retry later with: ollama pull $RECOMMENDED_MODEL"
       REQUIRED_FAIL=1
       MODEL_OK=0
+      stage "6.5" "FAIL" "ollama pull failed or timed out"
     fi
   else
     warn "Ollama installed but did not answer at $OLLAMA_ENDPOINT yet."
@@ -621,6 +789,7 @@ if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
     warn "Then: ollama pull $RECOMMENDED_MODEL"
     REQUIRED_FAIL=1
     MODEL_OK=0
+    stage "6.5" "FAIL" "Ollama API not ready"
   fi
 
   write_otacon_llm_config "$RECOMMENDED_MODEL" "$MODEL_ID"
@@ -630,6 +799,7 @@ else
   warn "Default Model skipped (OTACON_INSTALL_DEFAULT_MODEL=0). Chat needs Ollama later."
   warn "  Re-run with Default Model: OTACON_INSTALL_DEFAULT_MODEL=1 bash install_otacon.sh"
   MODEL_OK=0
+  stage "6.5" "INFO" "Default model install skipped"
 fi
 
 # ------------------------------------------------------------------------------
@@ -800,7 +970,7 @@ if [[ "$BUILD_NATIVE" == "1" ]]; then
 
   if [[ "$INSTALL_DEB" == "1" && -n "$DEB_PATH" && -f "$DEB_PATH" ]]; then
     log "Installing generated Otacon .deb"
-    $SUDO apt-get install -y "$DEB_PATH"
+    run_apt 600 "apt-get install otacon .deb" install -y "$DEB_PATH"
     ok "Native package installed"
   fi
 else

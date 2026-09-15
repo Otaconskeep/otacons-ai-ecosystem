@@ -606,11 +606,112 @@ function Step-WaitUbuntuInit {
     return (Test-UbuntuReady (Get-UbuntuDistroName))
 }
 
+function Show-Stage6Panel {
+    param(
+        [datetime]$Started,
+        [string]$Substep = "starting",
+        [string[]]$RecentLines = @(),
+        [datetime]$LastProgress,
+        [string]$GpuWin = "unknown",
+        [string]$GpuWsl = "unknown"
+    )
+    $elapsed = (Get-Date) - $Started
+    $em = "{0:00}m {1:00}s" -f [int]$elapsed.TotalMinutes, $elapsed.Seconds
+    $since = "n/a"
+    if ($PSBoundParameters.ContainsKey('LastProgress') -and $LastProgress) {
+        $sp = (Get-Date) - $LastProgress
+        $since = ("{0:00}m {1:00}s ago" -f [int]$sp.TotalMinutes, $sp.Seconds)
+    }
+    Clear-Host
+    Write-Host ""
+    Write-Host ("+" + ("-" * 62) + "+") -ForegroundColor DarkYellow
+    Write-Host ("|{0}|" -f ("OTACONSKEEP".PadLeft(36).PadRight(62))) -ForegroundColor Yellow
+    Write-Host ("|{0}|" -f ("[6/8] INSTALLING OTACON".PadLeft(40).PadRight(62))) -ForegroundColor Cyan
+    Write-Host ("+" + ("-" * 62) + "+") -ForegroundColor DarkYellow
+    Write-Host ("|  Otacon is NOT ready yet{0}|" -f (" " * 37))
+    Write-Host ("|  Do not close this window{0}|" -f (" " * 36)) -ForegroundColor Green
+    Write-Host ("|{0}|" -f ("").PadRight(62))
+    Write-Host ("|  Current substep:{0}|" -f (" " * 44))
+    $sub = $Substep
+    if ($sub.Length -gt 58) { $sub = $sub.Substring(0, 58) }
+    Write-Host ("|    {0}{1}|" -f $sub, (" " * [Math]::Max(0, 58 - $sub.Length))) -ForegroundColor White
+    Write-Host ("|{0}|" -f ("").PadRight(62))
+    Write-Host ("|  Windows GPU : {0}{1}|" -f $GpuWin, (" " * [Math]::Max(0, 45 - $GpuWin.Length)))
+    Write-Host ("|  WSL GPU     : {0}{1}|" -f $GpuWsl, (" " * [Math]::Max(0, 45 - $GpuWsl.Length)))
+    Write-Host ("|  Elapsed     : {0}{1}|" -f $em, (" " * [Math]::Max(0, 45 - $em.Length)))
+    Write-Host ("|  Last progress: {0}{1}|" -f $since, (" " * [Math]::Max(0, 44 - $since.Length)))
+    Write-Host ("|{0}|" -f ("").PadRight(62))
+    Write-Host ("|  Live log (tail):{0}|" -f (" " * 43))
+    foreach ($t in $RecentLines) {
+        if (-not $t) { continue }
+        $line = $t.Trim()
+        if ($line.Length -gt 58) { $line = $line.Substring(0, 58) }
+        Write-Host ("|  > {0}{1}|" -f $line, (" " * [Math]::Max(0, 58 - $line.Length))) -ForegroundColor DarkGray
+    }
+    Write-Host ("+" + ("-" * 62) + "+") -ForegroundColor DarkYellow
+}
+
+function Get-WindowsNvidiaName {
+    try {
+        $o = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
+        if ($o) { return (($o | Select-Object -First 1).ToString().Trim()) }
+    } catch {}
+    return "not visible"
+}
+
+function Get-WslNvidiaName {
+    param([string]$Name)
+    try {
+        $o = & wsl.exe -d $Name -- bash -lc "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1" 2>$null
+        if ($o) {
+            $s = ($o | Out-String).Trim()
+            if ($s) { return $s }
+        }
+    } catch {}
+    return "not visible in WSL"
+}
+
+function Test-WslPasswordlessSudo {
+    param([string]$Name)
+    & wsl.exe -d $Name -- bash -lc "sudo -n true" 2>$null | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Ensure-WslPasswordlessSudo {
+    param([string]$Name)
+    if (Test-WslPasswordlessSudo -Name $Name) { return $true }
+    Show-Box "SUDO PASSWORD BLOCKER" @(
+        "Stage 6 installs Linux packages using sudo.",
+        "Your Ubuntu user still requires a sudo password.",
+        "Otacon Setup has no keyboard for that prompt, so it",
+        "hangs forever after Checking Linux build dependencies.",
+        "",
+        "Fix once (open Ubuntu from Start, paste):",
+        "  sudo -v",
+        '  echo "$(whoami) ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/otacon-nopasswd',
+        "  sudo chmod 440 /etc/sudoers.d/otacon-nopasswd",
+        "",
+        "Then press R here to retry, or X to close and rerun Setup."
+    ) -Color Yellow
+    $c = Read-Choice "  Press R to retry sudo check, X to close: " @("R","X")
+    if ($c -eq "X") { return $false }
+    return (Test-WslPasswordlessSudo -Name $Name)
+}
+
 function Step-InstallOtacon {
     param([string]$Name)
     Save-InstallerState @{ stage = "installing_otacon"; step = 6; ubuntu_name = $Name }
     $started = Get-Date
-    Show-WorkingPanel -Step 6 -StepName "INSTALLING OTACON" -Detail "Downloading and installing OtaconsKeep components" -Started $started -Typical "10 to 30 minutes"
+    $gpuWin = Get-WindowsNvidiaName
+    $gpuWsl = Get-WslNvidiaName -Name $Name
+    Write-KeepLog "GPU windows='$gpuWin' wsl='$gpuWsl'" -Stage "INSTALLING_OTACON"
+
+    if (-not (Ensure-WslPasswordlessSudo -Name $Name)) {
+        Write-KeepLog "passwordless sudo missing - abort stage 6" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        return 1
+    }
+
+    Show-Stage6Panel -Started $started -Substep "Preparing Linux installer" -GpuWin $gpuWin -GpuWsl $gpuWsl -LastProgress $started
 
     $envPass = @(
         "OTACON_INSTALL_DEFAULT_MODEL=$($env:OTACON_INSTALL_DEFAULT_MODEL)",
@@ -632,27 +733,82 @@ function Step-InstallOtacon {
 set -euo pipefail
 TMP=`$(mktemp /tmp/otacon-install.XXXXXX.sh)
 trap 'rm -f "`$TMP"' EXIT
-curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/$Branch/install_otacon.sh -o "`$TMP"
+curl -fsSL --connect-timeout 30 --max-time 120 https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/$Branch/install_otacon.sh -o "`$TMP"
 test -s "`$TMP" || { echo 'Download failed or empty installer' >&2; exit 1; }
 head -n1 "`$TMP" | grep -q bash || { echo 'Downloaded file does not look like the Otacon installer' >&2; exit 1; }
 env $envPass bash "`$TMP"
 "@
 
     $logPipe = Join-Path $LogDir "linux-install-tail.log"
+    if (Test-Path $logPipe) { Remove-Item -LiteralPath $logPipe -Force -ErrorAction SilentlyContinue }
     Write-KeepLog "starting linux installer in $Name" -Stage "INSTALLING_OTACON"
 
-    # Merge streams inside bash so we do not need two Redirect* files.
     $bashWrapped = $bash + " 2>&1"
     $proc = Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", $Name, "--", "bash", "-lc", $bashWrapped) `
         -NoNewWindow -PassThru -RedirectStandardOutput $logPipe
 
+    $lastProgress = Get-Date
+    $lastByteLen = 0L
+    $currentSub = "starting Linux installer"
+    $overallTimeoutMin = 120
+    $stallTimeoutMin = 25
+    if ($env:OTACON_STAGE6_OVERALL_MIN) { [void][int]::TryParse($env:OTACON_STAGE6_OVERALL_MIN, [ref]$overallTimeoutMin) }
+    if ($env:OTACON_STAGE6_STALL_MIN) { [void][int]::TryParse($env:OTACON_STAGE6_STALL_MIN, [ref]$stallTimeoutMin) }
+
     while (-not $proc.HasExited) {
-        Show-WorkingPanel -Step 6 -StepName "INSTALLING OTACON" -Detail "Installing Otacon inside Windows Ubuntu" -Started $started -Typical "10 to 30 minutes"
+        $recent = @()
         if (Test-Path $logPipe) {
-            $tail = Get-Content $logPipe -Tail 3 -ErrorAction SilentlyContinue
-            foreach ($t in $tail) { if ($t) { Write-Host ("  > {0}" -f ($t.Substring(0, [Math]::Min(90, $t.Length)))) -ForegroundColor DarkGray } }
+            $item = Get-Item -LiteralPath $logPipe -ErrorAction SilentlyContinue
+            if ($item -and $item.Length -gt $lastByteLen) {
+                $lastByteLen = $item.Length
+                $lastProgress = Get-Date
+            }
+            $all = @(Get-Content $logPipe -ErrorAction SilentlyContinue)
+            foreach ($line in $all) {
+                if ($line -match '\[STAGE\]\s+(\S+)\s+(\S+)\s+(.*)$') {
+                    $currentSub = ("{0} [{1}] {2}" -f $Matches[1], $Matches[2], $Matches[3])
+                    $lastProgress = Get-Date
+                } elseif ($line -match '\[AGG::HEARTBEAT\]') {
+                    $lastProgress = Get-Date
+                    $currentSub = $line.Substring(0, [Math]::Min(90, $line.Length))
+                } elseif ($line -match '\[AGG::PROGRESS\]') {
+                    $lastProgress = Get-Date
+                } elseif ($line -match 'pulling|Downloading|Get:|Unpacking|Setting up') {
+                    $lastProgress = Get-Date
+                }
+            }
+            $recent = @($all | Select-Object -Last 5)
         }
-        Write-Host "  [ OTACON ] bringing the keep online - do not close this window" -ForegroundColor DarkGray
+
+        Show-Stage6Panel -Started $started -Substep $currentSub -RecentLines $recent `
+            -LastProgress $lastProgress -GpuWin $gpuWin -GpuWsl $gpuWsl
+
+        $elapsedMin = ((Get-Date) - $started).TotalMinutes
+        $stallMin = ((Get-Date) - $lastProgress).TotalMinutes
+        if ($elapsedMin -ge $overallTimeoutMin) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Write-KeepLog "stage6 overall timeout ${overallTimeoutMin}m" -Level "ERROR" -Stage "INSTALLING_OTACON"
+            Show-SetupNeedsHelp -Step "installing otacon (overall timeout)" -PlainError (
+                "Stage 6 exceeded $overallTimeoutMin minutes. Last substep: $currentSub. Log: $logPipe"
+            ) | Out-Null
+            if (Test-Path $logPipe) {
+                Write-Host "---- last 50 log lines ----" -ForegroundColor Yellow
+                Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            }
+            return 1
+        }
+        if ($stallMin -ge $stallTimeoutMin) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Write-KeepLog "stage6 stall timeout ${stallTimeoutMin}m substep=$currentSub" -Level "ERROR" -Stage "INSTALLING_OTACON"
+            Show-SetupNeedsHelp -Step "installing otacon (no progress)" -PlainError (
+                "No installer progress for $stallTimeoutMin minutes. Last substep: $currentSub. Often caused by sudo password, apt lock, or dead network. Log: $logPipe"
+            ) | Out-Null
+            if (Test-Path $logPipe) {
+                Write-Host "---- last 50 log lines ----" -ForegroundColor Yellow
+                Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            }
+            return 1
+        }
         Start-Sleep -Seconds 5
     }
 
@@ -664,6 +820,13 @@ env $envPass bash "`$TMP"
         & wsl.exe --terminate $Name 2>$null
         Start-Sleep -Seconds 3
         return (Step-InstallOtacon -Name $Name)
+    }
+    if ($code -ne 0 -and $code -ne 2) {
+        if (Test-Path $logPipe) {
+            Write-Host "---- last 50 log lines ----" -ForegroundColor Yellow
+            Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            Write-Host "Full log: $logPipe" -ForegroundColor DarkYellow
+        }
     }
     return $code
 }
