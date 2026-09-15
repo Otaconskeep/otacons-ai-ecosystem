@@ -215,18 +215,21 @@ rm -rf ~/otacon-ai-ecosystem ~/.config/otacon ~/.local/share/otacon
 rm -f ~/.local/bin/otacon
 ```
 
-## Otacon Core, the Keep Blueprint, and Otaconskeep Services
+## Otacon Core, Otacon Expansion, the Keep Blueprint, and Otaconskeep Services
 
-| | **Otacon Core** (this repo) | **Keep Blueprint** | **Otaconskeep Services** |
-|---|---|---|---|
-| What it is | Free, open source, self-hosted | The broader ecosystem architecture demonstrated by Antonio's real Keep (agent rooms, media/home automation, remote GPU nodes, and more) | Architecture, deployment, and support engagements |
-| Status | Install today, this repo | Direction the architecture is heading, not a public installer yet | Available now |
-| Price | Free | Not offered publicly yet | Contact for scope/pricing |
+| | **Otacon Core** (this repo) | **Otacon Expansion** | **Keep Blueprint** | **Otaconskeep Services** |
+|---|---|---|---|---|
+| What it is | Free, open source, self-hosted | Premium multi-agent/emotional/orchestration layer — five-agent roster, relationship engine, command-center surfaces, free local Video Studio ([full spec](docs/EXPANSION.md)) | The broader ecosystem architecture demonstrated by Antonio's real Keep (agent rooms, media/home automation, remote GPU nodes, and more) | Architecture, deployment, and support engagements |
+| Status | Install today, this repo | Specification complete, not yet installable — see [docs/EXPANSION.md](docs/EXPANSION.md) | Reference only, not a public installer | Available now |
+| Price | Free | Not yet available (licensed, priced later) | Not offered publicly | Contact for scope/pricing |
 
 There's no license key or artificial limit baked into Otacon Core. It's the
-real, complete public platform as it stands today. **Otacon Core installs
-the foundation. The Keep Blueprint shows what that foundation can become.**
-Questions about any of the three, or want to talk deployment/consulting:
+real, complete public platform as it stands today, and Expansion does not
+change that — it's a separately licensed layer installed on top, never a
+gate on Core itself. **Otacon Core installs the foundation. Otacon
+Expansion is the specified, concrete premium product built from the Keep
+Blueprint's direction.**
+Questions about any of the four, or want to talk deployment/consulting:
 
 ### 💬 [discord.gg/cZDeqECzX](https://discord.gg/cZDeqECzX)
 
@@ -333,6 +336,12 @@ User → Agent (identity, memory, voice, preferences)
      → Capability Router → Deployment Services
        → conversational_llm / text_to_speech → Providers / Compute
 ```
+
+An early implementation slice of Otacon Expansion's canonical agent
+schema, hierarchy validation, bounded relationship/mood formulas, motion
+manifest schema, decision-audit record, and readiness state lives in
+[`expansion/`](expansion/), covered by 42 passing tests in
+[`tests/test_expansion_*.py`](tests/). Full spec: [docs/EXPANSION.md](docs/EXPANSION.md).
 
 Otacon: Designed & Engineered by Antonio Garcia
 
