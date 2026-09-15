@@ -1006,17 +1006,30 @@ fi
 # ------------------------------------------------------------------------------
 # Genome Voice Trainer (GPU Piper) — included with normal Otacon install
 # Skip: OTACON_INSTALL_VOICE_TRAINER=0
+# Also SKIP (not DEGRADED) when NVIDIA capability is absent — GPU-only feature.
 # ------------------------------------------------------------------------------
+VOICE_TRAINER_SKIPPED=0
+VOICE_TRAINER_SKIP_REASON=""
 if [[ "$INSTALL_VOICE_TRAINER" == "1" ]]; then
-  log "Voice Trainer: installing Genome GPU Piper (included with Otacon)"
-  if curl -fsSL "$VOICE_TRAINER_INSTALLER_URL" | bash; then
-    ok "Genome Voice Trainer installed"
-    VOICE_TRAINER_OK=1
-  else
-    warn "Genome Voice Trainer install failed — treated as optional DEGRADED component."
-    warn "  Retry with: curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
-    OPTIONAL_FAIL=1
+  if ! command_exists nvidia-smi || ! nvidia-smi >/dev/null 2>&1; then
+    VOICE_TRAINER_SKIPPED=1
+    VOICE_TRAINER_SKIP_REASON="no usable NVIDIA GPU (nvidia-smi)"
+    warn "Voice Trainer SKIPPED — ${VOICE_TRAINER_SKIP_REASON}."
+    warn "  GPU features require NVIDIA drivers + nvidia-smi. Core install continues."
+    warn "  Later (on a GPU host): curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
     VOICE_TRAINER_OK=0
+  else
+    log "Voice Trainer: installing Genome GPU Piper (included with Otacon)"
+    if curl -fsSL "$VOICE_TRAINER_INSTALLER_URL" | bash; then
+      ok "Genome Voice Trainer installed"
+      VOICE_TRAINER_OK=1
+    else
+      warn "Genome Voice Trainer install failed — treated as optional DEGRADED component."
+      warn "  NVIDIA was detected; this is a real optional-component failure (not a skip)."
+      warn "  Retry with: curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
+      OPTIONAL_FAIL=1
+      VOICE_TRAINER_OK=0
+    fi
   fi
 else
   warn "Voice Trainer skipped (OTACON_INSTALL_VOICE_TRAINER=0)."
@@ -1063,7 +1076,17 @@ fi
 printf '\n\033[1;35m'
 case "$FINAL_STATE" in
   READY)
-    cat <<'DONE_ASCII'
+    if [[ "$VOICE_TRAINER_SKIPPED" == "1" ]]; then
+      cat <<'DONE_ASCII'
+==============================================================================
+              OTACON AI ECOSYSTEM // CORE PASS
+==============================================================================
+                   ANTONIO G. GARCIA // OTACONSKEEP
+              GPU FEATURES SKIPPED (NO NVIDIA)
+==============================================================================
+DONE_ASCII
+    else
+      cat <<'DONE_ASCII'
 ==============================================================================
               OTACON AI ECOSYSTEM // INSTALL COMPLETE
 ==============================================================================
@@ -1071,6 +1094,7 @@ case "$FINAL_STATE" in
                            SYSTEM READY
 ==============================================================================
 DONE_ASCII
+    fi
     ;;
   DEGRADED)
     cat <<'DONE_ASCII'
@@ -1111,7 +1135,12 @@ else
   printf 'Default Model    : skipped (OTACON_INSTALL_DEFAULT_MODEL=0)\n'
 fi
 if [[ "$INSTALL_VOICE_TRAINER" == "1" ]]; then
-  printf 'Voice Trainer    : %s\n' "$([[ "$VOICE_TRAINER_OK" == "1" ]] && echo OK || echo FAILED/optional)"
+  if [[ "$VOICE_TRAINER_SKIPPED" == "1" ]]; then
+    printf 'Voice Trainer    : SKIPPED (%s)\n' "$VOICE_TRAINER_SKIP_REASON"
+    printf 'GPU features     : SKIPPED (capability absent — not a failure)\n'
+  else
+    printf 'Voice Trainer    : %s\n' "$([[ "$VOICE_TRAINER_OK" == "1" ]] && echo OK || echo FAILED/optional)"
+  fi
 else
   printf 'Voice Trainer    : skipped (OTACON_INSTALL_VOICE_TRAINER=0)\n'
 fi
