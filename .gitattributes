@@ -1,0 +1,9 @@
+# Windows batch/cmd installers: store exact UTF-8 BOM + CRLF bytes.
+# Do not let Git renormalize line endings or strip the BOM.
+*.bat binary
+*.cmd binary
+
+# PowerShell helpers used by the Windows installer — LF is fine in-repo;
+# Windows PowerShell accepts LF. Keep text normalization predictable.
+deploy/*.ps1 text eol=lf
+*.ps1 text eol=lf

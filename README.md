@@ -59,6 +59,7 @@ OtaconsKeep-Setup.bat --debug
 
 | Situation | What to do |
 | --- | --- |
+| Wrong encoding / Save As from raw GitHub | Re-download via the website **Download OtaconsKeep Setup** button only. Installer bats are UTF-8 with BOM. Do not Save As from raw.githubusercontent.com. |
 | Window closes during **fetching** / exit code **1** | Fixed: installer no longer overwrites the running download helper. Re-download from the website. If it still fails, run `OtaconsKeep-Setup.bat --debug` and send `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`. |
 | Browser showed installer **source code** | Use the site **Download OtaconsKeep Setup** button, or right-click the `.bat` link → Save link as…, or use the ZIP. |
 | Windows SmartScreen warning | More info → Run anyway (the file is the public installer from this repo). |

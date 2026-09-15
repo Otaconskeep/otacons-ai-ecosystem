@@ -1,0 +1,17 @@
+# https://editorconfig.org
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+
+# Windows installer / launcher scripts must remain UTF-8 with BOM + CRLF
+# so cmd.exe on Windows 11 recognizes the encoding without Save As hacks.
+[*.bat]
+charset = utf-8-bom
+end_of_line = crlf
+
+[*.cmd]
+charset = utf-8-bom
+end_of_line = crlf

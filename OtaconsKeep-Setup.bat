@@ -1,12 +1,45 @@
-@echo off
+﻿@echo off
 REM ============================================================
 REM  OtaconsKeep-Setup.bat  (public download name)
-REM  Lone Downloads\ entry — fetches guided installer into
+REM  Lone Downloads\ entry - fetches guided installer into
 REM  %LOCALAPPDATA%\OtaconsKeep\installer then runs it.
 REM  NEVER exits silently on fetch/download failure.
 REM ============================================================
 setlocal EnableExtensions EnableDelayedExpansion
 title OtaconsKeep Setup
+REM --- encoding / integrity self-check (must stay ASCII) ---
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$b=[System.IO.File]::ReadAllBytes($args[0]);" ^
+  "if($b.Length -lt 8){ Write-Host 'ERROR: installer file is empty or truncated.'; exit 2 };" ^
+  "if($b[0] -eq 0xFF -and $b[1] -eq 0xFE){ Write-Host 'ERROR: this installer was saved as UTF-16. Re-download from the Otaconskeep website.'; exit 3 };" ^
+  "if($b[0] -eq 0xFE -and $b[1] -eq 0xFF){ Write-Host 'ERROR: this installer was saved as UTF-16. Re-download from the Otaconskeep website.'; exit 3 };" ^
+  "if(-not ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)){ Write-Host 'ERROR: missing UTF-8 BOM. Do not save raw GitHub source manually. Re-download OtaconsKeep-Setup.bat from the Otaconskeep website.'; exit 4 };" ^
+  "exit 0" ^
+  "%~f0"
+if errorlevel 1 (
+  echo.
+  echo ============================================================
+  echo                  OTACON SETUP STOPPED
+  echo ============================================================
+  echo.
+  echo  This installer file is damaged or was saved with the wrong encoding.
+  echo.
+  echo  nothing has been damaged on your PC
+  echo.
+  echo  What to do
+  echo  1. Delete this .bat file
+  echo  2. Open the Otaconskeep website
+  echo  3. Click Download OtaconsKeep Setup
+  echo  4. Run the new file from Downloads
+  echo.
+  echo  Do NOT open raw.githubusercontent.com and use Save As.
+  echo.
+  echo ============================================================
+  echo  This window will stay open. Press a letter key to exit.
+  echo ============================================================
+  pause >nul
+  exit /b 1
+)
 
 set "BRANCH=main"
 set "REPO_WEB=https://github.com/Otaconskeep/otacons-ai-ecosystem"
@@ -61,7 +94,7 @@ if defined DEBUG (
 )
 
 REM If this copy already sits next to deploy\windows-setup-assistant.ps1
-REM (zip / git clone / LocalAppData tree), run that tree — do not re-fetch.
+REM (zip / git clone / LocalAppData tree), run that tree - do not re-fetch.
 set "LOCAL_ASSISTANT=%~dp0deploy\windows-setup-assistant.ps1"
 if exist "%LOCAL_ASSISTANT%" (
   call :LOG "local tree detected; skipping bootstrap fetch"
