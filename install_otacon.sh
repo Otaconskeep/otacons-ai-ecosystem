@@ -248,16 +248,135 @@ wait_for_apt_lock() {
   stage "6.3a" "PASS" "apt/dpkg lock clear"
 }
 
+die_with_log_tail() {
+  local msg="$1"
+  local logf="${2:-$INSTALL_LOG}"
+  local lines="${3:-40}"
+  printf '\033[1;31m[AGG::FAIL]\033[0m %s\n' "$msg" >&2
+  if [[ -n "$logf" && -f "$logf" ]]; then
+    printf '\033[1;31m[AGG::FAIL]\033[0m ---- last %s lines of %s ----\n' "$lines" "$logf" >&2
+    tail -n "$lines" "$logf" >&2 || true
+    printf '\033[1;31m[AGG::FAIL]\033[0m ---- end log tail ----\n' >&2
+  fi
+  printf '\033[1;31m[AGG::FAIL]\033[0m Failed stage near line %s. Full log: %s\n' "${BASH_LINENO[0]:-$LINENO}" "$INSTALL_LOG" >&2
+  exit 1
+}
+
+# True when dpkg/apt is in the common WSL "interrupted" / half-configured state.
+dpkg_needs_repair() {
+  local updates_dir="/var/lib/dpkg/updates"
+  if [[ -d "$updates_dir" ]] && find "$updates_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  # Half-installed / unpacked / failed-config packages (Status-Abbrev: iU iF iH etc.)
+  if command_exists dpkg-query; then
+    if $SUDO dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 2>/dev/null \
+      | grep -qE '^[a-zA-Z]?[UFH]'; then
+      return 0
+    fi
+  fi
+  local check_out=""
+  check_out="$($SUDO env DEBIAN_FRONTEND=noninteractive apt-get check 2>&1)" || {
+    if printf '%s\n' "$check_out" | grep -qiE 'dpkg was interrupted|dpkg --configure -a|Unmet dependencies|broken packages'; then
+      return 0
+    fi
+  }
+  return 1
+}
+
+# Self-heal interrupted dpkg before apt update/install (one-click; no manual dpkg --configure -a).
+repair_interrupted_dpkg() {
+  local force="${1:-0}"
+  export DEBIAN_FRONTEND=noninteractive
+  export NEEDRESTART_MODE="${NEEDRESTART_MODE:-a}"
+  export APT_LISTCHANGES_FRONTEND=none
+
+  if [[ "$force" != "1" ]] && ! dpkg_needs_repair; then
+    stage "6.3r" "PASS" "dpkg/apt package state is clean"
+    return 0
+  fi
+
+  stage "6.3r" "START" "Repairing interrupted dpkg/apt state"
+  log "Interrupted package state detected — running dpkg --configure -a (noninteractive)"
+  wait_for_apt_lock 180
+
+  local repair_log
+  repair_log="${INSTALL_LOG_DIR}/dpkg-repair-$(date +%Y%m%d-%H%M%S).log"
+  mkdir -p "$INSTALL_LOG_DIR"
+
+  local cfg_rc=0
+  set +e
+  run_watched 600 "dpkg --configure -a" --soft -- bash -c '
+    set -o pipefail
+    logf="$1"; shift
+    "$@" 2>&1 | tee -a "$logf"
+    exit "${PIPESTATUS[0]}"
+  ' bash "$repair_log" $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a dpkg --configure -a
+  cfg_rc=$?
+  set -e
+  if [[ "$cfg_rc" -ne 0 ]]; then
+    stage "6.3r" "FAIL" "dpkg --configure -a exit=$cfg_rc"
+    die_with_log_tail \
+      "dpkg --configure -a failed with exit $cfg_rc while repairing interrupted package state. Fix the dpkg error below, then rerun Setup (no manual steps expected for the common WSL interrupt case)." \
+      "$repair_log" 50
+  fi
+
+  # Fix broken deps when configure left apt inconsistent.
+  if dpkg_needs_repair || [[ "$force" == "1" ]]; then
+    log "Running apt-get -f install -y to finish dependency repair"
+    local fix_rc=0
+    set +e
+    run_watched 600 "apt-get -f install" --soft -- bash -c '
+      set -o pipefail
+      logf="$1"; shift
+      "$@" 2>&1 | tee -a "$logf"
+      exit "${PIPESTATUS[0]}"
+    ' bash "$repair_log" $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+      apt-get \
+      -o Acquire::Retries=3 \
+      -o Acquire::http::Timeout=30 \
+      -o Acquire::https::Timeout=30 \
+      -o Dpkg::Use-Pty=0 \
+      -o Dpkg::Options::=--force-confdef \
+      -o Dpkg::Options::=--force-confold \
+      -f install -y
+    fix_rc=$?
+    set -e
+    if [[ "$fix_rc" -ne 0 ]]; then
+      stage "6.3r" "FAIL" "apt-get -f install exit=$fix_rc"
+      die_with_log_tail \
+        "apt-get -f install -y failed with exit $fix_rc after dpkg --configure -a. Exact repair log tail follows." \
+        "$repair_log" 50
+    fi
+  fi
+
+  if dpkg_needs_repair; then
+    stage "6.3r" "FAIL" "package state still broken after repair"
+    die_with_log_tail \
+      "dpkg/apt still reports an interrupted or broken package state after automatic repair. Exact repair log tail follows." \
+      "$repair_log" 50
+  fi
+
+  stage "6.3r" "PASS" "dpkg/apt package state repaired"
+  ok "Interrupted dpkg state repaired automatically"
+  return 0
+}
+
 run_apt() {
   # Bounded, noninteractive apt with heartbeats. Never waits on a TTY prompt.
+  # Usage: run_apt TIMEOUT LABEL [--soft] apt-get-args...
   local timeout_sec="$1"; shift
   local label="$1"; shift
+  local soft=0
+  if [[ "${1:-}" == "--soft" ]]; then soft=1; shift; fi
   export DEBIAN_FRONTEND=noninteractive
   export NEEDRESTART_MODE="${NEEDRESTART_MODE:-a}"
   export APT_LISTCHANGES_FRONTEND=none
   wait_for_apt_lock 180
+  local soft_flag=()
+  if [[ "$soft" -eq 1 ]]; then soft_flag=(--soft); fi
   # shellcheck disable=SC2086
-  run_watched "$timeout_sec" "$label" -- $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+  run_watched "$timeout_sec" "$label" "${soft_flag[@]}" -- $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
     apt-get \
     -o Acquire::Retries=3 \
     -o Acquire::http::Timeout=30 \
@@ -485,8 +604,48 @@ install_apt_packages() {
     )
   fi
   printf '[AGG::PROGRESS] apt packages (%s): %s\n' "${#APT_PACKAGES[@]}" "${APT_PACKAGES[*]}"
-  run_apt 600 "apt-get update" update -y
-  run_apt 1200 "apt-get install build dependencies" install -y "${APT_PACKAGES[@]}"
+
+  # Common WSL failure: prior apt killed mid-configure → "dpkg was interrupted".
+  # Self-heal before update/install so one-click Setup does not ask the user to
+  # manually run dpkg --configure -a.
+  repair_interrupted_dpkg
+
+  local apt_rc=0
+  set +e
+  run_apt 600 "apt-get update" --soft update -y
+  apt_rc=$?
+  set -e
+  if [[ "$apt_rc" -ne 0 ]]; then
+    if dpkg_needs_repair; then
+      warn "apt-get update failed (exit $apt_rc) with interrupted dpkg — repairing and retrying once"
+      repair_interrupted_dpkg 1
+      run_apt 600 "apt-get update (retry after dpkg repair)" update -y
+    else
+      die_with_log_tail "apt-get update failed with exit $apt_rc (not an interrupted-dpkg case). Log tail follows." "$INSTALL_LOG" 50
+    fi
+  fi
+
+  set +e
+  run_apt 1200 "apt-get install build dependencies" --soft install -y "${APT_PACKAGES[@]}"
+  apt_rc=$?
+  set -e
+  if [[ "$apt_rc" -ne 0 ]]; then
+    if dpkg_needs_repair || [[ "$apt_rc" -eq 100 ]]; then
+      warn "apt-get install failed (exit $apt_rc) — attempting dpkg repair + one retry"
+      repair_interrupted_dpkg 1
+      set +e
+      run_apt 1200 "apt-get install build dependencies (retry)" --soft install -y "${APT_PACKAGES[@]}"
+      apt_rc=$?
+      set -e
+    fi
+    if [[ "$apt_rc" -ne 0 ]]; then
+      stage "6.3" "FAIL" "apt-get install exit=$apt_rc"
+      die_with_log_tail \
+        "apt-get install build dependencies failed with exit $apt_rc after automatic dpkg repair. Exact apt/dpkg log tail follows (not a generic exit 100)." \
+        "$INSTALL_LOG" 60
+    fi
+  fi
+
   stage "6.3" "PASS" "Linux build dependencies installed"
   ok "System dependencies are installed"
 }

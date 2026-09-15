@@ -41,6 +41,7 @@ def main() -> int:
     must("apt/dpkg lock" in SH.lower() or "wait_for_apt_lock" in SH, "apt lock wait/fail", fails)
     must(re.search(r"run_apt\s+600\s+\"apt-get update\"", SH) is not None, "apt-get update bounded", fails)
     must(re.search(r"run_apt\s+1200\s+\"apt-get install", SH) is not None, "apt-get install bounded", fails)
+    must("repair_interrupted_dpkg" in SH and "dpkg --configure -a" in SH, "interrupted dpkg self-heal before apt", fails)
     must("ollama pull" in SH and "--soft" in SH, "ollama pull soft-watched", fails)
     must("SERVICE_DRAFT_NAME" in SH and "otacon.service.draft" in SH, "systemd unit draft for finalize", fails)
     must("user phase must not run as root" in SH, "user phase rejects root", fails)
