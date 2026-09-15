@@ -429,8 +429,9 @@ function Show-SetupNeedsHelp {
 # ---------------------------------------------------------------------------
 function Register-ResumeAfterReboot {
     $launcher = Join-Path $RepoRoot "OtaconsKeep-Setup.bat"
-    if (-not (Test-Path $launcher)) { $launcher = Join-Path $RepoRoot "install_otacon.bat" }
-    $cmd = "`"$launcher`""
+    if (-not (Test-Path -LiteralPath $launcher)) { $launcher = Join-Path $RepoRoot "install_otacon.bat" }
+    # Quote for cmd.exe RunOnce; supports spaces and parentheses in the path.
+    $cmd = '"' + $launcher + '"'
     reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce" /v OtaconsKeepSetupResume /t REG_SZ /d $cmd /f | Out-Null
     Save-InstallerState @{ stage = "waiting_for_reboot"; resume_registered = $true }
     Write-KeepLog "RunOnce registered for $launcher" -Stage "WAITING_FOR_REBOOT"
@@ -525,8 +526,9 @@ function Ensure-Admin {
         "This does not install Otacon yet - it only unlocks the next step."
     ) -Color Yellow
     $bat = Join-Path $RepoRoot "OtaconsKeep-Setup.bat"
-    if (-not (Test-Path $bat)) { $bat = Join-Path $RepoRoot "install_otacon.bat" }
-    Start-Process -FilePath $bat -Verb RunAs
+    if (-not (Test-Path -LiteralPath $bat)) { $bat = Join-Path $RepoRoot "install_otacon.bat" }
+    # Pass path as FilePath argument data - never concatenate into a -Command string.
+    Start-Process -FilePath $bat -WorkingDirectory (Split-Path -Parent $bat) -Verb RunAs
     Write-Host ""
     Write-Host "  A new elevated Setup window should open after you click Yes." -ForegroundColor Green
     Write-Host "  You can close THIS window now - setup continues in the new one." -ForegroundColor Green
@@ -536,7 +538,7 @@ function Ensure-Admin {
         $c = Read-Choice "  Choice [R/X]: " @("R","X")
         if ($c -eq "X") { return $false }
         if ($c -eq "R") {
-            Start-Process -FilePath $bat -Verb RunAs
+            Start-Process -FilePath $bat -WorkingDirectory (Split-Path -Parent $bat) -Verb RunAs
             continue
         }
     }

@@ -1,4 +1,7 @@
-# Verify this .bat file is UTF-8 with BOM (Windows helper for startup self-check).
+# Validate a .bat file is UTF-8 with BOM.
+# Invoked ONLY via: powershell -File check-bat-encoding.ps1 -Path <bat>
+# Never pass the bat path after -Command — Windows PowerShell appends those
+# tokens into the command text (breaks on "OtaconsKeep-Setup (1).bat").
 
 [CmdletBinding()]
 param(
@@ -6,6 +9,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $Path) {
+    Write-Host "ERROR: no path provided."
+    exit 2
+}
+if (-not (Test-Path -LiteralPath $Path)) {
+    Write-Host "ERROR: installer file not found: $Path"
+    exit 2
+}
+
 $b = [System.IO.File]::ReadAllBytes($Path)
 if ($b.Length -lt 8) {
     Write-Host "ERROR: installer file is empty or truncated."
