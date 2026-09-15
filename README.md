@@ -59,7 +59,7 @@ OtaconsKeep-Setup.bat --debug
 
 | Situation | What to do |
 | --- | --- |
-| Window closes during **fetching** | Fixed in current installer. Re-download from the website. If it still fails, run `OtaconsKeep-Setup.bat --debug` and send `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`. |
+| Window closes during **fetching** / exit code **1** | Fixed: installer no longer overwrites the running download helper. Re-download from the website. If it still fails, run `OtaconsKeep-Setup.bat --debug` and send `%LOCALAPPDATA%\OtaconsKeep\Logs\installer.log`. |
 | Browser showed installer **source code** | Use the site **Download OtaconsKeep Setup** button, or right-click the `.bat` link → Save link as…, or use the ZIP. |
 | Windows SmartScreen warning | More info → Run anyway (the file is the public installer from this repo). |
 | Window said “press any key” and closed | Old installer. Download the new `OtaconsKeep-Setup.bat`. New builds explain restarts and never exit silently. |
