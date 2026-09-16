@@ -127,21 +127,30 @@ exec > >(tee -a "$INSTALL_LOG") 2>&1
 log()  { printf '\n\033[1;36m[AGG::OTACON]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[AGG::OK]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[AGG::WARN]\033[0m %s\n' "$*" >&2; }
+
+# Machine-parseable stage markers for the Windows UI (and humans).
+# Format: [STAGE] <id> <status> <detail>
+stage() {
+  local id="$1" status="$2"; shift 2
+  printf '[STAGE] %s %s %s\n' "$id" "$status" "$*"
+  printf '[AGG::PROGRESS] [%s] %s — %s\n' "$id" "$status" "$*"
+}
+
+# Durable exit marker for Windows (survives blank Start-Process ExitCode).
+emit_phase_exit() {
+  local rc="${1:-1}"
+  local detail="${2:-}"
+  stage "exit" "CODE" "${rc}${detail:+ ${detail}}"
+  printf 'OTACON_PHASE_EXIT=%s\n' "$rc"
+}
+
 die()  {
   printf '\033[1;31m[AGG::FAIL]\033[0m %s\n' "$*" >&2
   printf '\033[1;31m[AGG::FAIL]\033[0m Failed stage near line %s. Log: %s\n' "${BASH_LINENO[0]:-$LINENO}" "$INSTALL_LOG" >&2
   printf 'Recovery: re-run this installer, or: PYTHONPATH=%s %s/bin/python -m installer.backend_entry doctor\n' \
     "${INSTALL_DIR:-$HOME/otacon-ai-ecosystem}" "${VENV_DIR:-$HOME/otacon-ai-ecosystem/.venv}" >&2
+  emit_phase_exit 1 "die"
   exit 1
-}
-
-# Machine-parseable stage markers for the Windows UI (and humans).
-# Format: [STAGE] <id> <status> <detail>
-# status: START | PASS | FAIL | WAIT | INFO
-stage() {
-  local id="$1" status="$2"; shift 2
-  printf '[STAGE] %s %s %s\n' "$id" "$status" "$*"
-  printf '[AGG::PROGRESS] [%s] %s — %s\n' "$id" "$status" "$*"
 }
 
 # Run a long command with heartbeats + hard timeout. Survives quiet tools (apt).
@@ -252,6 +261,7 @@ die_with_log_tail() {
   local msg="$1"
   local logf="${2:-$INSTALL_LOG}"
   local lines="${3:-40}"
+  local rc="${4:-1}"
   printf '\033[1;31m[AGG::FAIL]\033[0m %s\n' "$msg" >&2
   if [[ -n "$logf" && -f "$logf" ]]; then
     printf '\033[1;31m[AGG::FAIL]\033[0m ---- last %s lines of %s ----\n' "$lines" "$logf" >&2
@@ -259,7 +269,21 @@ die_with_log_tail() {
     printf '\033[1;31m[AGG::FAIL]\033[0m ---- end log tail ----\n' >&2
   fi
   printf '\033[1;31m[AGG::FAIL]\033[0m Failed stage near line %s. Full log: %s\n' "${BASH_LINENO[0]:-$LINENO}" "$INSTALL_LOG" >&2
-  exit 1
+  emit_phase_exit "$rc" "die_with_log_tail"
+  exit "$rc"
+}
+
+# Best-effort primary broken package name for structured failure UI.
+dpkg_primary_broken_package() {
+  local pkg=""
+  if command_exists dpkg-query; then
+    pkg="$($SUDO dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 2>/dev/null \
+      | awk '/^[a-zA-Z]?[UFH] / { print $2; exit }' || true)"
+  fi
+  if [[ -z "$pkg" ]]; then
+    pkg="$($SUDO dpkg --audit 2>&1 | awk '/^[[:alnum:].+-]+$/ { print; exit }' || true)"
+  fi
+  printf '%s\n' "${pkg:-}"
 }
 
 # ------------------------------------------------------------------------------
@@ -370,13 +394,20 @@ dpkg_check_half_states() {
 }
 
 dpkg_check_status_anomalies() {
+  # Only flag genuinely broken Status values. "deinstall ok config-files" (and
+  # similar residual entries) are normal after apt remove and must NOT fail
+  # the health gate — that would produce a permanent false "still broken".
   local out=""
   if command_exists dpkg-query; then
-    out="$($SUDO dpkg-query -W -f='${Status}\t${Package}\n' 2>/dev/null | grep -v $'^install ok installed\t' || true)"
+    out="$($SUDO dpkg-query -W -f='${Status}\t${Package}\n' 2>/dev/null \
+      | awk -F'\t' '
+          $1 ~ /half-installed|half-configured|unpacked/ { print; next }
+          $1 ~ /reinst-required/ { print; next }
+        ' || true)"
   fi
   if [[ -n "$out" ]]; then
     log "FAIL  dpkg-query status anomalies"
-    log '  cmd: dpkg-query -W -f="${Status}\t${Package}\n" | grep -v "install ok installed"'
+    log '  cmd: dpkg-query Status filter for half-installed/half-configured/unpacked/reinst-required'
     log "  out: $out"
     return 1
   fi
@@ -474,11 +505,18 @@ repair_interrupted_dpkg() {
     set -e
     if [[ "$cfg_rc" -ne 0 ]]; then
       stage "6.3r" "FAIL" "dpkg --configure -a exit=$cfg_rc"
+      local pkg
+      pkg="$(dpkg_primary_broken_package || true)"
+      if [[ -n "$pkg" ]]; then
+        printf 'PACKAGE REPAIR FAILED\nPackage:\n%s\n' "$pkg" | tee -a "$repair_log"
+        printf 'dpkg: error processing package %s (--configure)\n' "$pkg" | tee -a "$repair_log"
+      fi
       die_with_log_tail \
-        "dpkg --configure -a failed with exit $cfg_rc while repairing interrupted package state. Fix the dpkg error below, then rerun Setup (no manual steps expected for the common WSL interrupt case)." \
-        "$repair_log" 50
+        "dpkg --configure -a failed with exit $cfg_rc while repairing interrupted package state${pkg:+ (package: $pkg)}. Fix the dpkg error below, then rerun Setup (no manual steps expected for the common WSL interrupt case)." \
+        "$repair_log" 80 43
     fi
 
+    stage "6.3r" "INFO" "apt-get -f install -y (attempt $attempt/2)"
     log "Running apt-get -f install -y to finish dependency repair"
     local fix_rc=0
     set +e
@@ -500,11 +538,18 @@ repair_interrupted_dpkg() {
     set -e
     if [[ "$fix_rc" -ne 0 ]]; then
       stage "6.3r" "FAIL" "apt-get -f install exit=$fix_rc"
+      local pkg
+      pkg="$(dpkg_primary_broken_package || true)"
+      if [[ -n "$pkg" ]]; then
+        printf 'PACKAGE REPAIR FAILED\nPackage:\n%s\n' "$pkg" | tee -a "$repair_log"
+        printf 'dpkg: error processing package %s (--configure)\n' "$pkg" | tee -a "$repair_log"
+      fi
       die_with_log_tail \
-        "apt-get -f install -y failed with exit $fix_rc after dpkg --configure -a. Exact repair log tail follows." \
-        "$repair_log" 50
+        "apt-get -f install -y failed with exit $fix_rc after dpkg --configure -a${pkg:+ (package: $pkg)}. Exact repair log tail follows." \
+        "$repair_log" 80 43
     fi
 
+    stage "6.3r" "INFO" "post-repair health check (attempt $attempt/2)"
     log "Post-repair health check (attempt $attempt/2) — each check logged individually:"
     if dpkg_health_report; then
       stage "6.3r" "PASS" "dpkg/apt package state repaired"
@@ -519,11 +564,21 @@ repair_interrupted_dpkg() {
     fi
   done
 
-  stage "6.3r" "FAIL" "package state still broken after repair"
+  local pkg
+  pkg="$(dpkg_primary_broken_package || true)"
+  [[ -n "$pkg" ]] || pkg="(see dpkg --audit / half-state lines above)"
+  printf 'PACKAGE REPAIR FAILED\n' | tee -a "$repair_log"
+  printf 'Package:\n%s\n' "$pkg" | tee -a "$repair_log"
+  printf 'Problem:\nAutomatic repair finished (configure + apt -f exited 0) but a canonical health check still fails.\n' | tee -a "$repair_log"
+  printf 'Repair attempted:\ndpkg --configure -a; apt-get -f install -y (up to 2 passes)\n' | tee -a "$repair_log"
+  printf 'Result:\npackage state still broken after repair\n' | tee -a "$repair_log"
+  if [[ "$pkg" != "(see dpkg --audit / half-state lines above)" ]]; then
+    printf 'dpkg: error processing package %s (--configure)\n' "$pkg" | tee -a "$repair_log"
+  fi
+  stage "6.3r" "FAIL" "PACKAGE REPAIR FAILED pkg=$pkg"
   die_with_log_tail \
-    "dpkg/apt still reports an interrupted or broken package state after two automatic repair passes. The exact failing check and its exact output were logged above this point. Exact repair log tail follows." \
-    "$repair_log" 50
-  return 0
+    "dpkg/apt still reports an interrupted or broken package state after two automatic repair passes (package: $pkg). The exact failing check and its exact output were logged above this point. Exact repair log tail follows." \
+    "$repair_log" 80 43
 }
 
 run_apt() {
@@ -745,6 +800,7 @@ ensure_wsl_systemd() {
     printf '[boot]\nsystemd=true\n' | $SUDO tee -a "$WSL_CONF" >/dev/null
   fi
   warn "This Linux environment needs to restart once to activate that. If you're seeing this from install_otacon.bat, it will handle the restart and continue automatically."
+  emit_phase_exit 42 "wsl-systemd-restart-required"
   exit 42
 }
 
@@ -839,6 +895,7 @@ phase_privileged() {
   chmod 644 "$PRIV_MARKER"
   stage "6.0" "PASS" "Privileged bootstrap complete"
   ok "Privileged bootstrap complete (no sudoers changes were made)"
+  emit_phase_exit 0 "privileged-ok"
   exit 0
 }
 
@@ -874,6 +931,7 @@ phase_finalize() {
     warn "systemd not active yet; unit installed to $service_file for next boot"
   fi
   stage "6.7" "PASS" "Finalize complete"
+  emit_phase_exit 0 "finalize-ok"
   exit 0
 }
 
@@ -1841,4 +1899,5 @@ elif [[ "$FINAL_RC" -eq 2 ]]; then
 else
   printf '[ANTONIO G. GARCIA] Otacon install did not reach READY. See log: %s\n' "$INSTALL_LOG"
 fi
+emit_phase_exit "$FINAL_RC" "final-state=$FINAL_STATE"
 exit "$FINAL_RC"
