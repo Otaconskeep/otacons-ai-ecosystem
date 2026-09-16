@@ -27,12 +27,32 @@ from core.router import resolve
 
 
 class VoiceTests(unittest.TestCase):
+    def setUp(self):
+        # Architecture unit tests intentionally exercise TestTTSProvider.
+        os.environ['OTACON_ALLOW_TEST_TTS'] = '1'
+        os.environ['OTACON_TTS_PROVIDER'] = 'test'
+        os.environ['OTACON_TTS_ENDPOINT'] = 'test://tts'
+        os.environ['OTACON_SHOW_TEST_VOICES'] = '1'
+
     def test_profiles_and_isolation(self):
         a = synthesize({'voice_id': 'voice_001'}, 'x')
         b = synthesize({'voice_id': 'voice_002'}, 'x')
         self.assertNotEqual(a['voice_id'], b['voice_id'])
         self.assertEqual(a['synthesis']['length_scale'], 1.0)
         self.assertEqual(b['synthesis']['length_scale'], 1.25)
+
+    def test_assert_audible_rejects_test_beep(self):
+        from core.voice import assert_audible_speech, TestTTSProvider, profile_for
+        raw = TestTTSProvider().synthesize('hi', profile_for('test_voice_measured'))
+        with self.assertRaises(TTSError):
+            assert_audible_speech(raw['bytes'])
+
+    def test_test_tts_blocked_without_allow_flag(self):
+        os.environ.pop('OTACON_ALLOW_TEST_TTS', None)
+        d = local_deployment(tts_provider='test', tts_endpoint='test://tts')
+        with self.assertRaises(TTSError):
+            synthesize_voice(d, {'id': 'a', 'display_name': 'Billy', 'voice_id': 'voice_002'}, 'Hello', purpose='preview')
+        os.environ['OTACON_ALLOW_TEST_TTS'] = '1'
 
     def test_invalid_profile(self):
         with self.assertRaises(ValueError):
@@ -53,9 +73,14 @@ class VoiceTests(unittest.TestCase):
         self.assertEqual(profile_hash(profile_for('voice_001')), profile_hash(profile_for('voice_001')))
 
     def test_test_fixtures_are_marked(self):
-        self.assertTrue(profile_for('voice_001').fixture)
-        self.assertTrue(profile_for('voice_002').fixture)
-        self.assertIn('TEST FIXTURE', profile_for('voice_001').license)
+        self.assertFalse(profile_for('voice_001').fixture)
+        self.assertFalse(profile_for('voice_002').fixture)
+        self.assertTrue(profile_for('test_voice_warm').fixture)
+        self.assertTrue(profile_for('test_voice_measured').fixture)
+        self.assertIn('TEST FIXTURE', profile_for('test_voice_warm').license)
+        self.assertIn('piper', profile_for('voice_002').provider)
+        self.assertEqual(profile_for('voice_002').model, 'en_US-hfc_female-medium')
+        self.assertEqual(profile_for('voice_002').display_name, 'Measured Female')
 
     def test_global_default_regression_voice_A_keeps_explicit(self):
         """Permanent regression: explicit per-voice settings beat service defaults."""

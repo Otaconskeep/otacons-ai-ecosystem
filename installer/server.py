@@ -97,8 +97,8 @@ def _deployment():
         llm_provider=provider,
         llm_endpoint=endpoint,
         llm_model=model,
-        tts_endpoint=os.getenv('OTACON_TTS_ENDPOINT', 'test://tts'),
-        tts_provider=os.getenv('OTACON_TTS_PROVIDER', 'test'),
+        tts_endpoint=os.getenv('OTACON_TTS_ENDPOINT', 'wyoming://127.0.0.1:10200'),
+        tts_provider=os.getenv('OTACON_TTS_PROVIDER', 'piper'),
     )
 
 
@@ -160,12 +160,24 @@ def _capability_snapshot() -> dict:
         caps['chat'] = 'error'
 
     try:
-        if CATALOG_AVAILABLE:
-            caps['tts'] = 'ready' if catalog_entries() else 'not_configured'
+        # TTS is ready only when the configured provider is reachable — catalog
+        # alone must never mark speech "ready" (that caused silent beeps).
+        from core.voice import provider_for_assignment, TTS_READY as _TTS_READY
+        from core.router import resolve as _resolve_tts
+        assignment = _resolve_tts(_deployment(), 'text_to_speech')
+        prov = provider_for_assignment(assignment)
+        health = prov.health()
+        if health in (_TTS_READY, 'ONLINE'):
+            caps['tts'] = 'ready'
+        elif os.getenv('OTACON_ALLOW_TEST_TTS', '').lower() in ('1', 'true', 'yes'):
+            caps['tts'] = 'ready'
+            caps['tts_detail'] = 'test TTS allowed (OTACON_ALLOW_TEST_TTS=1)'
         else:
-            caps['tts'] = 'not_configured'
-    except Exception:
+            caps['tts'] = 'unavailable'
+            caps['tts_detail'] = f'TTS health={health}'
+    except Exception as exc:
         caps['tts'] = 'error'
+        caps['tts_detail'] = str(exc)
 
     try:
         stt = FasterWhisperProvider()
@@ -400,14 +412,35 @@ class Handler(BaseHTTPRequestHandler):
             purpose = 'preview' if self.path.endswith('preview_voice') else 'production'
             text = data.get('text') or ('Hello, I am ' + agent.get('display_name', 'Billy'))
             d = _deployment()
+            is_preview = purpose == 'preview'
             try:
                 result = synthesize_voice(d, agent, text, purpose=purpose)
-                self.send_json(public_result(result, include_audio_b64=True))
+                payload = public_result(result, include_audio_b64=True)
+                if is_preview:
+                    print(
+                        f"[TTS PREVIEW] HTTP status=200 content-type=application/json "
+                        f"bytes={payload.get('byte_count')} format={payload.get('format')} "
+                        f"duration={payload.get('duration_sec')}",
+                        flush=True,
+                    )
+                self.send_json(payload)
             except TTSError as e:
+                plain = e.message
+                if e.code == 'TTS_SERVICE_UNREACHABLE':
+                    plain = 'The voice engine is not running. Re-run OtaconsKeep Setup so Piper TTS can start.'
+                elif 'test double' in (e.message or '').lower() or 'near-silent' in (e.message or '').lower() or 'too short' in (e.message or '').lower():
+                    plain = (
+                        'Voice preview cannot play spoken audio yet. '
+                        'TTS is not producing real speech (test beep or silent placeholder). '
+                        'Re-run Setup to install Piper, then try Preview again.'
+                    )
+                if is_preview:
+                    print(f'[TTS PREVIEW] FAIL code={e.code} message={e.message}', flush=True)
                 self.send_json({
                     'status': 'error',
                     'code': e.code,
-                    'message': 'Voice playback unavailable',
+                    'message': 'VOICE PREVIEW FAILED' if is_preview else 'Voice playback unavailable',
+                    'reason': plain,
                     'technical': e.as_dict(),
                 }, 503)
         elif self.path == '/api/voice_status':

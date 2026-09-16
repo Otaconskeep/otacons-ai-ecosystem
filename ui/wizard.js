@@ -82,10 +82,81 @@ function agentSetupHtml(){
 async function previewSelectedVoice(){
   let sel=document.getElementById('voiceSelect'); state.voiceId=sel?sel.value:state.voiceId;
   let st=document.getElementById('previewStatus'); if(st) st.textContent='Synthesizing…';
-  let r=await api('/api/preview_voice',{agent:{id:'agent_001',display_name:state.name||'Billy',voice_id:state.voiceId},text:`Hello, I am ${state.name||'Billy'}.`});
-  if(!r.ok||r.data.status==='error'){ if(st) st.textContent='Voice preview unavailable'; return }
-  if(st) st.textContent='Playing preview';
-  playAudio(r.data.audio_base64);
+  await runVoicePreview({statusEl:st});
+}
+
+async function runVoicePreview({statusEl}={}){
+  const agentName=state.name||'Billy';
+  const voiceId=state.voiceId;
+  const text=`Hello, I am ${agentName}.`;
+  console.log(`[TTS PREVIEW] requested agent=${agentName} voice=${voiceId}`);
+  try{
+    let r=await api('/api/preview_voice',{agent:{id:'agent_001',display_name:agentName,voice_id:voiceId},text});
+    console.log(`[TTS PREVIEW] HTTP status=${r.status} content-type=application/json`);
+    if(!r.ok||r.data.status==='error'||!r.data.audio_base64){
+      const reason=(r.data&&(r.data.reason||r.data.message))||'Voice preview unavailable';
+      console.log(`[TTS PREVIEW] FAIL ${reason}`);
+      const msg='VOICE PREVIEW FAILED\n'+(reason||'Unknown error');
+      if(statusEl) statusEl.textContent=msg;
+      else alert(msg);
+      return false;
+    }
+    const bytes=Math.floor((r.data.audio_base64.length*3)/4);
+    const dur=Number(r.data.duration_sec||0);
+    const fmt=r.data.format||'wav';
+    console.log(`[TTS PREVIEW] synthesis PASS bytes=${r.data.byte_count||bytes} format=${fmt} duration=${dur}`);
+    if(!r.data.audio_base64||bytes<4000||dur>0&&dur<0.35){
+      const msg='VOICE PREVIEW FAILED\nReturned audio is too short or empty to be spoken speech.';
+      console.log('[TTS PREVIEW] FAIL invalid audio payload');
+      if(statusEl) statusEl.textContent=msg;
+      else alert(msg);
+      return false;
+    }
+    if(statusEl) statusEl.textContent='Playing preview…';
+    console.log('[TTS PREVIEW] browser playback start');
+    await playAudioAsync(r.data.audio_base64);
+    console.log('[TTS PREVIEW] browser playback PASS');
+    if(statusEl) statusEl.textContent='Preview played';
+    return true;
+  }catch(err){
+    console.log('[TTS PREVIEW] FAIL', err);
+    const msg='VOICE PREVIEW FAILED\n'+(err&&err.message?err.message:String(err));
+    if(statusEl) statusEl.textContent=msg;
+    else alert(msg);
+    return false;
+  }
+}
+
+function playAudioAsync(b64, msgId){
+  return new Promise((resolve,reject)=>{
+    stopAudio();
+    let a=new Audio('data:audio/wav;base64,'+b64);
+    state.currentAudio=a;
+    if(msgId!=null){
+      state.speakingMsg=msgId;
+      let b=document.querySelector(`[data-speak-btn="${msgId}"]`);
+      if(b){b.textContent='■'; b.dataset.state='playing'}
+    }
+    a.onended=()=>{ stopAudio(); resolve(true); };
+    a.onerror=()=>{ stopAudio(); reject(new Error('browser could not decode/play WAV audio')); };
+    a.play().then(()=>{}).catch(err=>{
+      if(msgId!=null){ let e=document.querySelector(`[data-speak-err="${msgId}"]`); if(e) e.textContent='Voice playback unavailable';}
+      stopAudio();
+      reject(err||new Error('HTMLAudioElement.play() failed'));
+    });
+  });
+}
+function playAudio(b64, msgId){
+  playAudioAsync(b64, msgId).catch(()=>{});
+}
+
+function stopAudio(){
+  if(state.currentAudio){try{state.currentAudio.pause(); state.currentAudio.currentTime=0}catch(e){} state.currentAudio=null}
+  if(state.speakingMsg!=null){
+    let b=document.querySelector(`[data-speak-btn="${state.speakingMsg}"]`);
+    if(b){b.textContent='▶'; b.dataset.state='idle'}
+    state.speakingMsg=null;
+  }
 }
 
 function next(){state.step++;render()}
@@ -101,27 +172,6 @@ async function build(){
   let p=await api('/api/plan',{name:state.name,features:state.features,storage:state.storage});
   let cfg=p.data.config; if(cfg.agents&&cfg.agents[0]) cfg.agents[0].voice_id=state.voiceId;
   let s=await api('/api/save',{config:cfg}); state.config={saved:s.data.path}; next();
-}
-
-function stopAudio(){
-  if(state.currentAudio){try{state.currentAudio.pause(); state.currentAudio.currentTime=0}catch(e){} state.currentAudio=null}
-  if(state.speakingMsg!=null){
-    let b=document.querySelector(`[data-speak-btn="${state.speakingMsg}"]`);
-    if(b){b.textContent='▶'; b.dataset.state='idle'}
-    state.speakingMsg=null;
-  }
-}
-function playAudio(b64, msgId){
-  stopAudio();
-  let a=new Audio('data:audio/wav;base64,'+b64);
-  state.currentAudio=a;
-  if(msgId!=null){
-    state.speakingMsg=msgId;
-    let b=document.querySelector(`[data-speak-btn="${msgId}"]`);
-    if(b){b.textContent='■'; b.dataset.state='playing'}
-  }
-  a.onended=()=>stopAudio();
-  a.play().catch(()=>{ if(msgId!=null){ let e=document.querySelector(`[data-speak-err="${msgId}"]`); if(e) e.textContent='Voice playback unavailable';} stopAudio();});
 }
 
 async function toggleSpeak(msgId, text){
@@ -157,8 +207,12 @@ async function showChat(){
   await loadPrefs(); await loadVoices(); await loadCapabilities();
   let cs=(await api('/api/conversations',{agent_id:'agent_001'})).data;
   state.conversation=(cs[0]||{}).id||(await api('/api/conversation',{agent_id:'agent_001'})).data.id;
-  let voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
-  const sttOk=capReady('stt'), imgOk=capReady('image'), vidOk=capReady('video');
+  let voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}${v.fixture?' (test)':''}</option>`).join('');
+  const sttOk=capReady('stt'), imgOk=capReady('image'), vidOk=capReady('video'), ttsOk=capReady('tts');
+  const ttsHint=ttsOk?'':` <span class=muted>Voice output not ready (${capAnnotate('tts','','requires Piper TTS')})</span>`;
+  const previewBtn=ttsOk
+    ?`<button type=button onclick="previewSelectedVoiceChat()">Preview</button>`
+    :`<button type=button onclick="previewSelectedVoiceChat()" title="TTS not ready — click for details">Preview</button>`;
   const imageCard=imgOk
     ?`<div class=card><b>Create an image</b><br><input id=imagePrompt placeholder="Describe an image"><select id=imageProfile><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="quality">Quality</option></select><button onclick="generateImage()">Generate</button><span id=imageStatus class=muted></span></div>`
     :`<div class="card cap-off"><b>Create an image</b><br><span class=muted>Not ready — ${capAnnotate('image','','requires provider')}</span><input id=imagePrompt disabled><button disabled>Generate</button></div>`;
@@ -174,7 +228,8 @@ async function showChat(){
   <label>Voice
     <select id=chatVoice onchange="assignVoice(this.value)">${voiceOpts}</select>
   </label>
-  <button type=button onclick="previewSelectedVoiceChat()">Preview</button>
+  ${previewBtn}${ttsHint}
+  <span class=muted id=previewStatus></span>
   <label><input type=checkbox id=autoSpeak ${state.autoSpeak?'checked':''} onchange="setAutoSpeak(this.checked)"> Auto Speak Responses</label>
 </div>
 <button onclick="newConversation()">+ New Conversation</button>
@@ -195,9 +250,8 @@ async function assignVoice(vid){
   await api('/api/agent/voice',{agent_id:'agent_001',display_name:state.name,voice_id:vid});
 }
 async function previewSelectedVoiceChat(){
-  let r=await api('/api/preview_voice',{agent:{id:'agent_001',display_name:state.name,voice_id:state.voiceId},text:`Hello, I am ${state.name}.`});
-  if(!r.ok||r.data.status==='error'){alert('Voice preview unavailable');return}
-  playAudio(r.data.audio_base64);
+  let st=document.getElementById('previewStatus');
+  await runVoicePreview({statusEl:st});
 }
 async function setAutoSpeak(on){
   state.autoSpeak=!!on;

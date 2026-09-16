@@ -1285,6 +1285,119 @@ else
   warn "Installing the package alone never marks STT READY; use OTACON_INSTALL_STT=1 and pass validate-stt --real."
 fi
 
+# ------------------------------------------------------------------------------
+# Piper TTS (Wyoming) — required for spoken Preview / Auto Speak / message ▶
+# ------------------------------------------------------------------------------
+install_otacon_tts_piper() {
+  local data_dir="${OTACON_PIPER_DATA_DIR:-$HOME/.config/otacon/piper}"
+  local port="${OTACON_TTS_PORT:-10200}"
+  local endpoint="wyoming://127.0.0.1:${port}"
+  mkdir -p "$data_dir"
+
+  stage "6.5t" "START" "Installing Piper TTS (wyoming-piper) for spoken voice preview"
+  log "Installing wyoming-piper into the Otacon venv (CPU; spoken Preview requires this)"
+  if ! "$VPIP" install --upgrade 'wyoming-piper>=2.5.0'; then
+    warn "wyoming-piper pip install failed — voice preview will not speak until Piper is installed"
+    OPTIONAL_FAIL=1
+    return 1
+  fi
+
+  # Pre-download the catalog voices used by Warm Male / Measured Female / Lessac.
+  local voices=(
+    "en/en_US/lessac/medium/en_US-lessac-medium"
+    "en/en_US/bryce/medium/en_US-bryce-medium"
+    "en/en_US/hfc_female/medium/en_US-hfc_female-medium"
+  )
+  local base="https://huggingface.co/rhasspy/piper-voices/resolve/main"
+  local v name
+  for v in "${voices[@]}"; do
+    name="$(basename "$v")"
+    if [[ -f "$data_dir/${name}.onnx" && -f "$data_dir/${name}.onnx.json" ]]; then
+      continue
+    fi
+    log "Downloading Piper voice ${name}"
+    curl -fsSL --connect-timeout 30 --max-time 600 \
+      -o "$data_dir/${name}.onnx" "${base}/${v}.onnx" || {
+      warn "Failed to download ${name}.onnx"
+      continue
+    }
+    curl -fsSL --connect-timeout 30 --max-time 120 \
+      -o "$data_dir/${name}.onnx.json" "${base}/${v}.onnx.json" || true
+  done
+
+  export OTACON_TTS_PROVIDER=piper
+  export OTACON_TTS_ENDPOINT="$endpoint"
+  printf '%s\n' "OTACON_TTS_PROVIDER=piper" "OTACON_TTS_ENDPOINT=$endpoint" \
+    >"$HOME/.config/otacon/tts.env"
+  chmod 644 "$HOME/.config/otacon/tts.env" || true
+
+  # Stop a previous otacon-tts if present, then start fresh.
+  if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+    systemctl --user stop otacon-tts.service 2>/dev/null || true
+  fi
+  pkill -f 'wyoming-piper.*10200' 2>/dev/null || true
+
+  local piper_cmd=()
+  if [[ -x "$VENV_DIR/bin/wyoming-piper" ]]; then
+    piper_cmd=("$VENV_DIR/bin/wyoming-piper")
+  else
+    piper_cmd=("$VPY" -m wyoming_piper)
+  fi
+
+  nohup "${piper_cmd[@]}" \
+    --voice en_US-lessac-medium \
+    --uri "tcp://127.0.0.1:${port}" \
+    --data-dir "$data_dir" \
+    --download-dir "$data_dir" \
+    >"$HOME/.config/otacon/logs/piper-tts.log" 2>&1 &
+  echo $! >"$HOME/.config/otacon/piper-tts.pid"
+  sleep 2
+
+  # Persist a systemd unit draft (finalize / user enable can pick it up).
+  mkdir -p "$HOME/.config/otacon"
+  cat >"$HOME/.config/otacon/otacon-tts.service.draft" <<TTSEOF
+[Unit]
+Description=Otacon Piper TTS (Wyoming)
+After=network.target
+
+[Service]
+Type=simple
+User=$(id -un)
+WorkingDirectory=$INSTALL_DIR
+Environment=PYTHONPATH=$INSTALL_DIR
+ExecStart=$VENV_DIR/bin/wyoming-piper --voice en_US-lessac-medium --uri tcp://127.0.0.1:${port} --data-dir $data_dir --download-dir $data_dir
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+TTSEOF
+
+  # Quick health probe (non-fatal)
+  if PYTHONPATH="$INSTALL_DIR" OTACON_TTS_PROVIDER=piper OTACON_TTS_ENDPOINT="$endpoint" \
+    "$VPY" -c "from core.wyoming_transport import wyoming_health; print(wyoming_health('$endpoint', timeout=3))" 2>/dev/null \
+    | grep -q TTS_READY; then
+    stage "6.5t" "PASS" "Piper TTS ready at $endpoint"
+    ok "Piper TTS listening on $endpoint"
+    return 0
+  fi
+  # Give download/start a bit more time on first run
+  sleep 8
+  if PYTHONPATH="$INSTALL_DIR" "$VPY" -c "from core.wyoming_transport import wyoming_health; print(wyoming_health('$endpoint', timeout=5))" 2>/dev/null \
+    | grep -q TTS_READY; then
+    stage "6.5t" "PASS" "Piper TTS ready at $endpoint"
+    ok "Piper TTS listening on $endpoint"
+    return 0
+  fi
+  stage "6.5t" "FAIL" "Piper TTS not healthy yet (voice preview may fail until it finishes starting)"
+  warn "Piper TTS did not report healthy yet. Check $HOME/.config/otacon/logs/piper-tts.log"
+  OPTIONAL_FAIL=1
+  return 0
+}
+
+mkdir -p "$HOME/.config/otacon/logs"
+install_otacon_tts_piper || true
+
 # Capture our hardware recommendation for humans and future tooling.
 mkdir -p "$HOME/.config/otacon"
 cat > "$HOME/.config/otacon/bootstrap-hardware.env" <<EOF
@@ -1672,6 +1785,14 @@ write_otacon_service_unit() {
   local out_path="$1"
   local run_user="$2"
   local ENV_EXTRA
+  local TTS_PROVIDER="${OTACON_TTS_PROVIDER:-piper}"
+  local TTS_ENDPOINT="${OTACON_TTS_ENDPOINT:-wyoming://127.0.0.1:10200}"
+  if [[ -f "$HOME/.config/otacon/tts.env" ]]; then
+    # shellcheck disable=SC1090
+    set -a; source "$HOME/.config/otacon/tts.env"; set +a
+    TTS_PROVIDER="${OTACON_TTS_PROVIDER:-$TTS_PROVIDER}"
+    TTS_ENDPOINT="${OTACON_TTS_ENDPOINT:-$TTS_ENDPOINT}"
+  fi
   if [[ "$LAN_MODE" == "1" ]]; then
     ENV_EXTRA="Environment=OTACON_LAN_MODE=1"
   else
@@ -1694,6 +1815,8 @@ $ENV_EXTRA
 Environment=OTACON_LLM_PROVIDER=ollama
 Environment=OTACON_LLM_ENDPOINT=$OLLAMA_ENDPOINT
 Environment=OTACON_LLM_MODEL=$RECOMMENDED_MODEL
+Environment=OTACON_TTS_PROVIDER=$TTS_PROVIDER
+Environment=OTACON_TTS_ENDPOINT=$TTS_ENDPOINT
 ExecStart=$VPY -m installer.server
 Restart=always
 RestartSec=3
@@ -1705,6 +1828,14 @@ SERVICEEOF
 
 start_otacon_background() {
   log "Starting your local Otacon web UI"
+  local TTS_PROVIDER="${OTACON_TTS_PROVIDER:-piper}"
+  local TTS_ENDPOINT="${OTACON_TTS_ENDPOINT:-wyoming://127.0.0.1:10200}"
+  if [[ -f "$HOME/.config/otacon/tts.env" ]]; then
+    # shellcheck disable=SC1090
+    set -a; source "$HOME/.config/otacon/tts.env"; set +a
+    TTS_PROVIDER="${OTACON_TTS_PROVIDER:-$TTS_PROVIDER}"
+    TTS_ENDPOINT="${OTACON_TTS_ENDPOINT:-$TTS_ENDPOINT}"
+  fi
   if [[ -f "$PID_FILE" ]]; then
     OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" >/dev/null 2>&1 \
@@ -1724,6 +1855,8 @@ start_otacon_background() {
     OTACON_LLM_PROVIDER=ollama \
     OTACON_LLM_ENDPOINT="$OLLAMA_ENDPOINT" \
     OTACON_LLM_MODEL="$RECOMMENDED_MODEL" \
+    OTACON_TTS_PROVIDER="$TTS_PROVIDER" \
+    OTACON_TTS_ENDPOINT="$TTS_ENDPOINT" \
     "$VPY" -m installer.server \
     >"$LOG_FILE" 2>&1 &
   WIZARD_PID=$!

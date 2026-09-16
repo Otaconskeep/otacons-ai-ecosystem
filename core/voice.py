@@ -72,28 +72,31 @@ class VoiceProfile:
         return True
 
 
-# Public catalog: test fixtures are explicit; no private trained voices.
+# Public catalog. Production voices map to Piper models. voice_001/002 keep stable
+# IDs so existing agents/UI selections keep working; they are NOT silent fixtures.
 CATALOG: tuple[VoiceProfile, ...] = (
     VoiceProfile(
         'voice_001',
         'Warm Male',
-        'test',
-        'test-voice',
+        'piper',
+        'en_US-bryce-medium',
+        language='en-US',
         synthesis={'length_scale': 1.0, 'noise_scale': 0.667, 'noise_w': 0.8},
-        license='TEST FIXTURE — not a redistributable production Piper voice',
-        source='otacon-public synthetic test fixture',
-        fixture=True,
+        license='MIT (Piper / rhasspy voice models — see upstream voice LICENSE)',
+        source='https://github.com/rhasspy/piper',
+        fixture=False,
         status_hint=CATALOG_AVAILABLE,
     ),
     VoiceProfile(
         'voice_002',
         'Measured Female',
-        'test',
-        'test-voice-2',
+        'piper',
+        'en_US-hfc_female-medium',
+        language='en-US',
         synthesis={'length_scale': 1.25, 'noise_scale': 0.95, 'noise_w': 0.95},
-        license='TEST FIXTURE — not a redistributable production Piper voice',
-        source='otacon-public synthetic test fixture',
-        fixture=True,
+        license='MIT (Piper / rhasspy voice models — see upstream voice LICENSE)',
+        source='https://github.com/rhasspy/piper',
+        fixture=False,
         status_hint=CATALOG_AVAILABLE,
     ),
     VoiceProfile(
@@ -108,12 +111,38 @@ CATALOG: tuple[VoiceProfile, ...] = (
         fixture=False,
         status_hint=CATALOG_AVAILABLE,
     ),
+    # Explicit test-only fixtures (hidden from UI unless OTACON_SHOW_TEST_VOICES=1)
+    VoiceProfile(
+        'test_voice_warm',
+        'Warm Male (test fixture)',
+        'test',
+        'test-voice',
+        synthesis={'length_scale': 1.0, 'noise_scale': 0.667, 'noise_w': 0.8},
+        license='TEST FIXTURE — not a redistributable production Piper voice',
+        source='otacon-public synthetic test fixture',
+        fixture=True,
+        status_hint=CATALOG_AVAILABLE,
+    ),
+    VoiceProfile(
+        'test_voice_measured',
+        'Measured Female (test fixture)',
+        'test',
+        'test-voice-2',
+        synthesis={'length_scale': 1.25, 'noise_scale': 0.95, 'noise_w': 0.95},
+        license='TEST FIXTURE — not a redistributable production Piper voice',
+        source='otacon-public synthetic test fixture',
+        fixture=True,
+        status_hint=CATALOG_AVAILABLE,
+    ),
 )
 
 
 def catalog_entries() -> list[dict[str, Any]]:
+    show_fixtures = os.getenv('OTACON_SHOW_TEST_VOICES', '').lower() in ('1', 'true', 'yes')
     out = []
     for p in CATALOG:
+        if p.fixture and not show_fixtures:
+            continue
         out.append({
             'id': p.id,
             'display_name': p.display_name,
@@ -123,6 +152,7 @@ def catalog_entries() -> list[dict[str, Any]]:
             'license': p.license,
             'source': p.source,
             'friendly_name': p.display_name,
+            'model': p.model,
         })
     return out
 
@@ -360,6 +390,46 @@ def validate_wav(audio_bytes: bytes) -> dict[str, Any]:
         }
 
 
+def assert_audible_speech(
+    audio_bytes: bytes,
+    *,
+    min_duration_sec: float = 0.35,
+    min_peak: int = 500,
+) -> dict[str, Any]:
+    """Reject empty / near-silent / sub-syllable placeholders (the old TestTTS beep)."""
+    meta = validate_wav(audio_bytes)
+    if meta['duration_sec'] < min_duration_sec:
+        raise TTSError(
+            SYNTHESIS_FAILED,
+            f'audio too short to be spoken speech ({meta["duration_sec"]:.2f}s < {min_duration_sec}s)',
+        )
+    with wave.open(io.BytesIO(audio_bytes), 'rb') as w:
+        pcm = w.readframes(w.getnframes())
+        width = w.getsampwidth()
+    peak = 0
+    if width == 2 and pcm:
+        import array
+        samples = array.array('h')
+        samples.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+        peak = max((abs(s) for s in samples), default=0)
+    elif pcm:
+        peak = max(pcm)
+    if peak < min_peak:
+        raise TTSError(
+            SYNTHESIS_FAILED,
+            f'audio is near-silent (peak={peak} < {min_peak}) — not spoken speech',
+        )
+    return {**meta, 'peak': peak}
+
+
+def _tts_preview_log(message: str) -> None:
+    print(f'[TTS PREVIEW] {message}', flush=True)
+
+
+def _allow_test_tts() -> bool:
+    return os.getenv('OTACON_ALLOW_TEST_TTS', '').lower() in ('1', 'true', 'yes')
+
+
 def voice_status(voice_id: str, *, model_installed: bool | None = None, tts_health: str | None = None, synthesis_ok: bool | None = None) -> str:
     """CATALOG_AVAILABLE < INSTALLED < READY. READY requires successful synthesis path."""
     try:
@@ -404,9 +474,14 @@ def synthesize_voice(
 
     VoiceProfile → capability router → registered TTS service → provider → resolved settings → audio
     """
+    is_preview = purpose == 'preview'
+    agent_name = agent.get('display_name') or agent.get('id') or 'agent'
+    voice_id = agent.get('voice_id') or 'voice_001'
+    if is_preview:
+        _tts_preview_log(f'requested agent={agent_name} voice={voice_id}')
+
     if not (text or '').strip():
         raise TTSError(SYNTHESIS_FAILED, 'text is empty')
-    voice_id = agent.get('voice_id') or 'voice_001'
     try:
         profile = profile_for(voice_id)
     except LookupError as e:
@@ -424,6 +499,10 @@ def synthesize_voice(
         service_defaults = {**meta_defaults, **service_defaults}
 
     tts = provider_for_assignment(assignment, provider)
+    backend = type(tts).__name__
+    if is_preview:
+        _tts_preview_log(f'backend={backend} model={profile.model} provider_profile={profile.provider}')
+
     health = tts.health(profile)
     if health not in (TTS_READY, 'ONLINE'):
         # Test provider returns TTS_READY; Piper may return unreachable before synthesize
@@ -432,6 +511,16 @@ def synthesize_voice(
         if health == TTS_SERVICE_UNHEALTHY:
             raise TTSError(TTS_SERVICE_UNHEALTHY, 'TTS service unhealthy')
 
+    if isinstance(tts, TestTTSProvider) and not _allow_test_tts():
+        raise TTSError(
+            SYNTHESIS_FAILED,
+            'TTS is still on the silent test double (produces a faint beep, not speech). '
+            'Piper is not configured. Re-run OtaconsKeep Setup, or set '
+            'OTACON_TTS_PROVIDER=piper and OTACON_TTS_ENDPOINT=wyoming://127.0.0.1:10200.',
+        )
+
+    if is_preview:
+        _tts_preview_log('synthesis start')
     try:
         raw = tts.synthesize(text, profile, defaults=service_defaults, production_override=production_override)
     except TTSError:
@@ -441,9 +530,18 @@ def synthesize_voice(
 
     audio = raw['bytes']
     wav_meta = validate_wav(audio)
+    # User-facing preview/production must be real speech — not the 0.1s near-silent test beep.
+    if purpose in ('preview', 'production') and not _allow_test_tts():
+        audible = assert_audible_speech(audio)
+        wav_meta = {**wav_meta, **audible}
     path = store_audio(audio, raw['audio_id'], cache_dir=cache_dir)
     resolved = raw.get('synthesis') or resolve_synthesis_settings(profile, production_override, service_defaults)
     ph = profile_hash(profile)
+    if is_preview:
+        _tts_preview_log(
+            f'synthesis PASS bytes={len(audio)} format={raw.get("format", "wav")} '
+            f'duration={wav_meta["duration_sec"]:.3f} peak={wav_meta.get("peak", "?")}'
+        )
     result = {
         'status': READY,
         'audio_id': raw['audio_id'],
@@ -452,6 +550,8 @@ def synthesize_voice(
         'sample_rate': raw.get('sample_rate') or wav_meta['sample_rate'],
         'duration_sec': raw.get('duration_sec') or wav_meta['duration_sec'],
         'bytes': audio,
+        'byte_count': len(audio),
+        'peak': wav_meta.get('peak'),
         'voice_id': profile.id,
         'provider': raw.get('provider') or profile.provider,
         'service_id': assignment.service_id,
@@ -470,6 +570,9 @@ def synthesize_voice(
             'resolved_synthesis': resolved,
             'profile_hash': ph,
             'purpose': purpose,
+            'byte_count': len(audio),
+            'duration_sec': wav_meta['duration_sec'],
+            'peak': wav_meta.get('peak'),
         },
     }
     return result
@@ -485,6 +588,8 @@ def public_result(result: dict[str, Any], include_audio_b64: bool = False) -> di
         'format': result.get('format'),
         'sample_rate': result.get('sample_rate'),
         'duration_sec': result.get('duration_sec'),
+        'byte_count': result.get('byte_count'),
+        'peak': result.get('peak'),
         'voice_id': result.get('voice_id'),
         'provider': result.get('provider'),
         'service_id': result.get('service_id'),

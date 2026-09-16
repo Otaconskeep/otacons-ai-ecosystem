@@ -32,9 +32,9 @@ def tts_service(
 
     Endpoint/provider come from config/env — never from AgentService hardcoding.
     """
-    provider = provider or os.getenv('OTACON_TTS_PROVIDER', 'test')
+    provider = provider or os.getenv('OTACON_TTS_PROVIDER', 'piper')
     if endpoint is None:
-        endpoint = os.getenv('OTACON_TTS_ENDPOINT', 'test://tts')
+        endpoint = os.getenv('OTACON_TTS_ENDPOINT', 'wyoming://127.0.0.1:10200')
     defaults = defaults or {
         'length_scale': float(os.getenv('OTACON_TTS_DEFAULT_LENGTH_SCALE', '1.25')),
         'noise_scale': float(os.getenv('OTACON_TTS_DEFAULT_NOISE_SCALE', '0.95')),
