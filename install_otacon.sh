@@ -262,26 +262,182 @@ die_with_log_tail() {
   exit 1
 }
 
-# True when dpkg/apt is in the common WSL "interrupted" / half-configured state.
-dpkg_needs_repair() {
+# ------------------------------------------------------------------------------
+# Decomposed dpkg/apt health checks. Each dpkg_check_* function prints exactly
+# one PASS/FAIL line plus, on FAIL, the exact command and exact output that
+# produced the verdict -- never a summary judgment with nothing to inspect.
+#
+# Canonical (gating) checks: audit, apt-get check, updates-dir *numeric
+# fragments only*, half-installed/half-configured/unpacked states, status
+# anomalies, pending triggers, lock state.
+#
+# dpkg --verify is intentionally NOT a gate: it reports checksum drift for
+# any admin-edited config file or locally-modified file, which is normal on
+# a real system and unrelated to an interrupted package transaction. It is
+# still run and logged for visibility, matching "dpkg --verify if used".
+# ------------------------------------------------------------------------------
+
+dpkg_check_audit() {
+  local out
+  out="$($SUDO dpkg --audit 2>&1)"
+  if [[ -n "$out" ]]; then
+    log "FAIL  dpkg --audit"
+    log "  cmd: dpkg --audit"
+    log "  out: $out"
+    return 1
+  fi
+  log "PASS  dpkg --audit (no inconsistent packages)"
+  return 0
+}
+
+dpkg_check_verify() {
+  # Advisory only -- never gates PASS/FAIL. Logged for the requested
+  # decomposition ("dpkg --verify if used").
+  local out
+  out="$($SUDO dpkg --verify 2>&1 || true)"
+  if [[ -n "$out" ]]; then
+    log "INFO  dpkg --verify (advisory, not a gate) -- checksum drift present, commonly normal:"
+    log "  cmd: dpkg --verify"
+    log "  out: $out"
+  else
+    log "INFO  dpkg --verify: no checksum drift"
+  fi
+  return 0
+}
+
+dpkg_check_apt_get_check() {
+  local out rc=0
+  out="$($SUDO env DEBIAN_FRONTEND=noninteractive apt-get check 2>&1)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    log "FAIL  apt-get check (exit=$rc)"
+    log "  cmd: apt-get check"
+    log "  out: $out"
+    return 1
+  fi
+  log "PASS  apt-get check"
+  return 0
+}
+
+dpkg_check_updates_dir() {
+  # A real interrupted dpkg transaction leaves numbered fragment files
+  # (dpkg's own naming convention: pure decimal integers, e.g. "1", "42")
+  # directly under /var/lib/dpkg/updates. Any OTHER file in that directory
+  # is not evidence of an interrupted transaction and must not fail this
+  # check on its own -- that was the exact false-positive reported.
   local updates_dir="/var/lib/dpkg/updates"
-  if [[ -d "$updates_dir" ]] && find "$updates_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | grep -q .; then
-    return 0
+  local listing="" f base
+  local -a fragments=()
+  local -a stale=()
+  if [[ -d "$updates_dir" ]]; then
+    listing="$($SUDO find "$updates_dir" -mindepth 1 -maxdepth 1 2>/dev/null)"
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      base="$(basename "$f")"
+      if [[ "$base" =~ ^[0-9]+$ ]]; then
+        fragments+=("$f")
+      else
+        stale+=("$f")
+      fi
+    done <<< "$listing"
   fi
-  # Half-installed / unpacked / failed-config packages (Status-Abbrev: iU iF iH etc.)
+  log "cmd: find $updates_dir -mindepth 1 -maxdepth 1"
+  log "out: ${listing:-<empty>}"
+  if [[ "${#fragments[@]}" -gt 0 ]]; then
+    log "FAIL  /var/lib/dpkg/updates has active numbered fragments: ${fragments[*]}"
+    return 1
+  fi
+  if [[ "${#stale[@]}" -gt 0 ]]; then
+    log "PASS  /var/lib/dpkg/updates (non-numeric file(s) present, not a pending-transaction signal): ${stale[*]}"
+  else
+    log "PASS  /var/lib/dpkg/updates has no active fragments"
+  fi
+  return 0
+}
+
+dpkg_check_half_states() {
+  local out=""
   if command_exists dpkg-query; then
-    if $SUDO dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 2>/dev/null \
-      | grep -qE '^[a-zA-Z]?[UFH]'; then
-      return 0
-    fi
+    out="$($SUDO dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 2>/dev/null | grep -E '^[a-zA-Z]?[UFH]' || true)"
   fi
-  local check_out=""
-  check_out="$($SUDO env DEBIAN_FRONTEND=noninteractive apt-get check 2>&1)" || {
-    if printf '%s\n' "$check_out" | grep -qiE 'dpkg was interrupted|dpkg --configure -a|Unmet dependencies|broken packages'; then
-      return 0
+  if [[ -n "$out" ]]; then
+    log "FAIL  half-installed/half-configured/unpacked packages"
+    log '  cmd: dpkg-query -W -f="${db:Status-Abbrev} ${Package}\n"'
+    log "  out: $out"
+    return 1
+  fi
+  log "PASS  no half-installed/half-configured/unpacked packages"
+  return 0
+}
+
+dpkg_check_status_anomalies() {
+  local out=""
+  if command_exists dpkg-query; then
+    out="$($SUDO dpkg-query -W -f='${Status}\t${Package}\n' 2>/dev/null | grep -v $'^install ok installed\t' || true)"
+  fi
+  if [[ -n "$out" ]]; then
+    log "FAIL  dpkg-query status anomalies"
+    log '  cmd: dpkg-query -W -f="${Status}\t${Package}\n" | grep -v "install ok installed"'
+    log "  out: $out"
+    return 1
+  fi
+  log "PASS  no dpkg-query status anomalies"
+  return 0
+}
+
+dpkg_check_pending_triggers() {
+  local out=""
+  if command_exists dpkg-query; then
+    out="$($SUDO dpkg-query -W -f='${Triggers-Pending}\t${Package}\n' 2>/dev/null | awk -F'\t' '$1!=""' || true)"
+  fi
+  if [[ -n "$out" ]]; then
+    log "FAIL  packages with pending triggers"
+    log '  cmd: dpkg-query -W -f="${Triggers-Pending}\t${Package}\n"'
+    log "  out: $out"
+    return 1
+  fi
+  log "PASS  no pending triggers"
+  return 0
+}
+
+dpkg_check_lock_state() {
+  # A lock FILE existing is normal; only a lock actually HELD by a live
+  # process means dpkg/apt is genuinely busy elsewhere.
+  if command_exists fuser; then
+    if $SUDO fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || $SUDO fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+      log "FAIL  dpkg/apt lock held by another process"
+      log "  cmd: fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock"
+      return 1
     fi
-  }
-  return 1
+    log "PASS  dpkg/apt lock is free"
+  else
+    log "PASS  dpkg/apt lock check skipped (fuser not available)"
+  fi
+  return 0
+}
+
+# Runs all 8 requested checks, logs each individually, and returns the
+# canonical (gating) verdict. dpkg --verify is run and logged but never
+# contributes to the return code -- see comment above dpkg_check_verify.
+dpkg_health_report() {
+  local overall=0
+  dpkg_check_audit || overall=1
+  dpkg_check_verify
+  dpkg_check_apt_get_check || overall=1
+  dpkg_check_updates_dir || overall=1
+  dpkg_check_half_states || overall=1
+  dpkg_check_status_anomalies || overall=1
+  dpkg_check_pending_triggers || overall=1
+  dpkg_check_lock_state || overall=1
+  return "$overall"
+}
+
+# True when dpkg/apt is in the common WSL "interrupted" / half-configured
+# state. Thin wrapper over dpkg_health_report kept for callers that only need
+# a boolean (e.g. deciding whether apt-get -f install is worth running at
+# all); callers that need to explain a failure should call
+# dpkg_health_report directly so each check's exact output is logged.
+dpkg_needs_repair() {
+  ! dpkg_health_report >/dev/null 2>&1
 }
 
 # Self-heal interrupted dpkg before apt update/install (one-click; no manual dpkg --configure -a).
@@ -291,7 +447,7 @@ repair_interrupted_dpkg() {
   export NEEDRESTART_MODE="${NEEDRESTART_MODE:-a}"
   export APT_LISTCHANGES_FRONTEND=none
 
-  if [[ "$force" != "1" ]] && ! dpkg_needs_repair; then
+  if [[ "$force" != "1" ]] && dpkg_health_report; then
     stage "6.3r" "PASS" "dpkg/apt package state is clean"
     return 0
   fi
@@ -304,25 +460,25 @@ repair_interrupted_dpkg() {
   repair_log="${INSTALL_LOG_DIR}/dpkg-repair-$(date +%Y%m%d-%H%M%S).log"
   mkdir -p "$INSTALL_LOG_DIR"
 
-  local cfg_rc=0
-  set +e
-  run_watched 600 "dpkg --configure -a" --soft -- bash -c '
-    set -o pipefail
-    logf="$1"; shift
-    "$@" 2>&1 | tee -a "$logf"
-    exit "${PIPESTATUS[0]}"
-  ' bash "$repair_log" $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a dpkg --configure -a
-  cfg_rc=$?
-  set -e
-  if [[ "$cfg_rc" -ne 0 ]]; then
-    stage "6.3r" "FAIL" "dpkg --configure -a exit=$cfg_rc"
-    die_with_log_tail \
-      "dpkg --configure -a failed with exit $cfg_rc while repairing interrupted package state. Fix the dpkg error below, then rerun Setup (no manual steps expected for the common WSL interrupt case)." \
-      "$repair_log" 50
-  fi
+  local attempt
+  for attempt in 1 2; do
+    local cfg_rc=0
+    set +e
+    run_watched 600 "dpkg --configure -a" --soft -- bash -c '
+      set -o pipefail
+      logf="$1"; shift
+      "$@" 2>&1 | tee -a "$logf"
+      exit "${PIPESTATUS[0]}"
+    ' bash "$repair_log" $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a dpkg --configure -a
+    cfg_rc=$?
+    set -e
+    if [[ "$cfg_rc" -ne 0 ]]; then
+      stage "6.3r" "FAIL" "dpkg --configure -a exit=$cfg_rc"
+      die_with_log_tail \
+        "dpkg --configure -a failed with exit $cfg_rc while repairing interrupted package state. Fix the dpkg error below, then rerun Setup (no manual steps expected for the common WSL interrupt case)." \
+        "$repair_log" 50
+    fi
 
-  # Fix broken deps when configure left apt inconsistent.
-  if dpkg_needs_repair || [[ "$force" == "1" ]]; then
     log "Running apt-get -f install -y to finish dependency repair"
     local fix_rc=0
     set +e
@@ -348,17 +504,25 @@ repair_interrupted_dpkg() {
         "apt-get -f install -y failed with exit $fix_rc after dpkg --configure -a. Exact repair log tail follows." \
         "$repair_log" 50
     fi
-  fi
 
-  if dpkg_needs_repair; then
-    stage "6.3r" "FAIL" "package state still broken after repair"
-    die_with_log_tail \
-      "dpkg/apt still reports an interrupted or broken package state after automatic repair. Exact repair log tail follows." \
-      "$repair_log" 50
-  fi
+    log "Post-repair health check (attempt $attempt/2) — each check logged individually:"
+    if dpkg_health_report; then
+      stage "6.3r" "PASS" "dpkg/apt package state repaired"
+      ok "Interrupted dpkg state repaired automatically"
+      return 0
+    fi
 
-  stage "6.3r" "PASS" "dpkg/apt package state repaired"
-  ok "Interrupted dpkg state repaired automatically"
+    # Exactly one bounded extra recovery pass, gated only on a genuine
+    # canonical-check failure above -- not a broad heuristic retry loop.
+    if [[ "$attempt" -eq 1 ]]; then
+      warn "A canonical check still failed after the first repair pass — retrying dpkg --configure -a + apt-get -f install once more"
+    fi
+  done
+
+  stage "6.3r" "FAIL" "package state still broken after repair"
+  die_with_log_tail \
+    "dpkg/apt still reports an interrupted or broken package state after two automatic repair passes. The exact failing check and its exact output were logged above this point. Exact repair log tail follows." \
+    "$repair_log" 50
   return 0
 }
 

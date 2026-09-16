@@ -393,6 +393,107 @@ function Write-DiagnosticsFile {
 # ---------------------------------------------------------------------------
 # Failure UI
 # ---------------------------------------------------------------------------
+function Get-DpkgFailureSummary {
+    # Best-effort parse of the Linux installer's log tail for a specific
+    # broken-package signature, so the UI can name the actual package
+    # instead of the generic "package state still broken after repair".
+    # Never guesses: returns $null when nothing matches confidently.
+    param([string]$LogPath)
+    if (-not (Test-Path -LiteralPath $LogPath)) { return $null }
+    $text = Get-Content -LiteralPath $LogPath -Raw -ErrorAction SilentlyContinue
+    if (-not $text) { return $null }
+
+    $package = $null
+    $dpkgOp = $null
+    $maintainerFailed = $false
+    $exitCode = $null
+
+    $m = [regex]::Match($text, 'dpkg:\s*error:?\s*processing package (\S+)\s*\(([^)]+)\)')
+    if ($m.Success) {
+        $package = $m.Groups[1].Value.Trim(':').Trim()
+        $dpkgOp = $m.Groups[2].Value
+    }
+    $m2 = [regex]::Match($text, "package (\S+) \(--\S+\) returned error exit status (\d+)")
+    if ($m2.Success) {
+        if (-not $package) { $package = $m2.Groups[1].Value }
+        $exitCode = $m2.Groups[2].Value
+    }
+    $m3 = [regex]::Match($text, "(post-installation|pre-removal|post-removal|pre-installation) script subprocess returned error exit status (\d+)")
+    if ($m3.Success) {
+        $maintainerFailed = $true
+        if (-not $exitCode) { $exitCode = $m3.Groups[2].Value }
+    }
+    if (-not $package) {
+        $m4 = [regex]::Match($text, 'Errors were encountered while processing:\s*\r?\n\s*(\S+)')
+        if ($m4.Success) { $package = $m4.Groups[1].Value }
+    }
+
+    if (-not $package) { return $null }
+
+    $lines = $text -split "`r?`n"
+    $idx = -1
+    for ($i = 0; $i -lt $lines.Length; $i++) {
+        if ($lines[$i] -match [regex]::Escape($package) -and $lines[$i] -match 'dpkg|error') { $idx = $i; break }
+    }
+    $snippetStart = [Math]::Max(0, $idx - 2)
+    $snippetEnd = if ($idx -ge 0) { [Math]::Min($lines.Length - 1, $idx + 5) } else { [Math]::Min($lines.Length - 1, $lines.Length - 1) }
+    $snippet = if ($idx -ge 0) { ($lines[$snippetStart..$snippetEnd] -join "`n") } else { "" }
+
+    return @{
+        Package           = $package
+        DpkgOp            = $dpkgOp
+        MaintainerFailed  = $maintainerFailed
+        ExitCode          = $exitCode
+        Snippet           = $snippet
+    }
+}
+
+function Show-PackageRepairFailed {
+    param(
+        [string]$Package,
+        [string]$Problem,
+        [string]$RepairAttempted,
+        [string]$Result,
+        [string]$LogPath
+    )
+    $lines = @(
+        "Package:",
+        $Package,
+        "",
+        "Problem:",
+        $Problem,
+        "",
+        "Repair attempted:",
+        $RepairAttempted,
+        "",
+        "Result:",
+        $Result,
+        "",
+        "You do not need to reinstall Windows or Ubuntu.",
+        "",
+        "[R] retry repair",
+        "[D] technical details",
+        "[O] open logs",
+        "[X] exit safely"
+    )
+    Write-KeepLog "PACKAGE_REPAIR_FAILED package=$Package problem=$Problem" -Level "ERROR" -Stage "FAILED"
+    Save-InstallerState @{ stage = "failed"; last_error = "package repair failed: $Package"; last_step = "installing otacon" }
+    while ($true) {
+        Show-Box "PACKAGE REPAIR FAILED" $lines -Color Red
+        $c = Read-Choice "  Choice [R/D/O/X]: " @("R", "D", "O", "X")
+        if ($c -eq "D") {
+            $detail = if (Test-Path -LiteralPath $LogPath) { Get-Content -LiteralPath $LogPath -Tail 60 -ErrorAction SilentlyContinue } else { @("(no log available at $LogPath)") }
+            Show-Box "TECHNICAL DETAILS -- last 60 log lines" $detail -Color DarkYellow
+            Write-Host "  Press any key to go back..." -ForegroundColor DarkGray
+            [void][Console]::ReadKey($true)
+            continue
+        }
+        if ($c -eq "O") { Start-Process explorer.exe $LogDir; continue }
+        if ($c -eq "X") { return "exit" }
+        if ($c -eq "R") { return "retry" }
+    }
+}
+
 function Show-SetupNeedsHelp {
     param([string]$Step, [string]$PlainError)
     Show-Box "SETUP NEEDS HELP" @(
@@ -768,9 +869,26 @@ env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
         Start-Sleep -Seconds 5
     }
 
-    $code = $proc.ExitCode
+    # $proc.HasExited can flip true slightly before .NET has fully reaped the
+    # process and populated ExitCode -- especially with redirected stdout
+    # (-RedirectStandardOutput above), where the async reader thread needs to
+    # finish draining first. Without WaitForExit(), .ExitCode has been
+    # observed to read back as an unpopulated/blank value here, which is
+    # exactly what produced "Root bootstrap failed (exit )" downstream.
+    try {
+        $proc.WaitForExit(10000) | Out-Null
+    } catch {
+        Write-KeepLog "WaitForExit threw for phase=$Phase : $($_.Exception.Message)" -Level "WARN" -Stage "INSTALLING_OTACON"
+    }
+
+    $rawCode = $proc.ExitCode
+    $code = 0
+    if (-not [int]::TryParse([string]$rawCode, [ref]$code)) {
+        Write-KeepLog "linux phase=$Phase exit code unreadable (raw='$rawCode') -- treating as failure, not blank" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        $code = 998
+    }
     Write-KeepLog "linux phase=$Phase exit=$code" -Stage "INSTALLING_OTACON"
-    return $code
+    return [int]$code
 }
 
 function Step-InstallOtacon {
@@ -819,6 +937,7 @@ function Step-InstallOtacon {
 
     # --- Phase 1: privileged (wsl -u root) ---
     $privAttempts = 0
+    $userRepairRetries = 0
     while ($true) {
         $privAttempts++
         if ($privAttempts -gt 3) {
@@ -836,17 +955,41 @@ function Step-InstallOtacon {
             Start-Sleep -Seconds 3
             continue
         }
-        break
-    }
-    if ($code -ne 0) {
-        if (Test-Path $logPipe) {
-            Write-Host "---- last 50 log lines (privileged) ----" -ForegroundColor Yellow
-            Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+        if ($code -ne 0) {
+            if (Test-Path $logPipe) {
+                Write-Host "---- last 50 log lines (privileged) ----" -ForegroundColor Yellow
+                Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            }
+            # This machine already progressed past Windows/WSL bootstrap into
+            # real Linux package installation -- WSL/Ubuntu themselves are
+            # fine. Never wipe/reinstall them here; only the failed package
+            # state needs repair, and the existing WSL instance is reused
+            # as-is on retry (Invoke-WslInstallPhase re-runs the same
+            # installer against the same Ubuntu environment).
+            $dpkgInfo = Get-DpkgFailureSummary -LogPath $logPipe
+            if ($dpkgInfo) {
+                $problem = if ($dpkgInfo.MaintainerFailed) {
+                    "This package's own install script failed while configuring it" + $(if ($dpkgInfo.ExitCode) { " (exit $($dpkgInfo.ExitCode))" } else { "" }) + ". This is a package-specific problem, not a Windows or WSL problem."
+                } else {
+                    "dpkg could not finish setting up this package" + $(if ($dpkgInfo.DpkgOp) { " during $($dpkgInfo.DpkgOp)" } else { "" }) + "."
+                }
+                $act = Show-PackageRepairFailed -Package $dpkgInfo.Package -Problem $problem `
+                    -RepairAttempted "dpkg --configure -a, then apt-get -f install -y (attempt $privAttempts)" `
+                    -Result "Still not fully installed or removed after repair (exit $code)." `
+                    -LogPath $logPipe
+            } else {
+                $act = Show-SetupNeedsHelp -Step "installing otacon (privileged bootstrap)" -PlainError (
+                    "Root bootstrap failed (exit $code). No sudo password was required; this uses wsl -u root. Log: $logPipe"
+                )
+            }
+            if ($act -eq "retry" -and $userRepairRetries -lt 2) {
+                $userRepairRetries++
+                Write-Host "  Retrying the privileged install phase against the existing WSL environment..." -ForegroundColor Yellow
+                continue
+            }
+            return $code
         }
-        Show-SetupNeedsHelp -Step "installing otacon (privileged bootstrap)" -PlainError (
-            "Root bootstrap failed (exit $code). No sudo password was required; this uses wsl -u root. Log: $logPipe"
-        ) | Out-Null
-        return $code
+        break
     }
 
     # --- Phase 2: user (default WSL account) ---
