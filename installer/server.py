@@ -53,21 +53,36 @@ STATIC_CONTENT_TYPES = {
 
 
 def _llm_settings() -> tuple[str, str, str]:
-    """Return (provider, endpoint, ollama_model_tag) from env/config/hardware."""
-    provider = os.getenv('OTACON_LLM_PROVIDER', 'ollama').strip().lower() or 'ollama'
-    endpoint = os.getenv('OTACON_LLM_ENDPOINT', 'http://127.0.0.1:11434').rstrip('/')
-    model = os.getenv('OTACON_LLM_MODEL', '').strip()
+    """Return (provider, endpoint, ollama_model_tag).
 
+    Precedence (important for WSL/systemd installs):
+      1. OTACON_LLM_* env from the installer/systemd unit (the model that was
+         actually pulled) — must beat a stale config.json CPU-fallback.
+      2. Saved config.json llm_service (user/wizard choice) when env unset.
+      3. bootstrap-hardware.env from install.
+      4. Live hardware recommendation / last-resort small model.
+    """
+    env_provider = os.getenv('OTACON_LLM_PROVIDER', 'ollama').strip().lower() or 'ollama'
+    env_endpoint = os.getenv('OTACON_LLM_ENDPOINT', 'http://127.0.0.1:11434').rstrip('/')
+    env_model = os.getenv('OTACON_LLM_MODEL', '').strip()
+
+    cfg_provider = cfg_endpoint = cfg_model = ''
     cfg_path = CONFIG_ROOT / 'config.json'
     if cfg_path.is_file():
         try:
             cfg = json.loads(cfg_path.read_text())
             svc = cfg.get('llm_service') or {}
-            provider = (svc.get('provider') or provider).strip().lower() or provider
-            endpoint = (svc.get('endpoint') or endpoint).rstrip('/')
-            model = (svc.get('model') or model).strip()
+            cfg_provider = (svc.get('provider') or '').strip().lower()
+            cfg_endpoint = (svc.get('endpoint') or '').rstrip('/')
+            cfg_model = (svc.get('model') or '').strip()
         except (OSError, json.JSONDecodeError):
             pass
+
+    provider = env_provider or cfg_provider or 'ollama'
+    endpoint = env_endpoint or cfg_endpoint or 'http://127.0.0.1:11434'
+    # Env model wins when set — prevents wizard "Create Configuration" from
+    # locking chat onto qwen2.5:1.5b after a false-negative GPU scan.
+    model = env_model or cfg_model
 
     if not model:
         boot = CONFIG_ROOT / 'bootstrap-hardware.env'
@@ -201,6 +216,17 @@ def _capability_snapshot() -> dict:
 
     caps['image'] = 'not_configured'
     caps['video'] = 'not_configured'
+
+    # Genome Voice Trainer is an optional GPU install — report honestly, no fake UI.
+    vt_home = Path.home() / 'otacon-voice-trainer'
+    vt_ok = vt_home.is_dir() and any(vt_home.iterdir()) if vt_home.is_dir() else False
+    caps['voice_trainer'] = 'ready' if vt_ok else 'not_configured'
+    caps['voice_trainer_path'] = str(vt_home) if vt_ok else ''
+    caps['llm_model'] = ''
+    try:
+        caps['llm_model'] = _llm_settings()[2]
+    except Exception:
+        pass
     return caps
 
 
@@ -284,6 +310,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/api/plan':
             h = detect()
             st = data.get('storage') or recommended_volume()
+            # Prefer the installer-installed model (env) over a scan-time guess so
+            # Create Configuration cannot lock chat onto a model that was never pulled.
+            _prov, _ep, planned_model = _llm_settings()
+            rec = recommend_model(h)
+            if not os.getenv('OTACON_LLM_MODEL', '').strip():
+                planned_model = rec.source_id
             self.send_json({
                 'config': build_config(
                     recommend_hardware_plan(h),
@@ -292,11 +324,19 @@ class Handler(BaseHTTPRequestHandler):
                     storage=st,
                     llm_service={
                         'id': 'service_llm_001',
-                        'provider': 'ollama',
-                        'endpoint': 'http://127.0.0.1:11434',
-                        'model': recommend_model(h).source_id,
-                        'model_id': recommend_model(h).id,
+                        'provider': _prov or 'ollama',
+                        'endpoint': _ep or 'http://127.0.0.1:11434',
+                        'model': planned_model or rec.source_id,
+                        'model_id': rec.id,
                     },
+                    agents=[{
+                        'id': 'agent_001',
+                        'display_name': data.get('name') or 'Aria',
+                        'voice_id': data.get('voice_id') or 'voice_aria',
+                        'avatar': '/assets/aria/aria.webp',
+                        'role': 'primary',
+                        'personality': 'friendly',
+                    }],
                 ),
                 'storage': st,
             })

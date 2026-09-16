@@ -1424,6 +1424,7 @@ install_otacon_tts_piper() {
     "en/en_US/lessac/medium/en_US-lessac-medium"
     "en/en_US/bryce/medium/en_US-bryce-medium"
     "en/en_US/hfc_female/medium/en_US-hfc_female-medium"
+    "en/en_US/amy/medium/en_US-amy-medium"
   )
   local base="https://huggingface.co/rhasspy/piper-voices/resolve/main"
   local v name
@@ -1885,6 +1886,7 @@ Type=simple
 User=$run_user
 WorkingDirectory=$INSTALL_DIR
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wsl/lib
+Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib
 Environment=PYTHONPATH=$INSTALL_DIR
 Environment=OTACON_HOST=$CHAT_HOST
 Environment=OTACON_PORT=$CHAT_PORT
@@ -1934,6 +1936,8 @@ start_otacon_background() {
   stop_otacon_background
   nohup env \
     PYTHONPATH="$INSTALL_DIR" \
+    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wsl/lib:${PATH:-}" \
+    LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     OTACON_HOST="$CHAT_HOST" \
     OTACON_PORT="$CHAT_PORT" \
     OTACON_LAN_MODE="$LAN_MODE" \

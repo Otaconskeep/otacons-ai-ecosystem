@@ -104,7 +104,7 @@ async function previewSelectedVoice(){
 }
 
 async function runVoicePreview({statusEl}={}){
-  const agentName=state.name||'Billy';
+  const agentName=state.name||'Aria';
   const voiceId=state.voiceId;
   const text=`Hello, I am ${agentName}.`;
   console.log(`[TTS PREVIEW] requested agent=${agentName} voice=${voiceId}`);
@@ -201,8 +201,8 @@ async function setName(){
 }
 function setFeatures(){state.features=[...document.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);next()}
 async function build(){
-  let p=await api('/api/plan',{name:state.name,features:state.features,storage:state.storage});
-  let cfg=p.data.config; if(cfg.agents&&cfg.agents[0]) cfg.agents[0].voice_id=state.voiceId;
+  let p=await api('/api/plan',{name:state.name,features:state.features,storage:state.storage,voice_id:state.voiceId});
+  let cfg=p.data.config; if(cfg.agents&&cfg.agents[0]){ cfg.agents[0].voice_id=state.voiceId; cfg.agents[0].display_name=state.name; cfg.agents[0].avatar='/assets/aria/aria.webp'; }
   let s=await api('/api/save',{config:cfg}); state.config={saved:s.data.path}; next();
 }
 
@@ -234,6 +234,15 @@ function messageHtml(role, content, msgId){
   </div>`;
 }
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function voiceTrainerCard(){
+  const s=capStatus('voice_trainer');
+  const path=(state.capabilities&&state.capabilities.voice_trainer_path)||'';
+  if(s==='ready'){
+    return `<div class=card><b>Genome Voice Trainer</b><br><span class=codec-ok>INSTALLED</span><br><span class=muted>GPU Piper voice training is on this machine at ${escapeHtml(path)}. Open that folder in WSL/Linux to train custom voices — it is not a Codec chat feature.</span></div>`;
+  }
+  return `<div class="card cap-off"><b>Genome Voice Trainer</b><br><span class=muted>Not installed on this machine. OtaconsKeep Setup installs it automatically when an NVIDIA GPU is detected (skip with OTACON_INSTALL_VOICE_TRAINER=0). Re-run Setup on a GPU host, or install later from the Otaconskeep Voice Trainer repo.</span></div>`;
+}
 
 function codecPanelHtml(ttsOk){
   return `<div class=codec-frame>
@@ -291,8 +300,9 @@ ${showCodec?codecPanelHtml(ttsOk):''}
   <span class=muted id=previewStatus></span>
   <label><input type=checkbox id=autoSpeak ${state.autoSpeak?'checked':''} onchange="setAutoSpeak(this.checked)"> Auto Speak Responses</label>
 </div>
-<button onclick="newConversation()">+ New Conversation</button>
-<button onclick="loadMemories()">Memory</button>
+<button type=button onclick="newConversation()">+ New Conversation</button>
+<button type=button onclick="loadMemories()">Memory</button>
+${voiceTrainerCard()}
 ${imageCard}
 ${videoCard}
 <div id=conversation-list>${(cs||[]).map((c,i)=>`<button onclick="openConversation('${c.id}')">${c.title||'Conversation '+(i+1)}</button>`).join('')}</div>
@@ -318,7 +328,36 @@ async function setAutoSpeak(on){
   await api('/api/preferences',{auto_speak:state.autoSpeak});
 }
 
-async function newConversation(){state.conversation=(await api('/api/conversation',{agent_id:'agent_001'})).data.id;document.getElementById('messages').innerHTML=''}
+async function refreshConversationList(){
+  let cs=(await api('/api/conversations',{agent_id:'agent_001'})).data||[];
+  let el=document.getElementById('conversation-list');
+  if(el){
+    el.innerHTML=cs.map((c,i)=>{
+      const active=c.id===state.conversation?' active':'';
+      const title=escapeHtml(c.title||('Conversation '+(i+1)));
+      return `<button type=button class="conv-btn${active}" onclick="openConversation('${c.id}')">${title}</button>`;
+    }).join('')||'<p class=muted>No conversations yet.</p>';
+  }
+  return cs;
+}
+async function newConversation(){
+  const st=document.getElementById('previewStatus');
+  try{
+    let r=await api('/api/conversation',{agent_id:'agent_001',title:'New conversation'});
+    if(!r.ok||!r.data||!r.data.id){
+      const msg=(r.data&&(r.data.reason||r.data.message||r.data.error&&r.data.error.message))||'Could not create conversation';
+      if(st) st.textContent=msg; else alert(msg);
+      return;
+    }
+    state.conversation=r.data.id;
+    let box=document.getElementById('messages'); if(box) box.innerHTML='';
+    await refreshConversationList();
+    await openConversation(state.conversation);
+    if(st) st.textContent='Started a new conversation';
+  }catch(err){
+    if(st) st.textContent=String(err&&err.message||err); else alert(String(err));
+  }
+}
 async function openConversation(id){
   state.conversation=id;
   let r=(await api('/api/conversation/get',{id,agent_id:'agent_001'})).data;
@@ -349,7 +388,8 @@ async function sendChat(){
   });
   document.getElementById('wait')?.remove();
   if(!r.ok){
-    box.insertAdjacentHTML('beforeend', `<div class=msg><p><b>${state.name}:</b> Your AI service is unavailable.</p></div>`);
+    const tech=(r.data&&r.data.error&&(r.data.error.technical||r.data.error.message))||'';
+    box.insertAdjacentHTML('beforeend', `<div class=msg><p><b>${state.name}:</b> Your AI service is unavailable.${tech?` <span class=muted>(${escapeHtml(tech)})</span>`:''}</p></div>`);
     setCodecMode('idle');
     return;
   }
