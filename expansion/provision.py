@@ -117,37 +117,90 @@ def _step_hierarchy(ctx: ProvisionContext) -> StepResult:
     return _ok('hierarchy_placement', f'reports_to={ctx.agent.reporting_to}')
 
 
+def _step_emotion(ctx: ProvisionContext) -> StepResult:
+    from expansion.canonical_dossiers import get_canonical_dossier
+    from expansion.emotion_store import EmotionStore
+    dossier = get_canonical_dossier(ctx.agent.agent_id)
+    store = EmotionStore(ctx.layout)
+    store.get_or_create(
+        ctx.agent.agent_id,
+        baseline=dossier.stress.emotional_baseline,
+    )
+    return _ok('emotional_state_init', 'emotional state persisted')
+
+
+def _step_relationships(ctx: ProvisionContext) -> StepResult:
+    from expansion.relationship_store import RelationshipStore
+    store = RelationshipStore(ctx.layout)
+    # Ensure edges to/from this agent against known defaults + user
+    defaults = ['aria', 'vector', 'ledger', 'muse', 'sentry']
+    for other in defaults:
+        if other == ctx.agent.agent_id:
+            continue
+        store.get_or_create(ctx.agent.agent_id, other)
+        store.get_or_create(other, ctx.agent.agent_id)
+    store.get_or_create(ctx.agent.agent_id, 'user_primary', use_triangle_presets=False)
+    store.get_or_create('user_primary', ctx.agent.agent_id, use_triangle_presets=False)
+    return _ok('relationship_graph_init', 'directional edges initialized')
+
+
+def _step_dossier(ctx: ProvisionContext) -> StepResult:
+    from expansion.bootstrap import write_canonical_dossiers
+    from expansion.living_dossier_init import init_empty_living_dossier
+    write_canonical_dossiers(ctx.layout)
+    init_empty_living_dossier(ctx.layout, ctx.agent.agent_id)
+    return _ok('dossier_init', 'canonical + empty living dossier')
+
+
+def _step_journal(ctx: ProvisionContext) -> StepResult:
+    jpath = ctx.layout.user_journals / f'{ctx.agent.agent_id}.jsonl'
+    dpath = ctx.layout.user_diaries / f'{ctx.agent.agent_id}.jsonl'
+    jpath.parent.mkdir(parents=True, exist_ok=True)
+    dpath.parent.mkdir(parents=True, exist_ok=True)
+    if not jpath.exists():
+        jpath.write_text('', encoding='utf-8')
+    if not dpath.exists():
+        dpath.write_text('', encoding='utf-8')
+    return _ok('journal_init', 'journal/diary stores ready')
+
+
+def _step_motion(ctx: ProvisionContext) -> StepResult:
+    from expansion.motion_defaults import DEFAULT_MOTION, build_manifest
+    from expansion.motion_manifest import validate_manifest
+    from expansion.schema import MotionManifestRef
+    ref = DEFAULT_MOTION.get(ctx.agent.agent_id)
+    if ref:
+        ctx.agent.motion_manifest = MotionManifestRef(
+            manifest_id=ref.manifest_id,
+            capability_level=ref.capability_level,
+        )
+        errors = validate_manifest(build_manifest(ctx.agent.agent_id))
+        if errors:
+            return StepResult('motion_manifest', 'failed', '; '.join(errors))
+        return _ok('motion_manifest', ref.manifest_id)
+    return _ok('motion_manifest', 'no default motion', deferred=True)
+
+
 def _step_greeting(ctx: ProvisionContext) -> StepResult:
-    return _ok('greeting_fast_path', 'registration stub', deferred=True)
+    # Fast-path registration recorded as a semantic memory cue
+    from expansion.memory_bridge import ExpansionMemory, new_memory
+    mem = ExpansionMemory(ctx.layout)
+    mem.add(new_memory(
+        ctx.agent.agent_id,
+        f'greeting fast-path registered for {ctx.agent.display_name}',
+        kind='working',
+        source='provision',
+        importance=0.4,
+    ))
+    return _ok('greeting_fast_path', 'registered')
 
 
 def _step_voice(ctx: ProvisionContext) -> StepResult:
-    # Full onnx verify is P1; record binding intent only.
     return _ok(
         'voice_binding',
         f"piper={ctx.agent.voice.piper_voice} verified={ctx.agent.voice.onnx_verified}",
         deferred=not ctx.agent.voice.onnx_verified,
     )
-
-
-def _step_motion(ctx: ProvisionContext) -> StepResult:
-    return _ok('motion_manifest', 'manifest validation deferred', deferred=True)
-
-
-def _step_emotion(ctx: ProvisionContext) -> StepResult:
-    return _ok('emotional_state_init', 'emotional store init deferred', deferred=True)
-
-
-def _step_relationships(ctx: ProvisionContext) -> StepResult:
-    return _ok('relationship_graph_init', 'INFERRED_BASELINE edges deferred', deferred=True)
-
-
-def _step_dossier(ctx: ProvisionContext) -> StepResult:
-    return _ok('dossier_init', 'canonical dossier slot reserved', deferred=True)
-
-
-def _step_journal(ctx: ProvisionContext) -> StepResult:
-    return _ok('journal_init', 'journal/diary stores deferred', deferred=True)
 
 
 def _step_room(ctx: ProvisionContext) -> StepResult:

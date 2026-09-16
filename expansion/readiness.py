@@ -178,27 +178,61 @@ def evaluate_foundation(layout: Optional[StateLayout] = None) -> ReadinessReport
             return empty_is
         return ReadinessState.LIMITED  # present but engine not fully wired in P0
 
-    report.set('EMOTIONAL_ENGINE', _dir_state(layout.user_emotions))
-    report.set('RELATIONSHIPS', _dir_state(layout.user_relationships))
-    report.set_semantic('relationship_store', _dir_state(layout.user_relationships))
-    report.set_semantic('emotion_engine', _dir_state(layout.user_emotions))
-    report.set_semantic('memory_store', _dir_state(layout.user_memory))
-    report.set_semantic('journal_write', _dir_state(layout.user_journals))
-    report.set_semantic('diary_generate', ReadinessState.NOT_CONFIGURED,
-                        'diary generation is P2')
-    report.set_semantic('job_execution', _dir_state(layout.user_jobs))
+    report.set_semantic('relationship_store',
+                        ReadinessState.READY if any(layout.user_relationships.glob('*.json'))
+                        else ReadinessState.NOT_CONFIGURED)
+    report.set_semantic('emotion_engine',
+                        ReadinessState.READY if any(layout.user_emotions.glob('*.json'))
+                        else ReadinessState.NOT_CONFIGURED)
+    report.set_semantic('memory_store',
+                        ReadinessState.READY if any(layout.user_memory.glob('*'))
+                        else ReadinessState.NOT_CONFIGURED)
+    report.set_semantic('journal_write',
+                        ReadinessState.READY if any(layout.user_journals.glob('*.jsonl'))
+                        else ReadinessState.NOT_CONFIGURED)
+    report.set_semantic('diary_generate', ReadinessState.LIMITED,
+                        'diary stores exist; generation heuristics are P2')
+    report.set_semantic('job_execution',
+                        ReadinessState.LIMITED if layout.user_jobs.exists()
+                        else ReadinessState.NOT_CONFIGURED)
     report.set_semantic(
         'rooms_register',
         ReadinessState.READY if agents and all((a.get('room') or {}).get('route') for a in agents)
         else ReadinessState.NOT_CONFIGURED,
     )
-    report.set_semantic('codec_reaches_agent', ReadinessState.NOT_CONFIGURED,
-                        'multi-agent Codec is P1')
+    # Codec reaches agent when roster is loadable via Expansion runtime
+    try:
+        from expansion.runtime import ExpansionRuntime
+        rt = ExpansionRuntime(layout)
+        codec_ok = rt.expansion_enabled() and len(rt.load_roster()) >= 5
+        report.set_semantic(
+            'codec_reaches_agent',
+            ReadinessState.READY if codec_ok else ReadinessState.NOT_CONFIGURED,
+            'roster-aware Codec path available' if codec_ok else 'Expansion roster missing',
+        )
+    except Exception as exc:
+        report.set_semantic('codec_reaches_agent', ReadinessState.FAILED, str(exc))
+
+    # Motion manifests validate
+    try:
+        from expansion.motion_defaults import validated_default_manifests
+        validated_default_manifests()
+        report.set('MOTION', ReadinessState.READY)
+    except Exception as exc:
+        report.set('MOTION', ReadinessState.FAILED)
+        report.details['motion'] = str(exc)
+
+    if report.semantic.get('emotion_engine') == ReadinessState.READY:
+        report.set('EMOTIONAL_ENGINE', ReadinessState.READY)
+    if report.semantic.get('relationship_store') == ReadinessState.READY:
+        report.set('RELATIONSHIPS', ReadinessState.READY)
+
     report.set_semantic('protected_bundle', ReadinessState.NOT_CONFIGURED,
                         'protected release pipeline is P2+')
 
     # Optional components default to NOT_CONFIGURED
     for name in OPTIONAL_COMPONENTS:
-        report.set(name, ReadinessState.NOT_CONFIGURED)
+        if name not in report.components:
+            report.set(name, ReadinessState.NOT_CONFIGURED)
 
     return report

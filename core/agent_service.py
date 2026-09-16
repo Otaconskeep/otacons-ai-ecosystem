@@ -4,6 +4,9 @@ from core.voice import synthesize_voice, TTSError, public_result
 
 
 def system_prompt(agent):
+    # Expansion runtime may supply a full context-assembled prompt.
+    if agent.get('system_prompt'):
+        return agent['system_prompt']
     return f"You are {agent['display_name']}, a local AI assistant. Be friendly, clear, and helpful."
 
 

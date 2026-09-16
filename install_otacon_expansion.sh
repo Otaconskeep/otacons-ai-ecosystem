@@ -172,7 +172,7 @@ fi
 # ------------------------------------------------------------------------------
 # P0 platform: user-state layout, versions ledger, baseline migration, readiness
 # ------------------------------------------------------------------------------
-log "Applying P0 platform bootstrap (state layout, versions, migrations, readiness)"
+log "Applying P0/P1 platform bootstrap (state layout, versions, migrations, runtime state, readiness)"
 if PYTHONPATH="$INSTALL_DIR" OTACON_EXPANSION_DATA_DIR="$DATA_DIR" "$VPY" - <<'PY'
 from expansion.state_layout import resolve_layout
 from expansion.versions import current_versions, save_installed_versions
@@ -180,6 +180,7 @@ from expansion.migrations import apply_pending
 from expansion.readiness import evaluate_foundation
 from expansion.topology import default_topology, save_topology
 from expansion.manifest import build_dev_manifest, save_manifest
+from expansion.bootstrap import bootstrap_runtime_state
 
 layout = resolve_layout()
 layout.ensure_user_dirs()
@@ -188,6 +189,7 @@ save_topology(default_topology())
 apply_pending(layout)
 manifest_path = layout.user_config_root / 'PACKAGE_MANIFEST.dev.json'
 save_manifest(build_dev_manifest(), manifest_path)
+print('bootstrap', bootstrap_runtime_state(layout))
 report = evaluate_foundation(layout)
 print('foundation_ready=', report.foundation_ready())
 print('semantic=', {k: (v.value if hasattr(v, 'value') else v) for k, v in report.semantic.items()})
@@ -195,9 +197,9 @@ if not report.foundation_ready():
     raise SystemExit(1)
 PY
 then
-  ok "P0 platform bootstrap complete"
+  ok "P0/P1 platform bootstrap complete"
 else
-  warn "P0 platform bootstrap reported a problem"
+  warn "P0/P1 platform bootstrap reported a problem"
   REQUIRED_FAIL=1
 fi
 

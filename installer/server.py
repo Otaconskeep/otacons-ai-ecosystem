@@ -158,6 +158,18 @@ def _deployment():
     )
 
 
+def _expansion_runtime():
+    """Lazy Expansion runtime; None when Expansion agents are not installed."""
+    try:
+        from expansion.runtime import ExpansionRuntime
+        rt = ExpansionRuntime(core_memory=MEMORY)
+        if not rt.expansion_enabled():
+            return None
+        return rt
+    except Exception:
+        return None
+
+
 def _load_agents() -> list[dict]:
     cfg_path = CONFIG_ROOT / 'config.json'
     if cfg_path.is_file():
@@ -179,6 +191,13 @@ def _agent_from_request(data: dict) -> dict:
     agent = dict(data.get('agent') or {})
     if not agent.get('id'):
         agent['id'] = data.get('agent_id') or 'agent_001'
+    # Expansion roster takes precedence when that agent_id is provisioned.
+    rt = _expansion_runtime()
+    if rt is not None and rt.get_agent(agent['id']) is not None:
+        try:
+            return rt.agent_dict_for_core(agent['id'])
+        except Exception:
+            pass
     if not agent.get('display_name'):
         agent['display_name'] = data.get('display_name') or next(
             (a['display_name'] for a in agents if a['id'] == agent['id']), 'Aria'
@@ -326,6 +345,62 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(_capability_snapshot())
         elif path == '/api/voices':
             self.send_json({'voices': catalog_entries()})
+        elif path == '/api/expansion/status':
+            try:
+                from expansion.readiness import evaluate_foundation
+                from expansion.runtime import ExpansionRuntime
+                rt = ExpansionRuntime(core_memory=MEMORY)
+                enabled = rt.expansion_enabled()
+                report = evaluate_foundation() if enabled else None
+                self.send_json({
+                    'enabled': enabled,
+                    'foundation_ready': bool(report and report.foundation_ready()),
+                    'report': report.to_dict() if report else {},
+                    'agents': [
+                        {
+                            'id': a.agent_id,
+                            'display_name': a.display_name,
+                            'role': a.role,
+                            'room': a.room_route,
+                            'voice_id': a.voice_id,
+                        }
+                        for a in (rt.load_roster() if enabled else [])
+                    ],
+                })
+            except Exception as exc:
+                self.send_json({'enabled': False, 'error': str(exc), 'agents': []})
+        elif path == '/api/expansion/agents':
+            try:
+                from expansion.runtime import ExpansionRuntime
+                rt = ExpansionRuntime(core_memory=MEMORY)
+                if not rt.expansion_enabled():
+                    self.send_json({'enabled': False, 'agents': []})
+                else:
+                    self.send_json({
+                        'enabled': True,
+                        'agents': [a.__dict__ for a in rt.load_roster()],
+                    })
+            except Exception as exc:
+                self.send_json({'enabled': False, 'agents': [], 'error': str(exc)})
+        elif path.startswith('/api/expansion/agent/') and path.endswith('/context'):
+            agent_id = path[len('/api/expansion/agent/'):-len('/context')]
+            try:
+                from expansion.runtime import ExpansionRuntime
+                rt = ExpansionRuntime(core_memory=MEMORY)
+                ctx = rt.assemble_context(agent_id)
+                self.send_json({
+                    'agent_id': ctx.agent_id,
+                    'display_name': ctx.display_name,
+                    'archetype': ctx.archetype,
+                    'emotion': ctx.emotion,
+                    'relationships': ctx.relationships,
+                    'memories': ctx.memories,
+                    'vulnerabilities': ctx.vulnerabilities,
+                    'dossier_summary': ctx.dossier_summary,
+                    'provenance_hints': ctx.provenance_hints,
+                })
+            except Exception as exc:
+                self.send_json({'error': str(exc)}, 404)
         elif path == '/api/preferences':
             if not self._require_auth_if_needed():
                 return
@@ -456,12 +531,28 @@ class Handler(BaseHTTPRequestHandler):
                 data.get('user_id', 'local_user'), agent['id']
             )
             try:
+                # Refresh Expansion context with the live user message when applicable.
+                if agent.get('expansion'):
+                    rt = _expansion_runtime()
+                    if rt is not None:
+                        try:
+                            ctx = rt.assemble_context(agent['id'], user_message=data.get('message', ''))
+                            agent['system_prompt'] = ctx.system_prompt
+                            agent['_expansion_context'] = {
+                                'emotion': ctx.emotion,
+                                'relationships': ctx.relationships[:5],
+                                'memories': ctx.memories,
+                            }
+                        except Exception:
+                            pass
                 result = chat_with_optional_speech(
                     d, agent, data.get('message', ''), cid,
                     provider=_chat_provider(), memory=MEMORY,
                     user_id=data.get('user_id', 'local_user'),
                     auto_speak=bool(auto_speak),
                 )
+                if agent.get('_expansion_context'):
+                    result['expansion'] = agent['_expansion_context']
                 self.send_json(result)
             except Exception as e:
                 detail = str(e)
@@ -472,6 +563,34 @@ class Handler(BaseHTTPRequestHandler):
                         'technical': detail,
                     }
                 }, 503)
+        elif self.path == '/api/expansion/event':
+            try:
+                from expansion.canonical_dossiers import get_canonical_dossier
+                from expansion.event_effects import emit_and_apply
+                from expansion.events import new_event
+                ev = new_event(
+                    data.get('event_type') or 'agent.message',
+                    actor=data.get('actor') or 'user',
+                    subject=data.get('subject') or '',
+                    payload=data.get('payload') or {},
+                )
+                result = emit_and_apply(
+                    ev, dossier_loader=get_canonical_dossier,
+                )
+                self.send_json({
+                    'ok': True,
+                    'event_id': result.event_id,
+                    'emotion_updates': result.emotion_updates,
+                    'relationship_updates': result.relationship_updates,
+                })
+            except Exception as exc:
+                self.send_json({'error': {'code': 'EVENT_FAILED', 'message': str(exc)}}, 400)
+        elif self.path == '/api/expansion/bootstrap':
+            try:
+                from expansion.bootstrap import bootstrap_runtime_state
+                self.send_json({'ok': True, **bootstrap_runtime_state()})
+            except Exception as exc:
+                self.send_json({'error': {'code': 'BOOTSTRAP_FAILED', 'message': str(exc)}}, 500)
         elif self.path == '/api/conversation':
             self.send_json({
                 'id': MEMORY.create_conversation(

@@ -100,6 +100,8 @@ PROTECTED_PATHS = frozenset({
     '/api/installer/voice_actions',
     '/api/installer/plan',
     '/api/plan',
+    '/api/expansion/event',
+    '/api/expansion/bootstrap',
 })
 
 

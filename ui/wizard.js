@@ -3,10 +3,35 @@ let state={
   conversation:null,voiceId:'voice_aria',autoSpeak:false,voices:[],capabilities:null,
   currentAudio:null,speakingMsg:null,recorder:null,recordingState:'MIC_READY',
   testMode:window.__OTACON_TEST_MODE__===true,codecMode:'idle',codecBooted:false,lastModel:null,
-  view:'codec'
+  view:'codec',agentId:'agent_001',roster:[],expansion:null
 };
 const labels=['Welcome','System Scan','Hardware Recommendation','Storage','Agent Setup','Features','Review','Finish'];
 const CODEC_VIDEOS={idle:'/assets/aria/aria-idle.mp4',thinking:'/assets/aria/aria-thinking.mp4',talking:'/assets/aria/aria-talking.mp4'};
+
+function currentAgentId(){ return state.agentId || 'agent_001'; }
+function currentAgentName(){
+  const r=(state.roster||[]).find(a=>a.id===state.agentId||a.agent_id===state.agentId);
+  if(r) return r.display_name||r.id;
+  return state.name||'Aria';
+}
+async function loadExpansion(){
+  try{
+    state.expansion=await apiGet('/api/expansion/status');
+    if(state.expansion&&state.expansion.enabled&&(state.expansion.agents||[]).length){
+      state.roster=state.expansion.agents.map(a=>({
+        id:a.id||a.agent_id, display_name:a.display_name, role:a.role,
+        voice_id:a.voice_id, room:a.room||a.room_route
+      }));
+      if(!state.roster.find(a=>a.id===state.agentId)){
+        state.agentId=state.roster[0].id;
+        state.name=state.roster[0].display_name;
+        if(state.roster[0].voice_id) state.voiceId=state.roster[0].voice_id;
+      }
+    } else {
+      state.roster=[];
+    }
+  }catch(e){ state.expansion=null; state.roster=[]; }
+}
 
 async function api(path,body){
   let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
@@ -71,12 +96,46 @@ async function showHome(){
   state.view='home';
   setBodyMode('home');
   await loadCapabilities();
+  await loadExpansion();
   let scan=null;
   try{scan=await apiGet('/api/scan')}catch(e){}
   const chatOk=capReady('chat'), ttsOk=capReady('tts'), sttOk=capReady('stt');
   const vtOk=capStatus('voice_trainer')==='ready';
   const model=(state.capabilities&&state.capabilities.llm_model)||'—';
   const gpuDet=((scan&&scan.hardware&&scan.hardware.hardware&&scan.hardware.hardware.gpu_detection)||{});
+  const expOn=!!(state.expansion&&state.expansion.enabled);
+  const expReady=!!(state.expansion&&state.expansion.foundation_ready);
+  const expAgents=(state.roster||[]).map(a=>a.display_name).join(' · ')||'—';
+  const sem=((state.expansion&&state.expansion.report&&state.expansion.report.semantic)||{});
+  const emotionOk=sem.emotion_engine==='READY';
+  const relOk=sem.relationship_store==='READY';
+
+  const expansionSection=expOn?`
+  <section class="home-group">
+    <h2 class="home-group-title">Keep Expansion</h2>
+    <div class="home-grid">
+      <button type="button" class="svc" onclick="showChat()">
+        <div class="svc-top"><div class="svc-ico">XP</div><div class="svc-name">Expansion Roster</div></div>
+        <p class="svc-desc">${escapeHtml(expAgents)}</p>
+        <span class="svc-pill ${expReady?'ok':'warn'}">${expReady?'FOUNDATION READY':'PARTIAL'}</span>
+      </button>
+      <button type="button" class="svc" onclick="showChat()">
+        <div class="svc-top"><div class="svc-ico">EM</div><div class="svc-name">Emotion Engine</div></div>
+        <p class="svc-desc">Persistent affect with provenance — not decorative meters.</p>
+        <span class="svc-pill ${emotionOk?'ok':'warn'}">${emotionOk?'READY':'NOT READY'}</span>
+      </button>
+      <button type="button" class="svc" onclick="showChat()">
+        <div class="svc-top"><div class="svc-ico">REL</div><div class="svc-name">Relationships</div></div>
+        <p class="svc-desc">Directional bonds across the five-agent Keep.</p>
+        <span class="svc-pill ${relOk?'ok':'warn'}">${relOk?'READY':'NOT READY'}</span>
+      </button>
+      <button type="button" class="svc" onclick="showChat()">
+        <div class="svc-top"><div class="svc-ico">CX</div><div class="svc-name">Multi-Agent Codec</div></div>
+        <p class="svc-desc">Select Aria, Vector, Ledger, Muse, or Sentry in Codec.</p>
+        <span class="svc-pill ok">ROSTER-AWARE</span>
+      </button>
+    </div>
+  </section>`:'';
 
   appRoot().innerHTML=`<div class="home">
   <header class="home-header">
@@ -95,7 +154,7 @@ async function showHome(){
     <div class="home-grid">
       <button type="button" class="svc" onclick="showChat()">
         <div class="svc-top"><div class="svc-ico">CC</div><div class="svc-name">Codec</div></div>
-        <p class="svc-desc">Talk to Aria — dual-port Codec, local Ollama, Piper voice.</p>
+        <p class="svc-desc">${expOn?'Talk to the Expansion roster — dual-port Codec, local Ollama, Piper voice.':'Talk to Aria — dual-port Codec, local Ollama, Piper voice.'}</p>
         <span class="svc-pill ${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'CHAT DOWN'}</span>
       </button>
       <button type="button" class="svc" onclick="render()">
@@ -105,7 +164,7 @@ async function showHome(){
       </button>
       <button type="button" class="svc" onclick="showChat()">
         <div class="svc-top"><div class="svc-ico">MEM</div><div class="svc-name">Memory</div></div>
-        <p class="svc-desc">Persistent facts Aria keeps across conversations (inside Codec).</p>
+        <p class="svc-desc">Persistent facts agents keep across conversations (inside Codec).</p>
         <span class="svc-pill ok">LOCAL SQLITE</span>
       </button>
       <button type="button" class="svc" onclick="showChat()">
@@ -116,12 +175,14 @@ async function showHome(){
     </div>
   </section>
 
+  ${expansionSection}
+
   <section class="home-group">
     <h2 class="home-group-title">System</h2>
     <div class="home-grid">
       <button type="button" class="svc" onclick="showHome()">
         <div class="svc-top"><div class="svc-ico">SYS</div><div class="svc-name">Status</div></div>
-        <p class="svc-desc">Model ${escapeHtml(String(model))} · STT ${sttOk?'ready':'off'} · GPU ${escapeHtml(gpuDet.status||'unknown')}</p>
+        <p class="svc-desc">Model ${escapeHtml(String(model))} · STT ${sttOk?'ready':'off'} · GPU ${escapeHtml(gpuDet.status||'unknown')}${expOn?' · Expansion on':''}</p>
         <span class="svc-pill ${chatOk&&ttsOk?'ok':'warn'}">${chatOk&&ttsOk?'HEALTHY':'CHECK SERVICES'}</span>
       </button>
       <button type="button" class="svc ${vtOk?'':'svc-off'}" ${vtOk?'onclick="showHome()"':'disabled'}>
@@ -392,11 +453,12 @@ function animateFreq(){
 async function showChat(){
   state.view='codec';
   setBodyMode('codec');
-  await loadPrefs(); await loadVoices(); await loadCapabilities();
+  await loadPrefs(); await loadVoices(); await loadCapabilities(); await loadExpansion();
   let scan=null;
   try{scan=await apiGet('/api/scan')}catch(e){}
-  let cs=(await api('/api/conversations',{agent_id:'agent_001'})).data;
-  state.conversation=(cs[0]||{}).id||(await api('/api/conversation',{agent_id:'agent_001'})).data.id;
+  const aid=currentAgentId();
+  let cs=(await api('/api/conversations',{agent_id:aid})).data;
+  state.conversation=(cs[0]||{}).id||(await api('/api/conversation',{agent_id:aid})).data.id;
 
   const ttsOk=capReady('tts'), chatOk=capReady('chat'), sttOk=capReady('stt');
   const model=(state.capabilities&&state.capabilities.llm_model)||state.lastModel||'—';
@@ -404,17 +466,27 @@ async function showChat(){
   const gpuLine=gpus.length?gpus.map(g=>`${g.model} · ${g.vram_gb} GB`).join(' / '):'No GPU reported';
   const vtOk=capStatus('voice_trainer')==='ready';
   const voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
+  const roster=state.roster&&state.roster.length?state.roster:[{id:aid,display_name:currentAgentName()}];
+  const agentBtns=roster.map(a=>{
+    const id=a.id||a.agent_id;
+    const active=id===aid?' codec-ai-active':'';
+    return `<button type=button class="codec-ai-btn${active}" title="${escapeHtml(a.display_name||id)}" onclick="selectExpansionAgent('${escapeHtml(id)}')">${escapeHtml(String(a.display_name||id).toUpperCase())}</button>`;
+  }).join('');
+  const agentName=currentAgentName();
+  const portraitAgent=(roster.find(a=>(a.id||a.agent_id)===aid)||{}).id||'aria';
+  const idleSrc=`/assets/${portraitAgent}/${portraitAgent}-idle.mp4`;
 
   appRoot().innerHTML=`<div class="codec-cockpit">
   <header class="cc-mast">
     <div>
       <h1>Otacon // Codec</h1>
-      <div class="cc-sub">Local Lite cockpit · voice · agent · status — not the full Keep</div>
+      <div class="cc-sub">${state.roster.length?'Expansion roster · voice · status':'Local Lite cockpit · voice · agent · status — not the full Keep'}</div>
       <div class="cc-greeble">
         <span>LINK LOCAL</span>
         <span>CHAT ${chatOk?'READY':'DOWN'}</span>
         <span>TTS ${ttsOk?'READY':'DOWN'}</span>
         <span>MODEL ${escapeHtml(String(model))}</span>
+        <span>AGENT ${escapeHtml(String(agentName).toUpperCase())}</span>
       </div>
     </div>
     <div class="cc-mast-actions">
@@ -427,7 +499,7 @@ async function showChat(){
   <div class="cc-layout">
     <div id="codec-room-body">
       <div id="codec-wrap">
-        <div id="codec-bar">OTACON CODEC · LITE · TRANSMISSION LOCAL · GHOST PASTEL HUD</div>
+        <div id="codec-bar">OTACON CODEC · ${state.roster.length?'EXPANSION':'LITE'} · TRANSMISSION LOCAL · GHOST PASTEL HUD</div>
         <div id="codec-header">
           <div class="codec-inner code-border-inner">
             <div class="codec-port port-left" id="port-xof">
@@ -446,11 +518,11 @@ async function showChat(){
                 <div class="codec-sig-b" style="height:80%"></div>
               </div>
               <div class="codec-ai-btns">
-                <button type=button class="codec-ai-btn codec-ai-active" title="${escapeHtml(state.name||'Aria')}">${escapeHtml((state.name||'Aria').toUpperCase())}</button>
+                ${agentBtns}
               </div>
             </div>
             <div class="codec-port port-right" id="port-active">
-              <video id=codecVideo autoplay loop muted playsinline src="/assets/aria/aria-idle.mp4"></video>
+              <video id=codecVideo autoplay loop muted playsinline src="${idleSrc}" onerror="this.src='/assets/aria/aria-idle.mp4'"></video>
               <div class="codec-port-crt"></div>
               <div class="codec-port-lbl" id="active-ai-label">STANDBY</div>
             </div>
@@ -495,7 +567,7 @@ async function showChat(){
       </div>
       <div class="cc-panel" id=memory-panel>
         <h2>Memory</h2>
-        <p class=muted style="font-size:10px;margin:0 0 8px">Facts ${escapeHtml(state.name||'Aria')} keeps for later.</p>
+        <p class=muted style="font-size:10px;margin:0 0 8px">Facts ${escapeHtml(agentName)} keeps for later.</p>
         <div id=memories></div>
         <input id=memory placeholder="Add a memory">
         <button type=button class="cc-btn" onclick="addMemory()" style="margin-top:8px">Save Memory</button>
@@ -526,9 +598,21 @@ async function showChat(){
   const inp=document.getElementById('chat-inp'); if(inp) inp.focus();
 }
 
+async function selectExpansionAgent(id){
+  if(!id||id===state.agentId) return;
+  state.agentId=id;
+  const r=(state.roster||[]).find(a=>(a.id||a.agent_id)===id);
+  if(r){
+    state.name=r.display_name||id;
+    if(r.voice_id) state.voiceId=r.voice_id;
+  }
+  state.codecBooted=false;
+  await showChat();
+}
+
 async function assignVoice(vid){
   state.voiceId=vid;
-  await api('/api/agent/voice',{agent_id:'agent_001',display_name:state.name,voice_id:vid});
+  await api('/api/agent/voice',{agent_id:currentAgentId(),display_name:currentAgentName(),voice_id:vid});
 }
 async function setAutoSpeak(on){
   state.autoSpeak=!!on;
@@ -536,7 +620,7 @@ async function setAutoSpeak(on){
 }
 
 async function refreshConversationList(){
-  let cs=(await api('/api/conversations',{agent_id:'agent_001'})).data||[];
+  let cs=(await api('/api/conversations',{agent_id:currentAgentId()})).data||[];
   let el=document.getElementById('conversation-list');
   if(el){
     el.innerHTML=cs.map((c,i)=>{
@@ -549,7 +633,7 @@ async function refreshConversationList(){
 }
 async function newConversation(){
   try{
-    let r=await api('/api/conversation',{agent_id:'agent_001',title:'New conversation'});
+    let r=await api('/api/conversation',{agent_id:currentAgentId(),title:'New conversation'});
     if(!r.ok||!r.data||!r.data.id){ alert('Could not create conversation'); return; }
     state.conversation=r.data.id;
     let box=document.getElementById('chat-msgs'); if(box) box.innerHTML='';
@@ -559,7 +643,7 @@ async function newConversation(){
 }
 async function openConversation(id){
   state.conversation=id;
-  let r=(await api('/api/conversation/get',{id,agent_id:'agent_001'})).data;
+  let r=(await api('/api/conversation/get',{id,agent_id:currentAgentId()})).data;
   let box=document.getElementById('chat-msgs');
   if(!box) return;
   box.innerHTML='';
@@ -568,17 +652,17 @@ async function openConversation(id){
   await refreshConversationList();
 }
 async function loadMemories(){
-  let r=(await api('/api/memories',{agent_id:'agent_001'})).data;
+  let r=(await api('/api/memories',{agent_id:currentAgentId()})).data;
   let e=document.getElementById('memories');
   if(e) e.innerHTML=(r||[]).map(x=>`<p>${escapeHtml(x.content)} <button type=button onclick="delMemory(${x.id})">Delete</button></p>`).join('')||'<p class=muted style="font-size:10px">None stored.</p>';
 }
 async function addMemory(){
   let e=document.getElementById('memory');
-  if(e&&e.value.trim()) await api('/api/memory',{agent_id:'agent_001',content:e.value.trim()});
+  if(e&&e.value.trim()) await api('/api/memory',{agent_id:currentAgentId(),content:e.value.trim()});
   if(e) e.value='';
   loadMemories();
 }
-async function delMemory(id){await api('/api/memory/delete',{agent_id:'agent_001',id});loadMemories()}
+async function delMemory(id){await api('/api/memory/delete',{agent_id:currentAgentId(),id});loadMemories()}
 
 async function sendChat(){
   let el=document.getElementById('chat-inp'), box=document.getElementById('chat-msgs'), m=el&&el.value.trim();
@@ -589,14 +673,14 @@ async function sendChat(){
   box.scrollTop=box.scrollHeight;
   setCodecMode('thinking');
   let r=await api('/api/chat_with_agent',{
-    agent:{id:'agent_001',display_name:state.name,voice_id:state.voiceId},
+    agent:{id:currentAgentId(),display_name:currentAgentName(),voice_id:state.voiceId},
     message:m, conversation_id:state.conversation, auto_speak:state.autoSpeak
   });
   document.getElementById('wait')?.remove();
   if(!r.ok){
     const err=r.data&&r.data.error;
     const tech=(err&&(err.message||err.technical))||'Your AI service is unavailable.';
-    box.insertAdjacentHTML('beforeend', `<div class="msg-row-bot"><div class="msg-bot"><div class="msg-bot-name">${escapeHtml(state.name||'Aria')}</div><div>${escapeHtml(tech)}</div></div></div>`);
+    box.insertAdjacentHTML('beforeend', `<div class="msg-row-bot"><div class="msg-bot"><div class="msg-bot-name">${escapeHtml(currentAgentName())}</div><div>${escapeHtml(tech)}</div></div></div>`);
     setCodecMode('idle');
     box.scrollTop=box.scrollHeight;
     return;
@@ -647,7 +731,7 @@ async function showNodes(){
 }
 
 (async()=>{
-  await loadCapabilities(); await loadPrefs(); await loadVoices();
+  await loadCapabilities(); await loadPrefs(); await loadVoices(); await loadExpansion();
   if(location.search.includes('setup=1')) render();
   else if(location.search.includes('codec=1') || location.hash==='#codec') showChat();
   else showHome();
