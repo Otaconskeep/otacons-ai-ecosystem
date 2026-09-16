@@ -228,9 +228,30 @@ def evaluate_foundation(layout: Optional[StateLayout] = None) -> ReadinessReport
         report.set('RELATIONSHIPS', ReadinessState.READY)
 
     report.set_semantic('protected_bundle', ReadinessState.NOT_CONFIGURED,
-                        'protected release pipeline is P2+')
+                        'protected release pipeline available via expansion.release')
 
-    # Optional components default to NOT_CONFIGURED
+    # Optional components — probe without failing foundation
+    try:
+        from expansion.capabilities.discord_n8n import probe_all_optional
+        caps = probe_all_optional(layout)
+        mapping = {
+            'VIDEO_STUDIO': caps['video_studio']['state'],
+            'HOME_ASSISTANT': caps['home_assistant']['state'],
+            'DISCORD': caps['discord']['state'],
+            'N8N': caps['n8n']['state'],
+        }
+        for name, state in mapping.items():
+            try:
+                report.set(name, ReadinessState(state))
+            except ValueError:
+                report.set(name, ReadinessState.UNAVAILABLE)
+    except Exception as exc:  # noqa: BLE001
+        for name in ('VIDEO_STUDIO', 'HOME_ASSISTANT', 'DISCORD', 'N8N'):
+            if name not in report.components:
+                report.set(name, ReadinessState.UNAVAILABLE)
+        report.details['optional_capabilities'] = str(exc)
+
+    # Remaining optionals default
     for name in OPTIONAL_COMPONENTS:
         if name not in report.components:
             report.set(name, ReadinessState.NOT_CONFIGURED)

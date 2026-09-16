@@ -46,6 +46,10 @@ class PackageManifest:
     encryption: dict = field(default_factory=dict)  # {aead, kdf, notes} — no raw keys
     previous_version: str = ''
     notes: str = ''
+    package_id: str = 'otacon-expansion'
+    build_id: str = ''
+    release_channel: str = ''  # mirrors channel; explicit for release docs
+    component_hashes: dict = field(default_factory=dict)  # logical component -> sha256
 
     def validate(self) -> list:
         errors = []
@@ -59,6 +63,8 @@ class PackageManifest:
             errors.append('expansion_version required')
         if self.channel not in ('public', 'protected', 'dev'):
             errors.append(f'invalid channel {self.channel!r}')
+        if self.package_id and self.package_id != 'otacon-expansion':
+            errors.append(f'unexpected package_id {self.package_id!r}')
         for i, art in enumerate(self.artifacts):
             a = art if isinstance(art, ArtifactRef) else ArtifactRef(**art)
             if not a.path or not a.sha256:
@@ -75,6 +81,8 @@ class PackageManifest:
                 errors.append('protected channel requires signature and signing_key_id')
             if not self.artifacts:
                 errors.append('protected channel requires at least one artifact')
+            if not self.build_id:
+                errors.append('protected channel requires build_id')
         enc = self.encryption or {}
         if enc.get('aead') and enc['aead'] not in ALLOWED_AEAD:
             errors.append(f"encryption.aead must be one of {ALLOWED_AEAD}")

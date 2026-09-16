@@ -123,6 +123,7 @@ class TestVersionsAndManifest(LayoutTestCase):
     def test_protected_manifest_requires_signature(self):
         m = build_dev_manifest()
         m.channel = 'protected'
+        m.build_id = 'test-build'
         self.assertTrue(any('signature' in e for e in m.validate()))
 
     def test_encrypted_artifact_requires_allowed_aead(self):

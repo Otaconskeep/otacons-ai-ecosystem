@@ -97,7 +97,9 @@ def handle_expansion_get(path: str, send_json) -> bool:
         return True
     if path == '/api/expansion/creative':
         from expansion.jobs import JobStore
+        from expansion.capabilities.video_studio import probe_video_studio, studio_runtime_context
         jobs = [j for j in JobStore().list(agent_id='muse', limit=40)]
+        vs = probe_video_studio()
         send_json({
             'surface': 'muse_creative',
             'creative_queue': [asdict(j) for j in jobs
@@ -105,20 +107,25 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'recent_creative_jobs': [asdict(j) for j in jobs if j.domain in ('creative', 'media')][:15],
             'capabilities': {
                 'generation': 'local_template_ready',
-                'video_studio': 'deferred_p3',
+                'video_studio': vs.state,
                 'voice_motion': 'readiness_dependent',
             },
-            'video_studio_readiness': 'not_ported',
-            'note': 'Heavy Video Studio remains P3; this is the room shell.',
+            'video_studio': vs.to_dict(),
+            'video_studio_readiness': vs.state,
+            'runtime_context': studio_runtime_context('muse'),
+            'note': 'Heavy Studio deps optional; personality from Expansion runtime only.',
         })
         return True
     if path == '/api/expansion/ops':
         from expansion.jobs import JobStore
         from expansion.emotion_store import EmotionStore
+        from expansion.capabilities.home_assistant import probe_home_assistant
+        from expansion.capabilities.discord_n8n import probe_discord, probe_n8n
         jobs = JobStore()
         security = [j for j in jobs.list(agent_id='sentry', limit=40)
                     if j.domain in ('security', 'monitoring')]
         emo = EmotionStore().get_or_create('sentry')
+        ha = probe_home_assistant()
         send_json({
             'surface': 'sentry_ops',
             'alerts': [asdict(j) for j in security if j.status == 'FAILED'][:20],
@@ -129,12 +136,15 @@ def handle_expansion_get(path: str, send_json) -> bool:
                 'emotion': {k: round(v, 3) for k, v in emo.dimensions.items()
                             if k in ('concern', 'fear', 'stress', 'confidence')},
             },
-            'home_assistant': {
-                'status': 'unavailable_optional',
-                'note': 'Home Assistant integration is optional; absence is not a failure.',
-            },
+            'home_assistant': ha.to_dict(),
+            'discord': probe_discord().to_dict(),
+            'n8n': probe_n8n().to_dict(),
             'package_readiness': 'consult /api/expansion/status',
         })
+        return True
+    if path == '/api/expansion/capabilities':
+        from expansion.capabilities.discord_n8n import probe_all_optional
+        send_json({'capabilities': probe_all_optional()})
         return True
     if path == '/api/expansion/rooms':
         from expansion.rooms import RoomRegistry

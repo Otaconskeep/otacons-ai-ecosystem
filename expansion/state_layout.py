@@ -48,6 +48,8 @@ class StateLayout:
     user_preferences: Path
     user_migrations: Path
     user_pages: Path
+    secrets_root: Path
+    package_versions_root: Path
 
     def ensure_user_dirs(self) -> None:
         for p in (
@@ -65,8 +67,15 @@ class StateLayout:
             self.user_preferences,
             self.user_migrations,
             self.user_pages,
+            self.secrets_root,
+            self.package_versions_root,
         ):
             p.mkdir(parents=True, exist_ok=True)
+        try:
+            import os
+            os.chmod(self.secrets_root, 0o700)
+        except OSError:
+            pass
 
     def assert_not_product_write(self, path: Path) -> None:
         """Raise if a caller tries to treat a product path as user-writable state."""
@@ -140,4 +149,9 @@ def resolve_layout(product_root: Path | None = None) -> StateLayout:
         user_preferences=cfg / 'preferences',
         user_migrations=cfg / 'migrations',
         user_pages=cfg / 'pages',
+        secrets_root=_env_path(
+            'OTACON_EXPANSION_SECRETS_ROOT',
+            cfg / 'secrets',
+        ),
+        package_versions_root=data / 'packages',
     )
