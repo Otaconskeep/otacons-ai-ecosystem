@@ -427,6 +427,14 @@ function Get-DpkgFailureSummary {
         $m4 = [regex]::Match($text, 'Errors were encountered while processing:\s*\r?\n\s*(\S+)')
         if ($m4.Success) { $package = $m4.Groups[1].Value }
     }
+    if (-not $package) {
+        $m5 = [regex]::Match($text, '(?m)^Package:\r?\n([a-zA-Z0-9][a-zA-Z0-9+._-]+)')
+        if ($m5.Success) { $package = $m5.Groups[1].Value }
+    }
+    if (-not $package) {
+        $m6 = [regex]::Match($text, 'PACKAGE REPAIR FAILED pkg=(\S+)')
+        if ($m6.Success -and $m6.Groups[1].Value -notmatch '^\(see') { $package = $m6.Groups[1].Value }
+    }
 
     if (-not $package) { return $null }
 
@@ -839,16 +847,23 @@ env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
                 if ($line -match '\[STAGE\]\s+(\S+)\s+(\S+)\s+(.*)$') {
                     $currentSub = ("{0} [{1}] {2}" -f $Matches[1], $Matches[2], $Matches[3])
                     $lastProgress = Get-Date
-                } elseif ($line -match '\[AGG::HEARTBEAT\]') {
+                } elseif ($line -match '\[AGG::HEARTBEAT\]\s*(.+)$') {
                     $lastProgress = Get-Date
-                    $currentSub = $line.Substring(0, [Math]::Min(90, $line.Length))
-                } elseif ($line -match '\[AGG::PROGRESS\]') {
+                    $hb = $Matches[1]
+                    $currentSub = $hb.Substring(0, [Math]::Min(90, $hb.Length))
+                } elseif ($line -match '\[AGG::PROGRESS\]\s*(.+)$') {
                     $lastProgress = Get-Date
-                } elseif ($line -match 'pulling|Downloading|Get:|Unpacking|Setting up') {
+                    $pg = $Matches[1]
+                    $currentSub = $pg.Substring(0, [Math]::Min(90, $pg.Length))
+                } elseif ($line -match '^(Get:|Hit:|Ign:|Fetched |Unpacking |Setting up |Processing triggers|Preparing to unpack)') {
+                    $lastProgress = Get-Date
+                    $t = $line.Trim()
+                    $currentSub = $t.Substring(0, [Math]::Min(90, $t.Length))
+                } elseif ($line -match 'pulling|Downloading') {
                     $lastProgress = Get-Date
                 }
             }
-            $recent = @($all | Select-Object -Last 5)
+            $recent = @($all | Select-Object -Last 6)
         }
 
         Show-Stage6Panel -Started $Started -Substep ("[{0}] {1}" -f $Phase, $currentSub) -RecentLines $recent `
@@ -866,7 +881,7 @@ env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
             Write-KeepLog "stage6 stall timeout ${StallTimeoutMin}m phase=$Phase substep=$currentSub" -Level "ERROR" -Stage "INSTALLING_OTACON"
             return 125
         }
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 3
     }
 
     # $proc.HasExited can flip true slightly before .NET has fully reaped the
@@ -881,13 +896,24 @@ env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
         Write-KeepLog "WaitForExit threw for phase=$Phase : $($_.Exception.Message)" -Level "WARN" -Stage "INSTALLING_OTACON"
     }
 
+    # Prefer durable Linux markers when Start-Process ExitCode is blank/unusable.
+    $fromLog = $null
+    if (Test-Path -LiteralPath $LogPipe) {
+        foreach ($line in @(Get-Content -LiteralPath $LogPipe -ErrorAction SilentlyContinue)) {
+            if ($line -match 'OTACON_PHASE_EXIT=(\d+)') { $fromLog = [int]$Matches[1] }
+            elseif ($line -match '\[STAGE\]\s+exit\s+CODE\s+(\d+)') { $fromLog = [int]$Matches[1] }
+        }
+    }
+
     $rawCode = $proc.ExitCode
     $code = 0
-    if (-not [int]::TryParse([string]$rawCode, [ref]$code)) {
+    if ($null -ne $fromLog) {
+        $code = [int]$fromLog
+    } elseif (-not [int]::TryParse([string]$rawCode, [ref]$code)) {
         Write-KeepLog "linux phase=$Phase exit code unreadable (raw='$rawCode') -- treating as failure, not blank" -Level "ERROR" -Stage "INSTALLING_OTACON"
         $code = 998
     }
-    Write-KeepLog "linux phase=$Phase exit=$code" -Stage "INSTALLING_OTACON"
+    Write-KeepLog "linux phase=$Phase exit=$code (raw='$rawCode' log='$fromLog')" -Stage "INSTALLING_OTACON"
     return [int]$code
 }
 
