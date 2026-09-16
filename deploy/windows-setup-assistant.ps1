@@ -506,7 +506,9 @@ function Test-UbuntuReady {
 function Test-OtaconFiles {
     param([string]$Name)
     if (-not $Name) { return $false }
-    & wsl.exe -d $Name -- bash -lc "test -x `$HOME/.local/bin/otacon || test -d `$HOME/otacon || test -d /opt/otacon" 2>$null | Out-Null
+    # Public Core markers only. Never treat /opt/otacon (private Keep) or
+    # ~/otacon as proof of a product install.
+    & wsl.exe -d $Name -- bash -lc "test -x `$HOME/.local/bin/otacon || test -d `"`${OTACON_INSTALL_DIR:-`$HOME/otacon-ai-ecosystem}/core`" || test -f `$HOME/.config/otacon/config.json" 2>$null | Out-Null
     return ($LASTEXITCODE -eq 0)
 }
 

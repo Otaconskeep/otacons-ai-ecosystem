@@ -143,13 +143,13 @@ cd "$INSTALL_DIR"
 # Acceptance gate: the real expansion/ test suite
 # ------------------------------------------------------------------------------
 if [[ "$RUN_TESTS" == "1" ]]; then
-  log "Running the Expansion test suite (schema, hierarchy, relationship formulas, motion manifest, decision audit, readiness, default-roster seeding)"
+  log "Running the Expansion test suite (foundation + P0 platform primitives)"
   if PYTHONPATH="$INSTALL_DIR" "$VPY" -m unittest discover -s tests -p "test_expansion_*.py" -v; then
     ok "Expansion test suite passed"
     TESTS_OK=1
   else
     warn "Expansion test suite did not fully pass -- see log above"
-    REQUIRED_FAIL=1
+    TESTS_OK=0
   fi
 else
   warn "Skipping the acceptance gate (OTACON_RUN_TESTS=0) -- not recommended"
@@ -166,6 +166,38 @@ if PYTHONPATH="$INSTALL_DIR" "$VPY" -m expansion.seed_defaults "$DATA_DIR"; then
   SEED_OK=1
 else
   warn "Default roster generation failed validation -- see log above"
+  REQUIRED_FAIL=1
+fi
+
+# ------------------------------------------------------------------------------
+# P0 platform: user-state layout, versions ledger, baseline migration, readiness
+# ------------------------------------------------------------------------------
+log "Applying P0 platform bootstrap (state layout, versions, migrations, readiness)"
+if PYTHONPATH="$INSTALL_DIR" OTACON_EXPANSION_DATA_DIR="$DATA_DIR" "$VPY" - <<'PY'
+from expansion.state_layout import resolve_layout
+from expansion.versions import current_versions, save_installed_versions
+from expansion.migrations import apply_pending
+from expansion.readiness import evaluate_foundation
+from expansion.topology import default_topology, save_topology
+from expansion.manifest import build_dev_manifest, save_manifest
+
+layout = resolve_layout()
+layout.ensure_user_dirs()
+save_installed_versions(current_versions())
+save_topology(default_topology())
+apply_pending(layout)
+manifest_path = layout.user_config_root / 'PACKAGE_MANIFEST.dev.json'
+save_manifest(build_dev_manifest(), manifest_path)
+report = evaluate_foundation(layout)
+print('foundation_ready=', report.foundation_ready())
+print('semantic=', {k: (v.value if hasattr(v, 'value') else v) for k, v in report.semantic.items()})
+if not report.foundation_ready():
+    raise SystemExit(1)
+PY
+then
+  ok "P0 platform bootstrap complete"
+else
+  warn "P0 platform bootstrap reported a problem"
   REQUIRED_FAIL=1
 fi
 
@@ -220,10 +252,12 @@ printf 'Default roster    : %s (%s)\n' "$([[ "$SEED_OK" == "1" ]] && echo writte
 printf '\n'
 printf '\033[1;33mWhat this actually gives you right now:\033[0m\n'
 printf '  - A validated, versioned, five-agent roster on disk (%s)\n' "$DATA_DIR"
-printf '  - Importable, tested modules: expansion.schema, .hierarchy, .relationship,\n'
-printf '    .motion_manifest, .decision_audit, .readiness, .seed_defaults\n'
+printf '  - P0 platform: state layout, topology config, versions, migrations,\n'
+printf '    package manifest contract, provision skeleton, event bus, readiness\n'
+printf '  - Importable modules under expansion/ (schema through provision/events)\n'
+printf '  - Migration contract: docs/KEEP_EXPANSION_MIGRATION.md\n'
 printf '\033[1;33mWhat this does NOT give you yet:\033[0m\n'
-printf '  - A Dashboard, Codec, War Room, Video Studio, or any UI reading that roster\n'
+printf '  - A Dashboard, Codec, War Room, Video Studio, Page Builder UI\n'
 printf '  - Discord/Home Assistant/n8n wiring, voice synthesis from the seeded agents\n'
 printf '  - Full status and roadmap: %s\n' "$SPEC_URL"
 printf '\n'

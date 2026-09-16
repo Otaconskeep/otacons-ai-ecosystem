@@ -43,7 +43,8 @@ systemctl enable otacon.service >/dev/null 2>&1 || true
 systemctl restart otacon.service >/dev/null 2>&1 || systemctl start otacon.service >/dev/null 2>&1 || true
 # Soft ensure: if unit missing but piper venv exists, fall back once
 if ! systemctl is-active --quiet otacon-tts.service 2>/dev/null; then
-  if [ -x "$HOME/.local/bin/otacon" ] || [ -d "$HOME/otacon" ] || [ -d /opt/otacon ]; then
+  # Public Core markers only — never /opt/otacon (private Keep).
+  if [ -x "$HOME/.local/bin/otacon" ] || [ -d "${OTACON_INSTALL_DIR:-$HOME/otacon-ai-ecosystem}/core" ] || [ -f "$HOME/.config/otacon/config.json" ]; then
     true
   fi
 fi
