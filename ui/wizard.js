@@ -42,6 +42,123 @@ function voiceLabel(id){
   let v=(state.voices||[]).find(x=>x.id===id); return v?v.display_name:id;
 }
 function appRoot(){return document.getElementById('app')}
+function setBodyMode(mode){
+  document.body.classList.toggle('home-body', mode==='home');
+}
+
+function formatNow(){
+  try{
+    return new Date().toLocaleString(undefined,{dateStyle:'long',timeStyle:'short',hour12:true});
+  }catch(e){ return new Date().toISOString(); }
+}
+
+function resourceBarsHtml(scan){
+  const h=(scan&&scan.hardware&&scan.hardware.hardware)||{};
+  const ram=Number(h.ram_gb||0);
+  const free=Number(h.free_storage_gb||0);
+  // Lite scan has no live CPU%, so show capacity markers honestly.
+  const gpu=Array.isArray(h.gpus)&&h.gpus[0]?h.gpus[0]:null;
+  const rows=[
+    ['CPU', h.cpu&&h.cpu.cores?`${h.cpu.cores} cores`:'—', h.cpu&&h.cpu.cores?Math.min(100,h.cpu.cores*8):0],
+    ['RAM', ram?`${ram} GB`:'—', ram?Math.min(100, Math.round((ram/64)*100)):0],
+    ['DISK', free?`${Math.round(free)} GB free`:'—', free?Math.min(100, Math.round((free/1000)*100)):0],
+  ];
+  if(gpu) rows.push(['GPU', `${gpu.vram_gb} GB`, Math.min(100, Math.round((gpu.vram_gb/24)*100))]);
+  return rows.map(([k,v,pct])=>`<div class="home-res-item"><div class="lbl"><span>${k}</span><span>${escapeHtml(String(v))}</span></div><div class="home-res-bar"><i style="width:${pct}%"></i></div></div>`).join('');
+}
+
+async function showHome(){
+  state.view='home';
+  setBodyMode('home');
+  await loadCapabilities();
+  let scan=null;
+  try{scan=await apiGet('/api/scan')}catch(e){}
+  const chatOk=capReady('chat'), ttsOk=capReady('tts'), sttOk=capReady('stt');
+  const vtOk=capStatus('voice_trainer')==='ready';
+  const model=(state.capabilities&&state.capabilities.llm_model)||'—';
+  const gpuDet=((scan&&scan.hardware&&scan.hardware.hardware&&scan.hardware.hardware.gpu_detection)||{});
+
+  appRoot().innerHTML=`<div class="home">
+  <header class="home-header">
+    <div>
+      <p class="home-kicker">Otaconskeep · Lite</p>
+      <h1 class="home-greeting">Otacon Command Center</h1>
+    </div>
+    <div class="home-meta">
+      <div class="home-res">${resourceBarsHtml(scan)}</div>
+      <div class="home-datetime" id="homeClock">${escapeHtml(formatNow())}</div>
+    </div>
+  </header>
+
+  <section class="home-group">
+    <h2 class="home-group-title">Command Center</h2>
+    <div class="home-grid">
+      <button type="button" class="svc" onclick="showChat()">
+        <div class="svc-top"><div class="svc-ico">CC</div><div class="svc-name">Codec</div></div>
+        <p class="svc-desc">Talk to Aria — dual-port Codec, local Ollama, Piper voice.</p>
+        <span class="svc-pill ${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'CHAT DOWN'}</span>
+      </button>
+      <button type="button" class="svc" onclick="render()">
+        <div class="svc-top"><div class="svc-ico">SU</div><div class="svc-name">Setup</div></div>
+        <p class="svc-desc">Hardware scan, agent voice, features, and first-run configuration.</p>
+        <span class="svc-pill">WIZARD</span>
+      </button>
+      <button type="button" class="svc" onclick="showChat()">
+        <div class="svc-top"><div class="svc-ico">MEM</div><div class="svc-name">Memory</div></div>
+        <p class="svc-desc">Persistent facts Aria keeps across conversations (inside Codec).</p>
+        <span class="svc-pill ok">LOCAL SQLITE</span>
+      </button>
+      <button type="button" class="svc" onclick="showChat()">
+        <div class="svc-top"><div class="svc-ico">VOX</div><div class="svc-name">Voice</div></div>
+        <p class="svc-desc">Piper TTS preview and Auto Speak — Warm Male / Measured Female / Aria.</p>
+        <span class="svc-pill ${ttsOk?'ok':'warn'}">${ttsOk?'TTS READY':'TTS NOT READY'}</span>
+      </button>
+    </div>
+  </section>
+
+  <section class="home-group">
+    <h2 class="home-group-title">System</h2>
+    <div class="home-grid">
+      <button type="button" class="svc" onclick="showHome()">
+        <div class="svc-top"><div class="svc-ico">SYS</div><div class="svc-name">Status</div></div>
+        <p class="svc-desc">Model ${escapeHtml(String(model))} · STT ${sttOk?'ready':'off'} · GPU ${escapeHtml(gpuDet.status||'unknown')}</p>
+        <span class="svc-pill ${chatOk&&ttsOk?'ok':'warn'}">${chatOk&&ttsOk?'HEALTHY':'CHECK SERVICES'}</span>
+      </button>
+      <button type="button" class="svc ${vtOk?'':'svc-off'}" ${vtOk?'onclick="showHome()"':'disabled'}>
+        <div class="svc-top"><div class="svc-ico">VT</div><div class="svc-name">Voice Trainer</div></div>
+        <p class="svc-desc">${vtOk?'Genome Voice Trainer is installed under ~/otacon-voice-trainer (GPU Piper).':'Not installed — Setup adds it when NVIDIA is detected.'}</p>
+        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtOk?'INSTALLED':'NOT INSTALLED'}</span>
+      </button>
+      <button type="button" class="svc svc-off" disabled>
+        <div class="svc-top"><div class="svc-ico">IMG</div><div class="svc-name">Images / Video</div></div>
+        <p class="svc-desc">Not configured in Lite. Providers are architecture-only until you add them.</p>
+        <span class="svc-pill warn">NOT CONFIGURED</span>
+      </button>
+      <button type="button" class="svc svc-off" disabled>
+        <div class="svc-top"><div class="svc-ico">NODES</div><div class="svc-name">Compute Nodes</div></div>
+        <p class="svc-desc">Remote pairing is Keep-direction — this Lite box is the local node.</p>
+        <span class="svc-pill warn">LOCAL ONLY</span>
+      </button>
+    </div>
+  </section>
+
+  <p class="home-foot">Otaconskeep Lite · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX</p>
+</div>`;
+
+  if(window.__homeClock) clearInterval(window.__homeClock);
+  window.__homeClock=setInterval(()=>{
+    const el=document.getElementById('homeClock'); if(el) el.textContent=formatNow();
+  },1000);
+
+  // One-shot boot splash matching Homelab HUD
+  if(!document.getElementById('ot-boot') && !sessionStorage.getItem('ot_boot_done')){
+    const boot=document.createElement('div');
+    boot.id='ot-boot';
+    boot.innerHTML=`<div class="frame"><div class="kicker">Otaconskeep</div><div class="title">Command Center</div><div class="sub">Booting local Lite deck…</div></div>`;
+    document.body.appendChild(boot);
+    setTimeout(()=>{ boot.classList.add('done'); sessionStorage.setItem('ot_boot_done','1'); setTimeout(()=>boot.remove(),700); },900);
+  }
+}
 
 /* ---------------- Setup wizard ---------------- */
 function renderProgress(){
@@ -92,11 +209,15 @@ function updateSetupAvatar(){
 
 function render(){
   state.view='setup';
+  setBodyMode('setup');
   const root=appRoot();
   root.innerHTML=`<div class="setup-shell">
     <div class="setup-top">
       <div class="setup-brand">Otaconskeep · Core</div>
-      <button type=button class="cc-btn" onclick="showChat()">Open Codec</button>
+      <div>
+        <button type=button class="cc-btn ghost" onclick="showHome()">Home</button>
+        <button type=button class="cc-btn" onclick="showChat()">Open Codec</button>
+      </div>
     </div>
     <p class="muted" style="letter-spacing:.14em;text-transform:uppercase;font-size:10px;margin:0 0 8px">Local AI Setup</p>
     <h1 id="title">${labels[state.step]}</h1>
@@ -270,6 +391,7 @@ function animateFreq(){
 /* ---------------- Codec cockpit (primary UI) ---------------- */
 async function showChat(){
   state.view='codec';
+  setBodyMode('codec');
   await loadPrefs(); await loadVoices(); await loadCapabilities();
   let scan=null;
   try{scan=await apiGet('/api/scan')}catch(e){}
@@ -296,6 +418,7 @@ async function showChat(){
       </div>
     </div>
     <div class="cc-mast-actions">
+      <button type=button class="cc-btn ghost" onclick="showHome()">Home</button>
       <button type=button class="cc-btn ghost" onclick="render()">Setup</button>
       <button type=button class="cc-btn" onclick="newConversation()">New Thread</button>
     </div>
@@ -525,7 +648,7 @@ async function showNodes(){
 
 (async()=>{
   await loadCapabilities(); await loadPrefs(); await loadVoices();
-  // Product default: Codec cockpit (Keep-style). Setup remains one click away.
   if(location.search.includes('setup=1')) render();
-  else showChat();
+  else if(location.search.includes('codec=1') || location.hash==='#codec') showChat();
+  else showHome();
 })();
