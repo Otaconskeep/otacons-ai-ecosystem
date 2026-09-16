@@ -195,6 +195,8 @@ def dossier_ledger() -> CanonicalDossier:
         vulnerabilities=VulnerabilityProfile(items=(
             _vuln(VulnerabilityKind.FEAR, 'forgetting/corruption', 0.75,
                   'Fears lost, corrupted, or false records.'),
+            _vuln(VulnerabilityKind.ANXIETY, 'continuity anxiety', 0.55,
+                  'Anxiety when continuity checks fail.'),
             _vuln(VulnerabilityKind.CRUTCH, 'documentation/organization', 0.7,
                   'Stabilizes anxiety by writing everything down.'),
             _vuln(VulnerabilityKind.COMPULSION, 'double-checking', 0.7,
@@ -325,10 +327,14 @@ def dossier_sentry() -> CanonicalDossier:
         vulnerabilities=VulnerabilityProfile(items=(
             _vuln(VulnerabilityKind.FEAR, 'blind spots/unseen threats', 0.8,
                   'Fears the thing he did not see.'),
+            _vuln(VulnerabilityKind.BLIND_SPOT, 'unseen perimeter gaps', 0.65,
+                  'Known tendency to over-index on faint signals after a miss.'),
             _vuln(VulnerabilityKind.CRUTCH, 'monitoring', 0.75,
                   'Stabilizes by watching more dashboards.'),
             _vuln(VulnerabilityKind.WEAKNESS, 'hypervigilance', 0.7,
                   'Can escalate concern faster than the room needs.'),
+            _vuln(VulnerabilityKind.ANXIETY, 'missed alert anxiety', 0.6,
+                  'Anxiety spikes after late or missed alerts.'),
         )),
         social=SocialTraits(
             attachment_style='avoidant-protective',

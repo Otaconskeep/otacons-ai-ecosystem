@@ -47,6 +47,19 @@ class MigrationPlan:
 
 
 # Registry of known migrations. P0 ships the identity/no-op baseline only.
+def _m001_p2_living(layout: StateLayout) -> None:
+    """Ensure P2 directories + room registry exist without touching emotion/relationship files."""
+    layout.ensure_user_dirs()
+    (layout.user_journals).mkdir(parents=True, exist_ok=True)
+    (layout.user_diaries).mkdir(parents=True, exist_ok=True)
+    (layout.user_jobs).mkdir(parents=True, exist_ok=True)
+    (layout.user_living_dossiers).mkdir(parents=True, exist_ok=True)
+    (layout.user_pages).mkdir(parents=True, exist_ok=True)
+    (layout.user_data_root / 'vulnerabilities').mkdir(parents=True, exist_ok=True)
+    from expansion.rooms import RoomRegistry
+    RoomRegistry(layout).seed_defaults()
+
+
 _REGISTRY: list[Migration] = [
     Migration(
         migration_id='m000_baseline',
@@ -54,6 +67,13 @@ _REGISTRY: list[Migration] = [
         from_agent_schema=1,
         to_agent_schema=1,
         apply=None,
+    ),
+    Migration(
+        migration_id='m001_p2_living_layer',
+        description='P2 living layer dirs + room registry; preserves emotion/relationships/memories',
+        from_agent_schema=1,
+        to_agent_schema=1,
+        apply=_m001_p2_living,
     ),
 ]
 

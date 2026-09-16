@@ -154,9 +154,20 @@ class EventApplicator:
                 note='reassurance',
             ))
 
-        # --- job.completed by Vector → Aria trust in Vector ---
+        # --- job.completed ---
         elif et == 'job.completed' and subject:
             emotion_updates.extend(self._apply_subject_emotion(event, subject))
+            if payload.get('helped_agent') == 'aria' and subject == 'muse':
+                relationship_updates.append(
+                    self._bump_rel(event, 'aria', 'muse', {
+                        'trust': 0.05, 'respect': 0.05, 'rivalry': -0.03, 'affinity': 0.04,
+                    }, note='Muse helped Aria')
+                )
+                relationship_updates.append(
+                    self._bump_rel(event, 'muse', 'aria', {
+                        'trust': 0.03, 'respect': 0.03, 'affinity': 0.03,
+                    }, note='helped Aria')
+                )
             if subject == 'vector':
                 relationship_updates.append(
                     self._bump_rel(event, 'aria', 'vector', {
@@ -186,6 +197,35 @@ class EventApplicator:
                 {'concern': 0.09, 'stress': 0.07, 'fear': 0.06},
                 note='service.failed observed by Sentry',
             ))
+
+        # Creative work ignored (Muse)
+        elif payload.get('creative_ignored') and subject == 'muse':
+            emotion_updates.append(self._apply_raw_emotion(
+                event, 'muse',
+                {'insecurity': 0.1, 'sadness': 0.05, 'pride': -0.03, 'loneliness': 0.06},
+                note='creative work ignored',
+            ))
+
+        # Ledger memory inconsistency / continuity threat
+        elif payload.get('memory_inconsistency') and subject == 'ledger':
+            emotion_updates.append(self._apply_raw_emotion(
+                event, 'ledger',
+                {'concern': 0.1, 'fear': 0.08, 'stress': 0.07, 'confidence': -0.03},
+                note='memory inconsistency detected',
+            ))
+
+        # Ledger mediates conflict
+        elif payload.get('mediated_by') == 'ledger':
+            relationship_updates.append(
+                self._bump_rel(event, 'aria', 'ledger', {
+                    'trust': 0.04, 'respect': 0.05,
+                }, note='Ledger mediated')
+            )
+            relationship_updates.append(
+                self._bump_rel(event, 'muse', 'ledger', {
+                    'trust': 0.04, 'respect': 0.04,
+                }, note='Ledger mediated')
+            )
 
         else:
             # Generic catalog
@@ -261,11 +301,19 @@ class EventApplicator:
             if agent_id == 'vector':
                 state.sensitivity['frustration'] = 1.1
                 state.sensitivity['confidence'] = 0.9
+        personality = dict(_personality_mods_from_dossier(dossier))
+        # Runtime vulnerability activations amplify sensitivity without sabotaging ops
+        try:
+            from expansion.vulnerability_runtime import VulnerabilityRuntime
+            for dim, mult in VulnerabilityRuntime(self.layout).emotion_modifiers(agent_id).items():
+                personality[dim] = float(personality.get(dim, 1.0)) * float(mult)
+        except Exception:
+            pass
         apply_emotion_deltas(
             state, deltas,
             event_id=event.event_id,
             event_type=event.event_type,
-            personality_modifiers=_personality_mods_from_dossier(dossier),
+            personality_modifiers=personality,
             note=note,
         )
         self.emotions.save(state)

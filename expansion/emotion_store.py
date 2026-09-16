@@ -1,11 +1,11 @@
 """Persistent emotional state store (user data)."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Optional
 
 from expansion.emotion import EmotionalState, from_dict, new_emotional_state, to_dict
+from expansion.persist import atomic_write_json, read_json
 from expansion.state_layout import StateLayout, resolve_layout
 
 
@@ -18,10 +18,10 @@ class EmotionStore:
         return self.layout.user_emotions / f'{agent_id}.json'
 
     def get(self, agent_id: str) -> Optional[EmotionalState]:
-        path = self._path(agent_id)
-        if not path.is_file():
+        data = read_json(self._path(agent_id), default=None)
+        if data is None:
             return None
-        return from_dict(json.loads(path.read_text(encoding='utf-8')))
+        return from_dict(data)
 
     def get_or_create(self, agent_id: str, **kwargs) -> EmotionalState:
         existing = self.get(agent_id)
@@ -33,7 +33,7 @@ class EmotionStore:
 
     def save(self, state: EmotionalState) -> Path:
         path = self._path(state.agent_id)
-        path.write_text(json.dumps(to_dict(state), indent=2) + '\n', encoding='utf-8')
+        atomic_write_json(path, to_dict(state))
         return path
 
     def list_agent_ids(self) -> list[str]:

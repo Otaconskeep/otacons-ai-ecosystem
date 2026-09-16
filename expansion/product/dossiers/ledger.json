@@ -50,6 +50,14 @@
         "affects_operations": false
       },
       {
+        "kind": "anxiety",
+        "label": "continuity anxiety",
+        "intensity": 0.55,
+        "description": "Anxiety when continuity checks fail.",
+        "triggers": [],
+        "affects_operations": false
+      },
+      {
         "kind": "crutch",
         "label": "documentation/organization",
         "intensity": 0.7,

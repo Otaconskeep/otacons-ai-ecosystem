@@ -102,6 +102,8 @@ PROTECTED_PATHS = frozenset({
     '/api/plan',
     '/api/expansion/event',
     '/api/expansion/bootstrap',
+    '/api/expansion/jobs/create',
+    '/api/expansion/pages/register',
 })
 
 

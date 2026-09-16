@@ -401,6 +401,10 @@ class Handler(BaseHTTPRequestHandler):
                 })
             except Exception as exc:
                 self.send_json({'error': str(exc)}, 404)
+        elif path.startswith('/api/expansion/'):
+            from expansion.api import handle_expansion_get
+            if not handle_expansion_get(path, self.send_json):
+                self.send_json({'error': 'not found'}, 404)
         elif path == '/api/preferences':
             if not self._require_auth_if_needed():
                 return
@@ -565,26 +569,18 @@ class Handler(BaseHTTPRequestHandler):
                 }, 503)
         elif self.path == '/api/expansion/event':
             try:
-                from expansion.canonical_dossiers import get_canonical_dossier
-                from expansion.event_effects import emit_and_apply
-                from expansion.events import new_event
-                ev = new_event(
-                    data.get('event_type') or 'agent.message',
-                    actor=data.get('actor') or 'user',
-                    subject=data.get('subject') or '',
-                    payload=data.get('payload') or {},
-                )
-                result = emit_and_apply(
-                    ev, dossier_loader=get_canonical_dossier,
-                )
-                self.send_json({
-                    'ok': True,
-                    'event_id': result.event_id,
-                    'emotion_updates': result.emotion_updates,
-                    'relationship_updates': result.relationship_updates,
-                })
+                from expansion.api import handle_expansion_post
+                if not handle_expansion_post(self.path, data, self.send_json):
+                    self.send_json({'error': 'not found'}, 404)
             except Exception as exc:
                 self.send_json({'error': {'code': 'EVENT_FAILED', 'message': str(exc)}}, 400)
+        elif self.path in ('/api/expansion/jobs/create', '/api/expansion/pages/register'):
+            try:
+                from expansion.api import handle_expansion_post
+                if not handle_expansion_post(self.path, data, self.send_json):
+                    self.send_json({'error': 'not found'}, 404)
+            except Exception as exc:
+                self.send_json({'error': {'code': 'EXPANSION_POST_FAILED', 'message': str(exc)}}, 400)
         elif self.path == '/api/expansion/bootstrap':
             try:
                 from expansion.bootstrap import bootstrap_runtime_state

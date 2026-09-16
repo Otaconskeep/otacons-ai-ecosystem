@@ -119,15 +119,50 @@ async function showHome(){
         <p class="svc-desc">${escapeHtml(expAgents)}</p>
         <span class="svc-pill ${expReady?'ok':'warn'}">${expReady?'FOUNDATION READY':'PARTIAL'}</span>
       </button>
-      <button type="button" class="svc" onclick="showChat()">
-        <div class="svc-top"><div class="svc-ico">EM</div><div class="svc-name">Emotion Engine</div></div>
-        <p class="svc-desc">Persistent affect with provenance — not decorative meters.</p>
-        <span class="svc-pill ${emotionOk?'ok':'warn'}">${emotionOk?'READY':'NOT READY'}</span>
+      <button type="button" class="svc" onclick="showExpansionSurface('command')">
+        <div class="svc-top"><div class="svc-ico">CMD</div><div class="svc-name">Aria Command</div></div>
+        <p class="svc-desc">Roster, delegations, readiness, relationship shifts — coordination floor.</p>
+        <span class="svc-pill ok">ARIA</span>
       </button>
-      <button type="button" class="svc" onclick="showChat()">
+      <button type="button" class="svc" onclick="showExpansionSurface('war-room')">
+        <div class="svc-top"><div class="svc-ico">WR</div><div class="svc-name">War Room</div></div>
+        <p class="svc-desc">Active jobs, failures, decision queue — Vector ops / Aria command.</p>
+        <span class="svc-pill ok">JOBS</span>
+      </button>
+      <button type="button" class="svc" onclick="showExpansionSurface('intel')">
+        <div class="svc-top"><div class="svc-ico">INT</div><div class="svc-name">Intel / Continuity</div></div>
+        <p class="svc-desc">Memories, journals, living dossiers, relationship evidence — Ledger.</p>
+        <span class="svc-pill ok">LEDGER</span>
+      </button>
+      <button type="button" class="svc" onclick="showExpansionSurface('creative')">
+        <div class="svc-top"><div class="svc-ico">CRE</div><div class="svc-name">Creative Studio</div></div>
+        <p class="svc-desc">Creative queue and Studio readiness shell — Muse (heavy Studio later).</p>
+        <span class="svc-pill ok">MUSE</span>
+      </button>
+      <button type="button" class="svc" onclick="showExpansionSurface('ops')">
+        <div class="svc-top"><div class="svc-ico">OPS</div><div class="svc-name">Operations</div></div>
+        <p class="svc-desc">Alerts, security jobs, HA optional — Sentry.</p>
+        <span class="svc-pill ok">SENTRY</span>
+      </button>
+      <button type="button" class="svc" onclick="showExpansionSurface('reports')">
+        <div class="svc-top"><div class="svc-ico">RPT</div><div class="svc-name">Agent Reports</div></div>
+        <p class="svc-desc">Emotion, jobs, journal, diary, living observations with provenance.</p>
+        <span class="svc-pill ok">LIVE STATE</span>
+      </button>
+      <button type="button" class="svc" onclick="showExpansionSurface('rooms')">
+        <div class="svc-top"><div class="svc-ico">RM</div><div class="svc-name">Rooms / Pages</div></div>
+        <p class="svc-desc">Command, Intel, Creative, Ops + allowlisted Page Builder registry.</p>
+        <span class="svc-pill ok">REGISTRY</span>
+      </button>
+      <button type="button" class="svc" onclick="showExpansionSurface('relationships')">
         <div class="svc-top"><div class="svc-ico">REL</div><div class="svc-name">Relationships</div></div>
-        <p class="svc-desc">Directional bonds across the five-agent Keep.</p>
+        <p class="svc-desc">Directional matrix with WHY provenance — not a single unexplained score.</p>
         <span class="svc-pill ${relOk?'ok':'warn'}">${relOk?'READY':'NOT READY'}</span>
+      </button>
+      <button type="button" class="svc" onclick="showExpansionSurface('emotion')">
+        <div class="svc-top"><div class="svc-ico">EM</div><div class="svc-name">Emotion</div></div>
+        <p class="svc-desc">Real EmotionStore dimensions with clickable WHY.</p>
+        <span class="svc-pill ${emotionOk?'ok':'warn'}">${emotionOk?'READY':'NOT READY'}</span>
       </button>
       <button type="button" class="svc" onclick="showChat()">
         <div class="svc-top"><div class="svc-ico">CX</div><div class="svc-name">Multi-Agent Codec</div></div>
@@ -728,6 +763,103 @@ async function toggleRecording(){
 async function showNodes(){
   // Kept for welcome-step compatibility; Codec is primary.
   render();
+}
+
+async function showExpansionSurface(kind){
+  state.view='expansion';
+  setBodyMode('home');
+  let body='';
+  try{
+    if(kind==='war-room'){
+      const d=await apiGet('/api/expansion/war-room');
+      const rows=(d.active||[]).concat(d.failed||[]).slice(0,30);
+      body=`<h2>War Room</h2><p class=muted>Jobs/decisions — not infra telemetry.</p>`+
+        (rows.map(j=>`<div class=card><b>${escapeHtml(j.job_id)}</b> · ${escapeHtml(j.status)} · ${escapeHtml(j.assigned_agent)}<br>${escapeHtml(j.request||'')}</div>`).join('')||'<p class=muted>No jobs yet.</p>');
+    } else if(kind==='command'){
+      const d=await apiGet('/api/expansion/command');
+      body=`<h2>Aria Command Floor</h2><p class=muted>${escapeHtml(d.note||'')}</p>`+
+        `<h3>Roster</h3>`+(d.roster||[]).map(a=>`<div class=card><b>${escapeHtml(a.display_name)}</b> · ${escapeHtml(a.role)}<pre style="font-size:11px">${escapeHtml(JSON.stringify(a.emotion_highlights||{}))}</pre></div>`).join('')+
+        `<h3>Active jobs</h3>`+((d.active_jobs||[]).map(j=>`<div class=card>${escapeHtml(j.job_id)} → ${escapeHtml(j.assigned_agent)} · ${escapeHtml(j.status)}</div>`).join('')||'<p class=muted>None</p>');
+    } else if(kind==='intel'){
+      const d=await apiGet('/api/expansion/intel');
+      body=`<h2>Intel / Continuity</h2><p class=muted>${escapeHtml(d.note||'')}</p>`+
+        `<h3>JOURNAL timeline</h3>`+((d.journal_timeline||[]).slice(0,12).map(e=>`<div class=card><b>JOURNAL</b> ${escapeHtml(e.summary||'')}<br><span class=muted>${escapeHtml(e.agent_id)} · ${escapeHtml(e.event_type)}</span></div>`).join('')||'<p class=muted>Empty</p>')+
+        `<h3>Important memories</h3>`+((d.important_memories||[]).slice(0,8).map(m=>`<div class=card>${escapeHtml(m.agent_id)}: ${escapeHtml(m.content||'')}</div>`).join('')||'<p class=muted>None</p>');
+    } else if(kind==='creative'){
+      const d=await apiGet('/api/expansion/creative');
+      body=`<h2>Muse Creative Studio</h2><p class=muted>${escapeHtml(d.note||'')}</p>`+
+        `<p>Video Studio: ${escapeHtml(d.video_studio_readiness||'unknown')}</p>`+
+        ((d.recent_creative_jobs||[]).map(j=>`<div class=card>${escapeHtml(j.job_id)} · ${escapeHtml(j.status)} · ${escapeHtml(j.request||'')}</div>`).join('')||'<p class=muted>No creative jobs yet.</p>');
+    } else if(kind==='ops'){
+      const d=await apiGet('/api/expansion/ops');
+      const ha=d.home_assistant||{};
+      body=`<h2>Sentry Operations</h2>`+
+        `<p class=muted>Home Assistant: ${escapeHtml(ha.status||'unknown')} — ${escapeHtml(ha.note||'')}</p>`+
+        ((d.alerts||[]).map(j=>`<div class=card><b>ALERT</b> ${escapeHtml(j.job_id)} · ${escapeHtml(j.error||j.request||'')}</div>`).join('')||'<p class=muted>No failed security jobs.</p>');
+    } else if(kind==='reports'){
+      const d=await apiGet('/api/expansion/reports');
+      body=`<h2>Agent Reports</h2>`+(d.reports||[]).map(r=>{
+        const emo=Object.entries(r.emotion||{}).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([k,v])=>`${k}=${v}`).join(', ');
+        const j=(r.recent_journal||[])[0];
+        const diary=r.latest_diary;
+        return `<div class=card>
+          <b>${escapeHtml(r.display_name)}</b> — ${escapeHtml(r.role)} · ${escapeHtml(r.archetype||'')}
+          <p class=muted>Emotion: ${escapeHtml(emo||'—')}</p>
+          <p class=muted>Jobs active: ${(r.active_jobs||[]).length} · success ${(r.metrics&&r.metrics.success_rate!=null)?(r.metrics.success_rate*100).toFixed(0)+'%':'n/a'}</p>
+          <p><b>JOURNAL</b> ${escapeHtml((j&&j.summary)||'—')}</p>
+          <p><b>DIARY</b> ${escapeHtml((diary&&diary.text)||'—')}</p>
+          <button type=button class="cc-btn ghost" onclick="showEmotionWhy('${escapeHtml(r.agent_id)}','jealousy')">Emotion WHY</button>
+          <button type=button class="cc-btn ghost" onclick="showRelWhy('${escapeHtml(r.agent_id)}','muse')">Rel → Muse WHY</button>
+        </div>`;
+      }).join('')||'<p class=muted>No reports.</p>';
+    } else if(kind==='rooms'){
+      const d=await apiGet('/api/expansion/rooms');
+      body=`<h2>Room / Page Registry</h2>`+(d.rooms||[]).map(r=>
+        `<div class=card><b>${escapeHtml(r.name)}</b> <span class=muted>${escapeHtml(r.route)}</span><br>Owner: ${escapeHtml(r.owner_agent)} · ${escapeHtml(r.kind)}<br>${escapeHtml(r.description||'')}</div>`
+      ).join('');
+    } else if(kind==='relationships'){
+      const d=await apiGet('/api/expansion/relationships');
+      const focus=(d.matrix||[]).filter(x=>['aria','muse','ledger'].includes(x.source)&&['aria','muse','ledger','user_primary'].includes(x.target)).slice(0,18);
+      body=`<h2>Directional Relationships</h2>`+focus.map(x=>
+        `<div class=card><b>${escapeHtml(x.source)} → ${escapeHtml(x.target)}</b> · ${escapeHtml(x.label)}
+        <p class=muted>${escapeHtml(x.narrative||'')}</p>
+        <pre style="font-size:11px;white-space:pre-wrap">${escapeHtml(JSON.stringify(x.dimensions,null,2))}</pre>
+        <button type=button class="cc-btn ghost" onclick="showRelWhy('${escapeHtml(x.source)}','${escapeHtml(x.target)}')">WHY</button></div>`
+      ).join('');
+    } else if(kind==='emotion'){
+      const agents=(state.roster||[]).map(a=>a.id);
+      const blocks=[];
+      for(const id of agents){
+        const d=await apiGet('/api/expansion/emotion/'+id);
+        const top=Object.entries(d.dimensions||{}).sort((a,b)=>b[1]-a[1]).slice(0,6);
+        blocks.push(`<div class=card><b>${escapeHtml(id)}</b><pre style="font-size:11px">${escapeHtml(top.map(([k,v])=>k+': '+v).join('\\n'))}</pre>
+          <button type=button class="cc-btn ghost" onclick="showEmotionWhy('${escapeHtml(id)}','jealousy')">jealousy WHY</button>
+          <button type=button class="cc-btn ghost" onclick="showEmotionWhy('${escapeHtml(id)}','stress')">stress WHY</button></div>`);
+      }
+      body=`<h2>Emotional State</h2>`+blocks.join('');
+    } else {
+      body='<p class=muted>Unknown surface.</p>';
+    }
+  }catch(e){ body=`<p class=muted>Failed to load: ${escapeHtml(String(e))}</p>`; }
+
+  appRoot().innerHTML=`<div class="home"><header class="home-header"><div>
+    <p class="home-kicker">Keep Expansion</p><h1 class="home-greeting">${escapeHtml(kind)}</h1></div>
+    <div class="home-meta"><button type=button class="cc-btn ghost" onclick="showHome()">Home</button>
+    <button type=button class="cc-btn" onclick="showChat()">Codec</button></div></header>
+    <section class="home-group">${body}</section>
+    <div id="exp-why" class="card" style="display:none;margin:16px"></div>
+  </div>`;
+}
+
+async function showEmotionWhy(agentId, dim){
+  const d=await apiGet(`/api/expansion/emotion/${agentId}/why/${dim}`);
+  const el=document.getElementById('exp-why');
+  if(el){ el.style.display='block'; el.innerHTML=`<b>${escapeHtml(agentId)}.${escapeHtml(dim)} = ${d.value}</b><pre style="font-size:11px;white-space:pre-wrap">${escapeHtml(JSON.stringify(d,null,2))}</pre>`; }
+}
+async function showRelWhy(src, dst){
+  const d=await apiGet(`/api/expansion/relationships/${src}/${dst}/why`);
+  const el=document.getElementById('exp-why');
+  if(el){ el.style.display='block'; el.innerHTML=`<b>${escapeHtml(src)} → ${escapeHtml(dst)}</b><pre style="font-size:11px;white-space:pre-wrap">${escapeHtml(JSON.stringify(d,null,2))}</pre>`; }
 }
 
 (async()=>{

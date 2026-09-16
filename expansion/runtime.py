@@ -108,6 +108,11 @@ class ExpansionRuntime:
         for rel in self.relationships.all_for(agent_id):
             if rel.source_id != agent_id:
                 continue
+            # Prefer owner + triangle peers in bounded context
+            if rel.target_id not in (
+                'user_primary', 'aria', 'muse', 'ledger', 'vector', 'sentry',
+            ):
+                continue
             rels.append({
                 'target': rel.target_id,
                 'dimensions': {k: round(v, 4) for k, v in rel.dimensions.items()},
@@ -123,7 +128,45 @@ class ExpansionRuntime:
              'description': v.description}
             for v in dossier.vulnerabilities.items
         ]
-        # Dominant emotion dims for prompt brevity
+        # Living dossier (bounded)
+        living_lines = []
+        try:
+            from expansion.living_dossier import LivingDossierStore
+            living = LivingDossierStore(self.layout).load(agent_id)
+            for o in living.observations[:5]:
+                living_lines.append(f"- {o.category}: {o.value} (conf={o.confidence:.2f})")
+        except Exception:
+            living_lines = []
+        # Active jobs (bounded)
+        job_lines = []
+        try:
+            from expansion.jobs import JobStore
+            for j in JobStore(self.layout).list(agent_id=agent_id, limit=5):
+                if j.status in ('QUEUED', 'ASSIGNED', 'RUNNING', 'WAITING', 'BLOCKED'):
+                    job_lines.append(f"- {j.job_id} [{j.status}] {j.request[:80]}")
+        except Exception:
+            pass
+        # Recent journal facts (bounded)
+        journal_lines = []
+        try:
+            from expansion.journal import JournalStore
+            for e in JournalStore(self.layout).recent(agent_id=agent_id, limit=3):
+                journal_lines.append(f"- {e.summary}")
+        except Exception:
+            pass
+        # Vulnerability activations
+        vuln_act_lines = []
+        try:
+            from expansion.vulnerability_runtime import VulnerabilityRuntime
+            acts = VulnerabilityRuntime(self.layout).apply_decay(agent_id).activations
+            for label, raw in list(acts.items())[:5]:
+                if float(raw.get('intensity') or 0) >= 0.25:
+                    vuln_act_lines.append(
+                        f"- {label}: intensity={float(raw['intensity']):.2f}"
+                    )
+        except Exception:
+            pass
+
         top_emotion = sorted(
             emotion.dimensions.items(), key=lambda kv: kv[1], reverse=True,
         )[:6]
@@ -146,7 +189,11 @@ class ExpansionRuntime:
             f"Communication: {dossier.character.communication_style}\n"
             f"Current emotional highlights: {emotion_summary}\n"
             f"Vulnerabilities (influence tone, not competence):\n" + '\n'.join(vuln_lines) + '\n'
+            f"Active vulnerability pressure:\n" + '\n'.join(vuln_act_lines or ['- none elevated']) + '\n'
             f"Directional relationships:\n" + '\n'.join(rel_lines or ['- (none)']) + '\n'
+            f"Living observations:\n" + '\n'.join(living_lines or ['- none yet']) + '\n'
+            f"Active jobs:\n" + '\n'.join(job_lines or ['- none']) + '\n'
+            f"Recent journal facts:\n" + '\n'.join(journal_lines or ['- none']) + '\n'
             f"Relevant memory:\n" + '\n'.join(mem_lines) + '\n'
             f"Stress behavior: {dossier.stress.stress_behavior}\n"
         )
@@ -173,6 +220,7 @@ class ExpansionRuntime:
                 'role': dossier.character.role,
                 'archetype': dossier.character.archetype,
                 'values': list(dossier.character.values),
+                'living_observations': living_lines,
             },
             system_prompt=system_prompt,
             provenance_hints=provenance_hints,

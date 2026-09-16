@@ -94,18 +94,50 @@ class EmotionalState:
     def explain(self, dimension: str, limit: int = 5) -> dict:
         """WHY is this dimension at its current value?"""
         hits = []
+        event_contribution = 0.0
         for p in reversed(self.provenance):
             d = p.get('deltas') if isinstance(p, dict) else getattr(p, 'deltas', {})
             if dimension in (d or {}):
                 hits.append(p if isinstance(p, dict) else asdict(p))
+                event_contribution += float((d or {}).get(dimension) or 0)
             if len(hits) >= limit:
+                break
+        baseline = float(self.baseline.get(dimension, _NEUTRAL.get(dimension, 0.25)))
+        value = float(self.dimensions.get(dimension, 0.0))
+        vuln_mod = 0.0
+        rel_mod = 0.0
+        for h in hits:
+            vm = h.get('vulnerability_modifier') or {}
+            if isinstance(vm, dict) and dimension in vm:
+                vuln_mod = float(vm[dimension])
+                break
+            if isinstance(vm, (int, float)):
+                vuln_mod = float(vm)
+                break
+        for h in hits:
+            rm = h.get('relationship_modifier') or {}
+            if isinstance(rm, dict) and dimension in rm:
+                rel_mod = float(rm[dimension])
+                break
+            if isinstance(rm, (int, float)):
+                rel_mod = float(rm)
                 break
         return {
             'agent_id': self.agent_id,
             'dimension': dimension,
-            'value': round(float(self.dimensions.get(dimension, 0.0)), 4),
-            'baseline': round(float(self.baseline.get(dimension, _NEUTRAL.get(dimension, 0.25))), 4),
+            'value': round(value, 4),
+            'baseline': round(baseline, 4),
             'sensitivity': round(float(self.sensitivity.get(dimension, 1.0)), 4),
+            'contributions': {
+                'baseline': round(baseline, 4),
+                'event_contribution': round(event_contribution, 4),
+                'relationship_contribution': round(rel_mod, 4),
+                'vulnerability_modifier': round(vuln_mod, 4),
+                'recovery_decay_note': (
+                    'Decay toward baseline applied between events via apply_decay half-lives.'
+                ),
+                'current_result': round(value, 4),
+            },
             'sources': hits,
         }
 
@@ -187,6 +219,8 @@ def apply_emotion_deltas(
     personality_modifiers = personality_modifiers or {}
     relationship_modifiers = relationship_modifiers or {}
     applied = {}
+    vuln_mods = {}
+    rel_mods = {}
     for dim, delta in raw_deltas.items():
         if dim not in EMOTION_DIMENSIONS:
             continue
@@ -196,6 +230,10 @@ def apply_emotion_deltas(
         final = float(delta) * sens * pmod * rmod
         state.dimensions[dim] = float(state.dimensions.get(dim, 0.0)) + final
         applied[dim] = round(final, 6)
+        if abs(pmod - 1.0) > 0.001:
+            vuln_mods[dim] = round(pmod, 4)
+        if abs(rmod - 1.0) > 0.001:
+            rel_mods[dim] = round(rmod, 4)
 
     state.clamp()
     state.last_event_at = now
@@ -207,6 +245,10 @@ def apply_emotion_deltas(
         at=now,
         note=note,
     ))
+    if vuln_mods:
+        entry['vulnerability_modifier'] = vuln_mods
+    if rel_mods:
+        entry['relationship_modifier'] = rel_mods
     state.provenance = list(state.provenance[-49:]) + [entry]
     return state
 

@@ -52,6 +52,14 @@
         "affects_operations": false
       },
       {
+        "kind": "blind_spot",
+        "label": "unseen perimeter gaps",
+        "intensity": 0.65,
+        "description": "Known tendency to over-index on faint signals after a miss.",
+        "triggers": [],
+        "affects_operations": false
+      },
+      {
         "kind": "crutch",
         "label": "monitoring",
         "intensity": 0.75,
@@ -64,6 +72,14 @@
         "label": "hypervigilance",
         "intensity": 0.7,
         "description": "Can escalate concern faster than the room needs.",
+        "triggers": [],
+        "affects_operations": false
+      },
+      {
+        "kind": "anxiety",
+        "label": "missed alert anxiety",
+        "intensity": 0.6,
+        "description": "Anxiety spikes after late or missed alerts.",
         "triggers": [],
         "affects_operations": false
       }

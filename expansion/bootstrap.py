@@ -102,6 +102,11 @@ def bootstrap_runtime_state(layout: Optional[StateLayout] = None) -> dict:
 
     relationships.ensure_roster_graph(agent_ids)
 
+    from expansion.migrations import apply_pending
+    from expansion.rooms import RoomRegistry
+    apply_pending(layout)
+    RoomRegistry(layout).seed_defaults()
+
     # Persist enriched agents
     for agent in roster:
         path = layout.user_agents / f'default-{agent.agent_id}.json'

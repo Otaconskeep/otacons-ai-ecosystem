@@ -22,8 +22,11 @@ class VulnerabilityKind(str, Enum):
     ANXIETY = 'anxiety'
     INSECURITY = 'insecurity'
     SELF_CONSCIOUS = 'self_conscious'
+    SELF_CONSCIOUS_AREA = 'self_conscious_area'  # P2 alias / required surface name
     AVOIDANCE = 'avoidance'
+    AVOIDANCE_BEHAVIOR = 'avoidance_behavior'  # P2 alias / required surface name
     SHAME_POINT = 'shame_point'
+    BLIND_SPOT = 'blind_spot'
     SECRET = 'secret'
     BAD_HABIT = 'bad_habit'
     COPING_MECHANISM = 'coping_mechanism'
