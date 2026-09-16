@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from expansion.canonical_dossiers import all_canonical_dossiers, get_canonical_dossier
-from expansion.dossier import to_dict, validate_canonical_dossier
+from expansion.canonical_dossiers import get_canonical_dossier
+from expansion.dossier import validate_canonical_dossier
 from expansion.emotion_store import EmotionStore
 from expansion.events import EventBus, new_event
 from expansion.living_dossier_init import init_empty_living_dossier
@@ -19,18 +19,25 @@ from expansion.state_layout import StateLayout, resolve_layout
 
 
 def write_canonical_dossiers(layout: Optional[StateLayout] = None) -> list[Path]:
+    """Validate that product dossier JSON exists — do not regenerate from Python.
+
+    Canonical source of truth is expansion/product/dossiers/*.json (under the
+    resolved product_root). Bootstrap/provision only confirms they load cleanly.
+    """
+    from expansion.canonical_dossiers import (
+        clear_dossier_cache,
+        get_canonical_dossier,
+        list_product_dossier_paths,
+    )
     layout = layout or resolve_layout()
-    # Canonical dossiers are product data — write under product_agents sibling
-    out_dir = layout.product_root / 'product' / 'dossiers'
-    out_dir.mkdir(parents=True, exist_ok=True)
-    paths = []
-    for agent_id, dossier in all_canonical_dossiers().items():
+    clear_dossier_cache()
+    paths = list_product_dossier_paths(layout)
+    for path in paths:
+        agent_id = path.stem
+        dossier = get_canonical_dossier(agent_id, layout)
         errors = validate_canonical_dossier(dossier)
         if errors:
             raise ValueError(f'{agent_id}: {errors}')
-        path = out_dir / f'{agent_id}.json'
-        path.write_text(json.dumps(to_dict(dossier), indent=2, default=str) + '\n', encoding='utf-8')
-        paths.append(path)
     return paths
 
 

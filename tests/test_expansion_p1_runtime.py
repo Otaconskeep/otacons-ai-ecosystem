@@ -63,6 +63,19 @@ class TestCanonicalDossiers(P1LayoutCase):
         self.assertIn('compulsion', kinds)
         self.assertGreaterEqual(d.social.jealousy_sensitivity, 0.8)
 
+    def test_product_json_is_canonical_source(self):
+        from expansion.canonical_dossiers import (
+            CANONICAL_AGENT_IDS, dossier_path, list_product_dossier_paths,
+        )
+        paths = list_product_dossier_paths(self.layout)
+        self.assertEqual(len(paths), 5)
+        for aid in CANONICAL_AGENT_IDS:
+            self.assertTrue(dossier_path(aid, self.layout).is_file())
+            # Loader must not invent lore — payload agent_id matches file
+            d = get_canonical_dossier(aid, self.layout)
+            self.assertEqual(d.agent_id, aid)
+            self.assertTrue(d.character.role)
+
 
 class TestMotionAndBootstrap(P1LayoutCase):
     def test_motion_manifests_validate(self):

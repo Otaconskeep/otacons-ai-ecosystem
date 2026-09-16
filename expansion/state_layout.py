@@ -30,6 +30,7 @@ class StateLayout:
     product_agents: Path
     product_presets: Path
     product_assets: Path
+    product_dossiers: Path
     product_manifest: Path
 
     # User (mutable)
@@ -123,6 +124,7 @@ def resolve_layout(product_root: Path | None = None) -> StateLayout:
         product_agents=product / 'product' / 'agents',
         product_presets=product / 'product' / 'presets',
         product_assets=product / 'product' / 'assets',
+        product_dossiers=product / 'product' / 'dossiers',
         product_manifest=product / 'product' / 'PACKAGE_MANIFEST.json',
         user_config_root=cfg,
         user_data_root=data,
