@@ -27,6 +27,23 @@ class STTTests(unittest.TestCase):
 if __name__=='__main__': unittest.main()
 
 class VoiceLoopTests(unittest.TestCase):
+ def setUp(self):
+  import os
+  # Architecture unit test: intentionally exercises TestTTSProvider end to
+  # end (STT -> chat -> memory -> TTS), same allowance test_voice.py uses.
+  # Without this, synthesize_voice() now hard-blocks the test double (the
+  # fix for the real silent-beep bug) and this test fails on every install,
+  # since it's part of the installer's own default RUN_TESTS=1 gate.
+  self._prev_allow_test_tts = os.environ.get('OTACON_ALLOW_TEST_TTS')
+  os.environ['OTACON_ALLOW_TEST_TTS'] = '1'
+
+ def tearDown(self):
+  import os
+  if self._prev_allow_test_tts is None:
+   os.environ.pop('OTACON_ALLOW_TEST_TTS', None)
+  else:
+   os.environ['OTACON_ALLOW_TEST_TTS'] = self._prev_allow_test_tts
+
  def test_stt_chat_memory_tts_path(self):
   import tempfile
   from pathlib import Path
