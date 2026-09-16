@@ -948,9 +948,46 @@ phase_privileged() {
     fi
     stage "6.3b" "PASS" "Ollama present"
   fi
+
   mkdir -p "$PRIV_MARKER_DIR"
   printf 'user=%s\nts=%s\n' "$TARGET_USER" "$(date -Iseconds)" > "$PRIV_MARKER"
   chmod 644 "$PRIV_MARKER"
+
+  # Voice Trainer needs apt/docker — must run as root on Windows (no NOPASSWD:ALL).
+  # Running it in the user phase hangs forever on `sudo` password with no TTY.
+  if [[ "$INSTALL_VOICE_TRAINER" == "1" ]]; then
+    if command_exists nvidia-smi && nvidia-smi >/dev/null 2>&1; then
+      local user_home vt_dir vt_rc=0
+      user_home="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+      [[ -n "$user_home" && -d "$user_home" ]] || die "Cannot resolve home for $TARGET_USER (Voice Trainer)"
+      vt_dir="$user_home/otacon-voice-trainer"
+      stage "6.3v" "START" "Installing Genome Voice Trainer as root into $vt_dir"
+      export OTACON_VT_DIR="$vt_dir"
+      export OTACON_VT_SKIP_UI=1
+      set +e
+      run_watched 3600 "Genome Voice Trainer install" --soft -- bash -c \
+        'curl -fsSL --connect-timeout 30 --max-time 120 "$1" | bash' \
+        bash "$VOICE_TRAINER_INSTALLER_URL"
+      vt_rc=$?
+      set -e
+      if [[ "$vt_rc" -eq 0 ]]; then
+        chown -R "$TARGET_USER":"$TARGET_USER" "$vt_dir" 2>/dev/null || true
+        usermod -aG docker "$TARGET_USER" 2>/dev/null || true
+        printf 'voice_trainer=ok\n' >>"$PRIV_MARKER"
+        stage "6.3v" "PASS" "Genome Voice Trainer installed for $TARGET_USER"
+        ok "Genome Voice Trainer installed (privileged phase; no sudo password hang)"
+      else
+        printf 'voice_trainer=fail rc=%s\n' "$vt_rc" >>"$PRIV_MARKER"
+        stage "6.3v" "FAIL" "Voice Trainer exit=$vt_rc (optional)"
+        warn "Genome Voice Trainer failed in privileged phase (exit $vt_rc) — Otacon Core continues; retry later as root."
+      fi
+    else
+      printf 'voice_trainer=skipped no-gpu\n' >>"$PRIV_MARKER"
+      stage "6.3v" "INFO" "Voice Trainer skipped — no usable NVIDIA GPU"
+      warn "Voice Trainer skipped in privileged phase — nvidia-smi not usable"
+    fi
+  fi
+
   stage "6.0" "PASS" "Privileged bootstrap complete"
   ok "Privileged bootstrap complete (no sudoers changes were made)"
   emit_phase_exit 0 "privileged-ok"
@@ -1802,6 +1839,21 @@ if [[ "$INSTALL_VOICE_TRAINER" == "1" ]]; then
     warn "Voice Trainer SKIPPED — ${VOICE_TRAINER_SKIP_REASON}."
     warn "  GPU features require NVIDIA drivers + nvidia-smi. Core install continues."
     warn "  Later (on a GPU host): curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
+    VOICE_TRAINER_OK=0
+  elif [[ -f "$PRIV_MARKER" ]] && grep -q '^voice_trainer=ok' "$PRIV_MARKER" 2>/dev/null; then
+    ok "Genome Voice Trainer already installed in privileged phase"
+    VOICE_TRAINER_OK=1
+  elif [[ -d "${HOME}/otacon-voice-trainer" ]] && docker image inspect piper-voice-trainer:gpu >/dev/null 2>&1; then
+    ok "Genome Voice Trainer already present ($HOME/otacon-voice-trainer)"
+    VOICE_TRAINER_OK=1
+  elif [[ "${EUID:-$(id -u)}" -ne 0 ]] && ! sudo -n true >/dev/null 2>&1; then
+    # User phase on Windows has no TTY and no NOPASSWD:ALL — never call VT here
+    # (its old installer hung forever on `sudo apt-get`). Privileged phase owns apt.
+    VOICE_TRAINER_SKIPPED=1
+    VOICE_TRAINER_SKIP_REASON="needs root apt/docker (run via privileged phase or: wsl -u root)"
+    warn "Voice Trainer SKIPPED in user phase — ${VOICE_TRAINER_SKIP_REASON}."
+    warn "  OtaconsKeep Setup installs it during the root bootstrap when a GPU is present."
+    warn "  Manual: wsl.exe -u root -- bash -lc 'OTACON_VT_DIR=$HOME/otacon-voice-trainer OTACON_VT_SKIP_UI=1 curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash'"
     VOICE_TRAINER_OK=0
   else
     log "Voice Trainer: installing Genome GPU Piper (included with Otacon)"

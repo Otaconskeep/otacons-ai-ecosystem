@@ -833,6 +833,10 @@ env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
     $lastProgress = Get-Date
     $lastByteLen = 0L
     $currentSub = "phase $Phase starting"
+    # Overall timeout is per-phase, not from the start of Stage 6. Otherwise a
+    # long privileged/user run (apt + voice trainer) immediately kills finalize
+    # whose OverallTimeoutMin is only 15 minutes wall-clock from Stage 6 start.
+    $phaseStarted = Get-Date
 
     while (-not $proc.HasExited) {
         $recent = @()
@@ -869,11 +873,11 @@ env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
         Show-Stage6Panel -Started $Started -Substep ("[{0}] {1}" -f $Phase, $currentSub) -RecentLines $recent `
             -LastProgress $lastProgress -GpuWin $GpuWin -GpuWsl $GpuWsl
 
-        $elapsedMin = ((Get-Date) - $Started).TotalMinutes
+        $elapsedMin = ((Get-Date) - $phaseStarted).TotalMinutes
         $stallMin = ((Get-Date) - $lastProgress).TotalMinutes
         if ($elapsedMin -ge $OverallTimeoutMin) {
             try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-            Write-KeepLog "stage6 overall timeout ${OverallTimeoutMin}m phase=$Phase" -Level "ERROR" -Stage "INSTALLING_OTACON"
+            Write-KeepLog "stage6 phase timeout ${OverallTimeoutMin}m phase=$Phase (phase-local clock)" -Level "ERROR" -Stage "INSTALLING_OTACON"
             return 124
         }
         if ($stallMin -ge $StallTimeoutMin) {
