@@ -81,7 +81,7 @@ async function showHome(){
   appRoot().innerHTML=`<div class="home">
   <header class="home-header">
     <div>
-      <p class="home-kicker">Otaconskeep · Lite</p>
+      <p class="home-kicker">Otaconskeep · Lite · build 79ef4f4</p>
       <h1 class="home-greeting">Otacon Command Center</h1>
     </div>
     <div class="home-meta">
