@@ -276,14 +276,68 @@ die_with_log_tail() {
 # Best-effort primary broken package name for structured failure UI.
 dpkg_primary_broken_package() {
   local pkg=""
+  # Query the human-readable Status field, not Status-Abbrev: a
+  # reinst-required package's abbrev is 3 characters (e.g. "iHR"), which the
+  # old 2-char-anchored regex here never matched -- it silently fell through
+  # to the generic "(see dpkg --audit / half-state lines above)" text even
+  # though dpkg_check_status_anomalies, querying the same Status field
+  # directly, had already identified the package correctly. This reuses that
+  # proven-correct query instead of a second, narrower one.
   if command_exists dpkg-query; then
-    pkg="$($SUDO dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 2>/dev/null \
-      | awk '/^[a-zA-Z]?[UFH] / { print $2; exit }' || true)"
+    pkg="$($SUDO dpkg-query -W -f='${Status}\t${Package}\n' 2>/dev/null \
+      | awk -F'\t' '$1 ~ /half-installed|half-configured|unpacked|reinstreq/ { print $2; exit }' || true)"
   fi
   if [[ -z "$pkg" ]]; then
-    pkg="$($SUDO dpkg --audit 2>&1 | awk '/^[[:alnum:].+-]+$/ { print; exit }' || true)"
+    # dpkg --audit's real format is a leading space, then "name[:arch]",
+    # then a space and a free-text description on the same line -- not a
+    # bare package name alone on its own line. Match that shape and strip
+    # any :arch suffix.
+    pkg="$($SUDO dpkg --audit 2>&1 \
+      | grep -E '^ [a-zA-Z0-9][a-zA-Z0-9.+-]*(:[a-zA-Z0-9]+)? ' \
+      | head -1 | awk '{print $1}' | cut -d: -f1 || true)"
   fi
   printf '%s\n' "${pkg:-}"
+}
+
+# Packages dpkg has explicitly flagged as needing reinstallation -- a
+# distinct, narrower condition than half-installed/half-configured/unpacked.
+# dpkg --configure -a deliberately skips these by design (reconfiguring
+# alone cannot fix a package dpkg considers reinstall-required), which is
+# why plain configure+fix-broken passes can legitimately report success
+# (0 upgraded, 0 newly installed, 0 to remove) while this class of package
+# stays broken. The fix is an explicit reinstall, not more configure passes.
+dpkg_reinstreq_packages() {
+  if ! command_exists dpkg-query; then
+    return 0
+  fi
+  $SUDO dpkg-query -W -f='${Status}\t${Package}\n' 2>/dev/null \
+    | awk -F'\t' '$1 ~ /reinstreq/ { print $2 }'
+}
+
+# Explicitly reinstall any reinst-required package(s). Returns 1 (nothing to
+# do) when none exist, so callers can skip straight to the normal
+# configure/fix-broken path without wasting a step.
+dpkg_reinstall_reinstreq() {
+  local repair_log="$1"
+  local pkgs
+  pkgs="$(dpkg_reinstreq_packages)"
+  if [[ -z "$pkgs" ]]; then
+    return 1
+  fi
+  log "dpkg reports reinstall-required package(s): $(printf '%s' "$pkgs" | tr '\n' ' ') -- dpkg --configure -a cannot fix this by design; reinstalling explicitly"
+  local rc=0
+  set +e
+  # shellcheck disable=SC2086
+  run_watched 300 "apt-get install --reinstall" --soft -- bash -c '
+    set -o pipefail
+    logf="$1"; shift
+    "$@" 2>&1 | tee -a "$logf"
+    exit "${PIPESTATUS[0]}"
+  ' bash "$repair_log" $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+    apt-get install --reinstall -y $pkgs
+  rc=$?
+  set -e
+  return "$rc"
 }
 
 # ------------------------------------------------------------------------------
@@ -402,7 +456,7 @@ dpkg_check_status_anomalies() {
     out="$($SUDO dpkg-query -W -f='${Status}\t${Package}\n' 2>/dev/null \
       | awk -F'\t' '
           $1 ~ /half-installed|half-configured|unpacked/ { print; next }
-          $1 ~ /reinst-required/ { print; next }
+          $1 ~ /reinstreq/ { print; next }
         ' || true)"
   fi
   if [[ -n "$out" ]]; then
@@ -514,6 +568,10 @@ repair_interrupted_dpkg() {
       die_with_log_tail \
         "dpkg --configure -a failed with exit $cfg_rc while repairing interrupted package state${pkg:+ (package: $pkg)}. Fix the dpkg error below, then rerun Setup (no manual steps expected for the common WSL interrupt case)." \
         "$repair_log" 80 43
+    fi
+
+    if dpkg_reinstall_reinstreq "$repair_log"; then
+      stage "6.3r" "INFO" "reinstalled reinstreq package(s) (attempt $attempt/2)"
     fi
 
     stage "6.3r" "INFO" "apt-get -f install -y (attempt $attempt/2)"
