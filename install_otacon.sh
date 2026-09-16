@@ -1884,6 +1884,7 @@ Wants=ollama.service otacon-tts.service
 Type=simple
 User=$run_user
 WorkingDirectory=$INSTALL_DIR
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wsl/lib
 Environment=PYTHONPATH=$INSTALL_DIR
 Environment=OTACON_HOST=$CHAT_HOST
 Environment=OTACON_PORT=$CHAT_PORT

@@ -18,11 +18,21 @@ def detect():
   free=round(shutil.disk_usage(Path.home()).free/1024**3,1)
   ram=round(int(next(x for x in open('/proc/meminfo') if x.startswith('MemTotal')).split()[1])/1024**2,1)
  g=[]; gpu_status='unavailable'; gpu_message='NVIDIA inspection tool is unavailable in this environment.'
- smi=shutil.which('nvidia-smi')
+ # shutil.which() only searches $PATH, which a systemd-managed service does
+ # NOT inherit from the interactive login shell that originally ran the
+ # installer. On WSL2 specifically, nvidia-smi lives under /usr/lib/wsl/lib,
+ # a directory only an interactive shell's PATH includes -- so the same
+ # machine reports a real GPU when install_otacon.sh's bash-level check
+ # runs, then reports "unavailable" the moment this Python scan runs inside
+ # the systemd service. Check a short list of known-good absolute paths as
+ # a fallback before giving up.
+ smi=shutil.which('nvidia-smi') or next((p for p in (
+  '/usr/lib/wsl/lib/nvidia-smi', '/usr/bin/nvidia-smi', '/usr/local/bin/nvidia-smi',
+ ) if os.path.isfile(p)), None)
  if smi:
   gpu_status='none'; gpu_message='No NVIDIA GPUs were reported.'
   try:
-   out=subprocess.check_output(['nvidia-smi','--query-gpu=name,memory.total','--format=csv,noheader,nounits'],text=True,timeout=5)
+   out=subprocess.check_output([smi,'--query-gpu=name,memory.total','--format=csv,noheader,nounits'],text=True,timeout=5)
    for i,line in enumerate(out.splitlines()):
     n,m=[x.strip() for x in line.split(',',1)]; v=round(float(m)/1024,1); g.append(GPU(f'gpu_{i+1:03d}','nvidia',n,v,capability(v)))
    gpu_status='detected' if g else 'none'
