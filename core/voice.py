@@ -100,6 +100,18 @@ CATALOG: tuple[VoiceProfile, ...] = (
         status_hint=CATALOG_AVAILABLE,
     ),
     VoiceProfile(
+        'voice_aria',
+        'Aria',
+        'piper',
+        'en_US-amy-medium',
+        language='en-US',
+        synthesis={'length_scale': 1.05, 'noise_scale': 0.75, 'noise_w': 0.85},
+        license='MIT (Piper / rhasspy voice models — see upstream voice LICENSE)',
+        source='https://github.com/rhasspy/piper',
+        fixture=False,
+        status_hint=CATALOG_AVAILABLE,
+    ),
+    VoiceProfile(
         'en_US-lessac-medium',
         'Lessac (US English, medium)',
         'piper',

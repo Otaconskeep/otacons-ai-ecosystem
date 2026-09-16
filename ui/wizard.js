@@ -1,4 +1,4 @@
-let state={step:0,scan:null,name:'Billy',features:['chat','memory','voice'],config:null,storage:null,conversation:null,voiceId:'voice_001',autoSpeak:false,voices:[],capabilities:null,currentAudio:null,speakingMsg:null,recorder:null,recordingState:'MIC_READY',testMode:window.__OTACON_TEST_MODE__===true};
+let state={step:0,scan:null,name:'Aria',features:['chat','memory','voice'],config:null,storage:null,conversation:null,voiceId:'voice_aria',autoSpeak:false,voices:[],capabilities:null,currentAudio:null,speakingMsg:null,recorder:null,recordingState:'MIC_READY',testMode:window.__OTACON_TEST_MODE__===true,codecMode:'idle',codecBooted:false,lastModel:null};
 const page=document.getElementById('page');
 const labels=['Welcome','System Scan','Hardware Recommendation','Storage','Agent Setup','Features','Review','Finish'];
 
@@ -47,7 +47,7 @@ function render(){
   if(s===1) page.innerHTML='<p>Detect your computer, GPUs, storage, and available capacity.</p><button onclick="scan()">Scan My System</button>';
   if(s===2){let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles; page.innerHTML=`<div class=card>System: ${h.os}<br>CPU: ${h.cpu.model} (${h.cpu.cores} cores)<br>Memory: ${h.ram_gb} GB</div>`+(h.gpus.length?h.gpus.map(x=>`<div class=card>${x.model} — ${x.vram_gb} GB VRAM — ${x.capability}</div>`).join(''):'<div class=card>CPU fallback (no GPU detected)</div>')+`<p class=muted>Recommended primary: ${g.primary_gpu}</p><button onclick="next()">Use Recommended Setup</button>`;}
   if(s===3){let v=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}; page.innerHTML=`<div class=card><b>Recommended storage</b><br>${v.path||'Unavailable'}<br>${v.free_gb||0} GB free</div><button onclick="next()">Use Recommended Storage</button>`;}
-  if(s===4) page.innerHTML=agentSetupHtml();
+  if(s===4){ page.innerHTML=agentSetupHtml(); updateSetupAvatar(); }
   if(s===5) page.innerHTML=featuresHtml()+'<button onclick="setFeatures()">Continue</button>';
   if(s===6) page.innerHTML=`<div class=card>Agent: ${state.name}<br>Voice: ${voiceLabel(state.voiceId)}<br>Features: ${state.features.join(', ')}<br>Storage: ${(state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}).path||'Unavailable'}</div><button onclick="build()">Create Configuration</button>`;
   if(s===7) page.innerHTML=`<p>${state.name} is configured.</p><p class=muted>Open chat to talk and use voice playback.</p><div class=card>${state.config?.saved||''}</div><button onclick="showChat()">Open Chat</button>`;
@@ -79,12 +79,22 @@ function voiceLabel(id){
 }
 function agentSetupHtml(){
   let opts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}${v.fixture?' (test)':''}</option>`).join('');
-  return `<label>Agent name<br><input id=name value="${state.name||'Billy'}"></label>
-<label>Voice<br><select id=voiceSelect>${opts||'<option value="voice_001">Warm Male</option>'}</select></label>
-<button type=button onclick="previewSelectedVoice()">Preview</button>
-<p class=muted id=previewStatus></p>
+  return `<div class="setup-avatar-row">
+  <img id=setupAvatar class=setup-avatar alt="Agent portrait">
+  <div>
+    <label>Agent name<br><input id=name value="${state.name||'Aria'}"></label>
+    <label>Voice<br><select id=voiceSelect onchange="updateSetupAvatar()">${opts||'<option value="voice_aria">Aria</option>'}</select></label>
+    <button type=button onclick="previewSelectedVoice()">Preview</button>
+    <p class=muted id=previewStatus></p>
+  </div>
+</div>
 <label>Role<br><input value="Primary Assistant" disabled></label>
 <button onclick="setName()">Continue</button>`;
+}
+function updateSetupAvatar(){
+  const sel=document.getElementById('voiceSelect'); const vid=sel?sel.value:state.voiceId;
+  const av=document.getElementById('setupAvatar'); if(!av) return;
+  if(vid==='voice_aria'){ av.src='/assets/aria/aria.webp'; av.hidden=false; } else { av.hidden=true; }
 }
 
 async function previewSelectedVoice(){
@@ -135,11 +145,24 @@ async function runVoicePreview({statusEl}={}){
   }
 }
 
+const CODEC_VIDEOS={idle:'/assets/aria/aria-idle.mp4',thinking:'/assets/aria/aria-thinking.mp4',talking:'/assets/aria/aria-talking.mp4'};
+function setCodecMode(mode){
+  const v=document.getElementById('codecVideo');
+  if(!v) return; // Codec avatar panel isn't on the current page (e.g. wizard steps) — no-op.
+  state.codecMode=mode;
+  const src=CODEC_VIDEOS[mode]||CODEC_VIDEOS.idle;
+  if(!v.currentSrc||!v.currentSrc.endsWith(src)){ v.src=src; }
+  v.play().catch(()=>{});
+  const badge=document.getElementById('codecStatus');
+  if(badge) badge.textContent=mode.toUpperCase();
+}
+
 function playAudioAsync(b64, msgId){
   return new Promise((resolve,reject)=>{
     stopAudio();
     let a=new Audio('data:audio/wav;base64,'+b64);
     state.currentAudio=a;
+    setCodecMode('talking');
     if(msgId!=null){
       state.speakingMsg=msgId;
       let b=document.querySelector(`[data-speak-btn="${msgId}"]`);
@@ -165,6 +188,7 @@ function stopAudio(){
     if(b){b.textContent='▶'; b.dataset.state='idle'}
     state.speakingMsg=null;
   }
+  setCodecMode('idle');
 }
 
 function next(){state.step++;render()}
@@ -211,12 +235,38 @@ function messageHtml(role, content, msgId){
 }
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
+function codecPanelHtml(ttsOk){
+  return `<div class=codec-frame>
+    <div class=codec-video-wrap>
+      <video id=codecVideo autoplay loop muted playsinline src="/assets/aria/aria-idle.mp4"></video>
+      <div class=codec-scan></div>
+      <div class=codec-badge><span class=codec-dot></span><span id=codecStatus>IDLE</span></div>
+    </div>
+    <div class="codec-meta mono">
+      <div><span class=muted>LINK</span> <span class=codec-ok>LOCAL</span></div>
+      <div><span class=muted>VOICE</span> <span class="${ttsOk?'codec-ok':'codec-warn'}">${ttsOk?'READY':'NOT READY'}</span></div>
+      <div><span class=muted>MODEL</span> <span id=codecModel>${state.lastModel||'—'}</span></div>
+    </div>
+  </div>`;
+}
+
+function bootCodecOnce(){
+  if(state.codecBooted) return;
+  state.codecBooted=true;
+  const el=document.createElement('div');
+  el.className='codec-boot';
+  el.innerHTML=`<div class=codec-boot-line>OTACON // CODEC</div><div class="codec-boot-line muted">ESTABLISHING LOCAL LINK…</div>`;
+  document.body.appendChild(el);
+  setTimeout(()=>{ el.classList.add('codec-boot-out'); setTimeout(()=>el.remove(),400); },900);
+}
+
 async function showChat(){
   await loadPrefs(); await loadVoices(); await loadCapabilities();
   let cs=(await api('/api/conversations',{agent_id:'agent_001'})).data;
   state.conversation=(cs[0]||{}).id||(await api('/api/conversation',{agent_id:'agent_001'})).data.id;
   let voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}${v.fixture?' (test)':''}</option>`).join('');
   const sttOk=capReady('stt'), imgOk=capReady('image'), vidOk=capReady('video'), ttsOk=capReady('tts');
+  const showCodec=state.voiceId==='voice_aria';
   const ttsHint=ttsOk?'':` <span class=muted>Voice output not ready (${capAnnotate('tts','','requires Piper TTS')})</span>`;
   const previewBtn=ttsOk
     ?`<button type=button onclick="previewSelectedVoiceChat()">Preview</button>`
@@ -232,6 +282,7 @@ async function showChat(){
     :`<button type=button id=micButton disabled title="Speech input not ready">🎤</button>`;
   const micStatus=sttOk?'':`Speech input not ready (${capAnnotate('stt','','requires provider')}).`;
   page.innerHTML=`<h2>${state.name}</h2>
+${showCodec?codecPanelHtml(ttsOk):''}
 <div class=card>
   <label>Voice
     <select id=chatVoice onchange="assignVoice(this.value)">${voiceOpts}</select>
@@ -250,6 +301,7 @@ ${videoCard}
 ${micBtn}<button onclick="sendChat()">Send</button><span id=micStatus class=muted>${micStatus}</span>
 <div id=memory-panel class=card><b>Memories ${state.name} Keeps</b><p class=muted>Memories are details ${state.name} can use in future conversations.</p><div id=memories></div><input id=memory placeholder="Add a memory"><button onclick="addMemory()">Save Memory</button></div>`;
   openConversation(state.conversation); loadMemories();
+  if(showCodec){ setCodecMode('idle'); bootCodecOnce(); }
 }
 async function showNodes(){let r=await fetch('/api/nodes'),d=await r.json(); page.innerHTML='<h2>Compute Nodes</h2><p class=muted>Paired computers advertise resources and services to Otacon.</p>'+(d.nodes||[]).map(n=>`<div class=card><b>${escapeHtml(n.display_name)}</b><br>${n.status} · ${n.trust_state}<br>Protocol ${n.protocol_version}</div>`).join('')+'<button onclick="render()">Back</button>'}
 
@@ -288,8 +340,9 @@ async function sendChat(){
   let el=document.getElementById('chat'), box=document.getElementById('messages'), m=el.value.trim();
   if(!m) return;
   let uid=box.querySelectorAll('.msg').length;
-  box.insertAdjacentHTML('beforeend', `<div class=msg><p><b>You:</b> ${escapeHtml(m)}</p></div><p id=wait class=muted>Waiting…</p>`);
+  box.insertAdjacentHTML('beforeend', `<div class="msg msg-user"><p><b>You:</b> ${escapeHtml(m)}</p></div><p id=wait class=muted>Waiting…</p>`);
   el.value='';
+  setCodecMode('thinking');
   let r=await api('/api/chat_with_agent',{
     agent:{id:'agent_001',display_name:state.name,voice_id:state.voiceId},
     message:m, conversation_id:state.conversation, auto_speak:state.autoSpeak
@@ -297,11 +350,14 @@ async function sendChat(){
   document.getElementById('wait')?.remove();
   if(!r.ok){
     box.insertAdjacentHTML('beforeend', `<div class=msg><p><b>${state.name}:</b> Your AI service is unavailable.</p></div>`);
+    setCodecMode('idle');
     return;
   }
   let d=r.data;
+  if(d.model){ state.lastModel=d.model; const mEl=document.getElementById('codecModel'); if(mEl) mEl.textContent=d.model; }
   let mid=uid+1;
   box.insertAdjacentHTML('beforeend', messageHtml('assistant', d.text, mid));
+  setCodecMode('idle');
   if(d.voice && d.voice.status==='error'){
     let err=document.querySelector(`[data-speak-err="${mid}"]`);
     if(err) err.textContent='Voice playback unavailable';

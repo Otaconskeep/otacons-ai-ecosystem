@@ -45,6 +45,11 @@ NODES = NodeRegistry()
 BIND_HOST, BIND_MODE = resolve_bind_host()
 LAN_TOKEN = ensure_lan_token() if BIND_MODE == 'lan' else load_lan_token()
 UI_ROOT = Path(__file__).parent.parent / 'ui'
+STATIC_CONTENT_TYPES = {
+    '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
+    '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.mp4': 'video/mp4', '.svg': 'image/svg+xml', '.json': 'application/json',
+}
 
 
 def _llm_settings() -> tuple[str, str, str]:
@@ -113,7 +118,7 @@ def _load_agents() -> list[dict]:
         except (OSError, json.JSONDecodeError):
             pass
     return [
-        {'id': 'agent_001', 'display_name': 'Billy', 'voice_id': 'voice_001'},
+        {'id': 'agent_001', 'display_name': 'Aria', 'voice_id': 'voice_aria', 'avatar': '/assets/aria/aria.webp'},
         {'id': 'agent_002', 'display_name': 'Sarah', 'voice_id': 'voice_002'},
     ]
 
@@ -125,11 +130,11 @@ def _agent_from_request(data: dict) -> dict:
         agent['id'] = data.get('agent_id') or 'agent_001'
     if not agent.get('display_name'):
         agent['display_name'] = data.get('display_name') or next(
-            (a['display_name'] for a in agents if a['id'] == agent['id']), 'Billy'
+            (a['display_name'] for a in agents if a['id'] == agent['id']), 'Aria'
         )
     if not agent.get('voice_id'):
         saved = next((a for a in agents if a['id'] == agent['id']), None)
-        agent['voice_id'] = data.get('voice_id') or (saved or {}).get('voice_id') or 'voice_001'
+        agent['voice_id'] = data.get('voice_id') or (saved or {}).get('voice_id') or 'voice_aria'
     return agent
 
 
@@ -410,7 +415,7 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path in ('/api/synthesize_agent_speech', '/api/preview_voice'):
             agent = _agent_from_request(data)
             purpose = 'preview' if self.path.endswith('preview_voice') else 'production'
-            text = data.get('text') or ('Hello, I am ' + agent.get('display_name', 'Billy'))
+            text = data.get('text') or ('Hello, I am ' + agent.get('display_name', 'Aria'))
             d = _deployment()
             is_preview = purpose == 'preview'
             try:
@@ -521,11 +526,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         b = p.read_bytes()
         self.send_response(200)
-        ctype = 'text/html' if p.suffix == '.html' else 'application/javascript'
-        if p.suffix == '.css':
-            ctype = 'text/css'
+        ctype = STATIC_CONTENT_TYPES.get(p.suffix.lower(), 'application/octet-stream')
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(b)))
+        if p.suffix.lower() in ('.mp4', '.webp', '.png', '.jpg', '.jpeg'):
+            # Static agent media never changes at runtime; safe to cache hard.
+            self.send_header('Cache-Control', 'public, max-age=604800, immutable')
         self.end_headers()
         self.wfile.write(b)
 
