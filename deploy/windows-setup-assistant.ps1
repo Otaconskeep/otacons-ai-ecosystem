@@ -534,7 +534,17 @@ function Get-WhereYouAre {
         $wu = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
         if ($rb -or $wu) { $rebootPending = $true }
     } catch {}
-    if ($state["stage"] -eq "waiting_for_reboot") { $rebootPending = $true }
+    # Stale installer-state "waiting_for_reboot" must not stick after Ubuntu is
+    # already usable (friend wall: overall=WAITING_FOR_REBOOT with ubuntu=True).
+    # Trust the marker only when Windows still reports a reboot-required key, or
+    # when Ubuntu is not ready yet (real post-feature reboot path).
+    if ($state["stage"] -eq "waiting_for_reboot") {
+        if ($ubuntuReady -and -not $rebootPending) {
+            $rebootPending = $false
+        } else {
+            $rebootPending = $true
+        }
+    }
 
     # Gate J: never COMPLETE with unresolved fatal installer error
     $staleFail = ($state["stage"] -eq "failed") -or (
@@ -1186,26 +1196,75 @@ function Invoke-WslInstallPhase {
     }
     $localEsc = if ($localWsl) { $localWsl.Replace("'", "'\''") } else { "" }
 
-    $bash = @"
-set -euo pipefail
-TMP=`$(mktemp /tmp/otacon-install.XXXXXX.sh)
-trap 'rm -f "`$TMP"' EXIT
-LOCAL_SH='$localEsc'
-if [ -n "`$LOCAL_SH" ] && [ -s "`$LOCAL_SH" ]; then
-  cp "`$LOCAL_SH" "`$TMP"
-else
-  curl -fsSL --connect-timeout 30 --max-time 120 https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/$Branch/install_otacon.sh -o "`$TMP"
-fi
-test -s "`$TMP" || { echo 'Download failed or empty installer' >&2; exit 1; }
-head -n1 "`$TMP" | grep -q bash || { echo 'Downloaded file does not look like the Otacon installer' >&2; exit 1; }
-env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
-"@
+    # Write a LF phase script on disk and run `bash <path>`. Multiline
+    # `bash -lc "..."` via Start-Process ArgumentList is fragile on Windows
+    # (newlines/quoting), and Start-Process ExitCode can stay blank with
+    # redirected stdout — which masked exit 42 (systemd enable → terminate +
+    # retry) as "Root bootstrap failed (exit )".
+    $phaseScriptWin = Join-Path $LogDir ("wsl-phase-{0}.sh" -f $Phase)
+    $exitMarkerWin = Join-Path $LogDir ("wsl-phase-{0}.exit" -f $Phase)
+    foreach ($p in @($phaseScriptWin, $exitMarkerWin, $LogPipe)) {
+        if (Test-Path -LiteralPath $p) {
+            Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+        }
+    }
 
-    if (Test-Path $LogPipe) { Remove-Item -LiteralPath $LogPipe -Force -ErrorAction SilentlyContinue }
-    Write-KeepLog "starting linux phase=$Phase as=$AsUser target=$TargetUser in $Name branch=$Branch local=$([bool]$localWsl)" -Stage "INSTALLING_OTACON"
+    $exitMarkerWsl = ""
+    try {
+        $exitMarkerWsl = ((& wsl.exe -d $Name -- wslpath -a $exitMarkerWin 2>$null) | Select-Object -First 1)
+        if ($exitMarkerWsl) { $exitMarkerWsl = "$exitMarkerWsl".Trim() }
+    } catch { $exitMarkerWsl = "" }
+    if (-not $exitMarkerWsl) {
+        Write-KeepLog "could not wslpath exit marker for phase=$Phase" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        return 997
+    }
+    $exitMarkerEsc = $exitMarkerWsl.Replace("'", "'\''")
 
-    $bashWrapped = $bash + " 2>&1"
-    $argList = @("-d", $Name) + $userArg + @("--", "bash", "-lc", $bashWrapped)
+    # EnvPass is already a single-line KEY=VAL list from the caller.
+    # Always emit_rc after the installer returns so Windows can read exit 42
+    # (systemd enable) even when Start-Process ExitCode stays blank.
+    $bashLines = @(
+        '#!/bin/bash',
+        'set -uo pipefail',
+        ('EXIT_MARKER=''{0}''' -f $exitMarkerEsc),
+        'emit_rc() { printf ''OTACON_PHASE_EXIT=%s\n'' "$1"; printf ''%s\n'' "$1" >"$EXIT_MARKER" 2>/dev/null || true; }',
+        'TMP=$(mktemp /tmp/otacon-install.XXXXXX.sh)',
+        'trap ''rm -f "$TMP"'' EXIT',
+        ('LOCAL_SH=''{0}''' -f $localEsc),
+        'if [ -n "$LOCAL_SH" ] && [ -s "$LOCAL_SH" ]; then',
+        '  cp "$LOCAL_SH" "$TMP"',
+        'else',
+        ('  if ! curl -fsSL --connect-timeout 30 --max-time 120 https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/{0}/install_otacon.sh -o "$TMP"; then echo ''Download failed'' >&2; emit_rc 1; exit 1; fi' -f $Branch),
+        'fi',
+        'if [ ! -s "$TMP" ]; then echo ''Download failed or empty installer'' >&2; emit_rc 1; exit 1; fi',
+        'if ! head -n1 "$TMP" | grep -q bash; then echo ''Downloaded file does not look like the Otacon installer'' >&2; emit_rc 1; exit 1; fi',
+        'set +e',
+        ('env {0} OTACON_INSTALL_PHASE={1} {2} bash "$TMP"' -f $EnvPass, $Phase, $targetEnv),
+        'rc=$?',
+        'emit_rc "$rc"',
+        'exit "$rc"'
+    )
+    $bashText = ($bashLines -join "`n") + "`n"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($phaseScriptWin, $bashText, $utf8NoBom)
+
+    $phaseScriptWsl = ""
+    try {
+        $phaseScriptWsl = ((& wsl.exe -d $Name -- wslpath -a $phaseScriptWin 2>$null) | Select-Object -First 1)
+        if ($phaseScriptWsl) { $phaseScriptWsl = "$phaseScriptWsl".Trim() }
+    } catch { $phaseScriptWsl = "" }
+    if (-not $phaseScriptWsl) {
+        Write-KeepLog "could not wslpath phase script for phase=$Phase path=$phaseScriptWin" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        return 997
+    }
+
+    Write-KeepLog "starting linux phase=$Phase as=$AsUser target=$TargetUser in $Name branch=$Branch local=$([bool]$localWsl) script=$phaseScriptWsl" -Stage "INSTALLING_OTACON"
+
+    # Run the file. Merge stderr inside bash — Windows cannot RedirectStandardOutput
+    # and RedirectStandardError to the same path.
+    $phaseScriptEsc = $phaseScriptWsl.Replace("'", "'\''")
+    $runner = "bash '{0}' 2>&1" -f $phaseScriptEsc
+    $argList = @("-d", $Name) + $userArg + @("--", "bash", "-c", $runner)
     $proc = Start-Process -FilePath "wsl.exe" -ArgumentList $argList `
         -NoNewWindow -PassThru -RedirectStandardOutput $LogPipe
 
@@ -1242,8 +1301,10 @@ env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
                     $lastProgress = Get-Date
                     $t = $line.Trim()
                     $currentSub = $t.Substring(0, [Math]::Min(90, $t.Length))
-                } elseif ($line -match 'pulling|Downloading') {
+                } elseif ($line -match 'pulling|Downloading|Enabling systemd|restart once') {
                     $lastProgress = Get-Date
+                    $t = $line.Trim()
+                    $currentSub = $t.Substring(0, [Math]::Min(90, $t.Length))
                 }
             }
             $recent = @($all | Select-Object -Last 6)
@@ -1274,12 +1335,19 @@ env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
     # observed to read back as an unpopulated/blank value here, which is
     # exactly what produced "Root bootstrap failed (exit )" downstream.
     try {
-        $proc.WaitForExit(10000) | Out-Null
+        $proc.WaitForExit(15000) | Out-Null
     } catch {
         Write-KeepLog "WaitForExit threw for phase=$Phase : $($_.Exception.Message)" -Level "WARN" -Stage "INSTALLING_OTACON"
     }
+    Start-Sleep -Milliseconds 200
 
-    # Prefer durable Linux markers when Start-Process ExitCode is blank/unusable.
+    # Prefer durable markers: exit file > log line > Start-Process ExitCode.
+    $fromMarker = $null
+    if (Test-Path -LiteralPath $exitMarkerWin) {
+        $rawMarker = (Get-Content -LiteralPath $exitMarkerWin -TotalCount 1 -ErrorAction SilentlyContinue)
+        $tmpM = 0
+        if ([int]::TryParse([string]$rawMarker, [ref]$tmpM)) { $fromMarker = $tmpM }
+    }
     $fromLog = $null
     if (Test-Path -LiteralPath $LogPipe) {
         foreach ($line in @(Get-Content -LiteralPath $LogPipe -ErrorAction SilentlyContinue)) {
@@ -1290,13 +1358,22 @@ env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
 
     $rawCode = $proc.ExitCode
     $code = 0
-    if ($null -ne $fromLog) {
+    if ($null -ne $fromMarker) {
+        $code = [int]$fromMarker
+    } elseif ($null -ne $fromLog) {
         $code = [int]$fromLog
     } elseif (-not [int]::TryParse([string]$rawCode, [ref]$code)) {
         Write-KeepLog "linux phase=$Phase exit code unreadable (raw='$rawCode') -- treating as failure, not blank" -Level "ERROR" -Stage "INSTALLING_OTACON"
         $code = 998
     }
-    Write-KeepLog "linux phase=$Phase exit=$code (raw='$rawCode' log='$fromLog')" -Stage "INSTALLING_OTACON"
+    Write-KeepLog "linux phase=$Phase exit=$code (raw='$rawCode' marker='$fromMarker' log='$fromLog')" -Stage "INSTALLING_OTACON"
+
+    if ($code -ne 0 -and $code -ne 42 -and (Test-Path -LiteralPath $LogPipe)) {
+        Write-KeepLog "---- linux-install-tail (phase=$Phase, last 40) ----" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        foreach ($line in @(Get-Content -LiteralPath $LogPipe -Tail 40 -ErrorAction SilentlyContinue)) {
+            Write-KeepLog $line -Level "ERROR" -Stage "LINUX_TAIL"
+        }
+    }
     return [int]$code
 }
 

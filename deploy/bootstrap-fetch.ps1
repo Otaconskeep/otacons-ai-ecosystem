@@ -71,6 +71,7 @@ function Get-NormalizedPath {
 $full = @(
     "install_otacon.bat",
     "OtaconsKeep-Setup.bat",
+    "install_otacon.sh",
     "deploy/windows-setup-assistant.ps1",
     "deploy/find-ubuntu.ps1",
     "deploy/install-wake-task.ps1",
@@ -80,6 +81,7 @@ $full = @(
     "deploy/check-bat-encoding.ps1"
 )
 $deployOnly = @(
+    "install_otacon.sh",
     "deploy/windows-setup-assistant.ps1",
     "deploy/find-ubuntu.ps1",
     "deploy/install-wake-task.ps1",
