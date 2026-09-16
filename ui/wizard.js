@@ -388,13 +388,17 @@ async function sendChat(){
   });
   document.getElementById('wait')?.remove();
   if(!r.ok){
-    const tech=(r.data&&r.data.error&&(r.data.error.technical||r.data.error.message))||'';
-    box.insertAdjacentHTML('beforeend', `<div class=msg><p><b>${state.name}:</b> Your AI service is unavailable.${tech?` <span class=muted>(${escapeHtml(tech)})</span>`:''}</p></div>`);
+    const err=r.data&&r.data.error;
+    const tech=(err&&(err.message||err.technical))||'Your AI service is unavailable.';
+    box.insertAdjacentHTML('beforeend', `<div class=msg><p><b>${state.name}:</b> ${escapeHtml(tech)}</p></div>`);
     setCodecMode('idle');
     return;
   }
   let d=r.data;
   if(d.model){ state.lastModel=d.model; const mEl=document.getElementById('codecModel'); if(mEl) mEl.textContent=d.model; }
+  if(d.model_note){
+    box.insertAdjacentHTML('beforeend', `<p class=muted>${escapeHtml(d.model_note)}</p>`);
+  }
   let mid=uid+1;
   box.insertAdjacentHTML('beforeend', messageHtml('assistant', d.text, mid));
   setCodecMode('idle');

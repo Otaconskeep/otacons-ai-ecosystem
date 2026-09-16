@@ -170,8 +170,19 @@ def _capability_snapshot() -> dict:
             caps['chat'] = 'ready'
         elif model:
             try:
-                health = OllamaProvider(endpoint).health(model)
-                caps['chat'] = 'ready' if getattr(health, 'state', '') == 'ONLINE' else 'unavailable'
+                prov = OllamaProvider(endpoint)
+                if hasattr(prov, 'resolve_model'):
+                    try:
+                        prov.resolve_model(model)
+                        caps['chat'] = 'ready'
+                    except Exception as exc:
+                        caps['chat'] = 'unavailable'
+                        caps['chat_detail'] = str(exc)
+                else:
+                    health = prov.health(model)
+                    caps['chat'] = 'ready' if getattr(health, 'state', '') == 'ONLINE' else 'unavailable'
+                    if caps['chat'] != 'ready':
+                        caps['chat_detail'] = getattr(health, 'detail', '')
             except Exception:
                 caps['chat'] = 'error'
         else:
@@ -417,11 +428,12 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self.send_json(result)
             except Exception as e:
+                detail = str(e)
                 self.send_json({
                     'error': {
                         'code': 'CHAT_UNAVAILABLE',
-                        'message': 'Your AI service is unavailable.',
-                        'technical': str(e),
+                        'message': detail if detail else 'Your AI service is unavailable.',
+                        'technical': detail,
                     }
                 }, 503)
         elif self.path == '/api/conversation':
