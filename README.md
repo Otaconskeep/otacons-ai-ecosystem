@@ -321,7 +321,7 @@ Clean public foundation for a hardware-aware local AI setup wizard with provider
 TMPDIR=/mnt/data/tmp PYTHONPATH=. python3 -m installer.server
 ```
 
-Open http://127.0.0.1:8787. Runtime configuration and TTS audio cache are written outside this repository.
+Open http://127.0.0.1:5757 (canonical Otacon Core port; legacy 8787 is retired). Runtime configuration and TTS audio cache are written outside this repository.
 
 ## Validate voice (sandbox)
 

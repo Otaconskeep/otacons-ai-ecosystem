@@ -527,7 +527,7 @@ def synthesize_voice(
         raise TTSError(
             SYNTHESIS_FAILED,
             'TTS is still on the silent test double (produces a faint beep, not speech). '
-            'Piper is not configured. Re-run OtaconsKeep Setup, or set '
+            'Piper is not configured. Open OtaconsKeep Setup → Repair, or set '
             'OTACON_TTS_PROVIDER=piper and OTACON_TTS_ENDPOINT=wyoming://127.0.0.1:10200.',
         )
 

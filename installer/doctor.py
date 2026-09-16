@@ -72,7 +72,7 @@ def main(argv=None) -> int:
     else:
         results.append(_warn('config', f'missing {cfg}'))
 
-    # systemd
+    # systemd otacon
     try:
         cp = subprocess.run(
             ['systemctl', 'is-active', 'otacon.service'],
@@ -82,6 +82,50 @@ def main(argv=None) -> int:
         results.append(_check('systemd', active, cp.stdout.strip() or cp.stderr.strip()))
     except Exception as exc:
         results.append(_warn('systemd', str(exc)))
+
+    # P1-8: Piper / otacon-tts — WARN (or FAIL if unit exists but inactive)
+    piper_dir = Path.home() / '.config' / 'otacon' / 'piper'
+    tts_draft = Path.home() / '.config' / 'otacon' / 'otacon-tts.service.draft'
+    tts_unit_path = Path('/etc/systemd/system/otacon-tts.service')
+    piper_expected = piper_dir.is_dir() or tts_draft.is_file() or tts_unit_path.is_file()
+    try:
+        cp = subprocess.run(
+            ['systemctl', 'is-active', 'otacon-tts.service'],
+            capture_output=True, text=True, timeout=5,
+        )
+        tts_state = (cp.stdout or cp.stderr or '').strip() or 'unknown'
+        tts_active = tts_state == 'active'
+        if piper_expected:
+            if tts_active:
+                results.append(_check('otacon_tts', True, tts_state))
+            elif tts_unit_path.is_file():
+                results.append(_check('otacon_tts', False, f'unit present but {tts_state}'))
+            else:
+                results.append(_warn('otacon_tts', f'Piper data present but unit missing ({tts_state})'))
+        else:
+            results.append(_warn('otacon_tts', 'Piper not configured (optional)'))
+    except Exception as exc:
+        results.append(_warn('otacon_tts', str(exc)))
+
+    # Wyoming / preview health when Core is up
+    if sock_ok and piper_expected:
+        try:
+            tts_port = int(os.getenv('OTACON_TTS_PORT', '10200'))
+            with socket.create_connection(('127.0.0.1', tts_port), timeout=2):
+                results.append(_check('wyoming_port', True, f'127.0.0.1:{tts_port}'))
+        except OSError as exc:
+            results.append(_check('wyoming_port', False, str(exc)))
+        try:
+            req = urllib.request.Request(
+                f'http://127.0.0.1:{port}/api/preview_voice',
+                data=json.dumps({'text': 'Doctor voice check.', 'purpose': 'preview'}).encode(),
+                headers={'Content-Type': 'application/json'},
+                method='POST',
+            )
+            with urllib.request.urlopen(req, timeout=8) as r:
+                results.append(_check('voice_preview', r.status < 300, f'HTTP {r.status}'))
+        except Exception as exc:
+            results.append(_check('voice_preview', False, str(exc)))
 
     if mode == 'lan':
         token = load_lan_token()

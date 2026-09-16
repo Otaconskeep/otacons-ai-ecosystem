@@ -8,6 +8,9 @@ param(
     [switch]$Diagnostics,
     [switch]$Open,
     [switch]$Resume,
+    [switch]$Force,
+    [switch]$Repair,
+    [switch]$Reinstall,
     [string]$RepoRoot = "",
     [string]$Branch = "main",
     [string]$RawBase = "https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem"
@@ -28,11 +31,32 @@ $Port      = 5757
 $HealthUrl = "http://127.0.0.1:$Port/"
 $BrandUrl  = "http://127.0.0.1:$Port/api/branding"
 $TotalSteps = 8
+# Dedicated WSL distro — never silently mutate the user's first Ubuntu*.
+$PreferredDistro = "Ubuntu-Otacon"
+$PreferredDistroAliases = @("Ubuntu-Otacon", "OtaconsKeep")
+# Script-scoped: when user chooses Repair/Reinstall/--force, skip early READY exit
+# and do not treat an already-healthy install as "skip Step-InstallOtacon".
+$script:ForceInstall = [bool]($Force -or $Repair -or $Reinstall)
+$script:ChosenDistroMode = ""   # dedicated | reuse | ""
+$script:ReinstallRequested = [bool]$Reinstall
 
 New-Item -ItemType Directory -Force -Path $KeepDir, $LogDir, $DiagDir | Out-Null
 
 if (-not $RepoRoot) {
     $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+}
+
+# P0-6: Prefer release.json ecosystem_ref over floating "main" when Branch was left default.
+if ($Branch -eq "main") {
+    $relPath = Join-Path $RepoRoot "release.json"
+    if (Test-Path -LiteralPath $relPath) {
+        try {
+            $rel = Get-Content -LiteralPath $relPath -Raw | ConvertFrom-Json
+            if ($rel.ecosystem_ref -and "$($rel.ecosystem_ref)" -ne "") {
+                $Branch = [string]$rel.ecosystem_ref
+            }
+        } catch {}
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -58,10 +82,27 @@ function Get-InstallerState {
 function Save-InstallerState {
     param([hashtable]$Fields)
     $cur = Get-InstallerState
-    foreach ($k in $Fields.Keys) { $cur[$k] = $Fields[$k] }
+    foreach ($k in $Fields.Keys) {
+        # Explicit $null clears the key so COMPLETE cannot keep a stale last_error.
+        if ($null -eq $Fields[$k]) {
+            if ($cur.ContainsKey($k)) { [void]$cur.Remove($k) }
+        } else {
+            $cur[$k] = $Fields[$k]
+        }
+    }
     $cur["version"] = 1
     $cur["updated_at"] = (Get-Date).ToUniversalTime().ToString("o")
     ($cur | ConvertTo-Json -Depth 6) | Set-Content -Path $StateFile -Encoding UTF8
+}
+
+function Save-InstallerComplete {
+    # Gate D/J: success must clear prior failure residue.
+    Save-InstallerState @{
+        stage      = "complete"
+        step       = 8
+        last_error = $null
+        last_step  = "complete"
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -195,19 +236,256 @@ function Test-IsAdmin {
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Write-WslListVerbose {
+    try {
+        $list = & wsl.exe -l -v 2>$null | ForEach-Object { $_ -replace "`0", "" }
+        Write-KeepLog ("wsl -l -v:`n" + (($list | Out-String).Trim())) -Stage "WSL"
+    } catch {
+        Write-KeepLog "wsl -l -v failed: $($_.Exception.Message)" -Level "WARN" -Stage "WSL"
+    }
+}
+
+function Get-WslUbuntuFamilyNames {
+    try {
+        $raw = & wsl.exe -l -q 2>$null
+        $clean = @(
+            $raw | ForEach-Object { ($_ -replace "`0", "").Trim() } |
+                Where-Object { $_ -ne "" -and $_ -notmatch '(?i)^docker-desktop|^docker-desktop-data|^podman-machine' }
+        )
+        return @($clean | Where-Object { $_ -match '(?i)Ubuntu|OtaconsKeep' })
+    } catch { return @() }
+}
+
 function Get-UbuntuDistroName {
+    # Prefer dedicated OtaconsKeep distro. Never silently return first Ubuntu*.
+    $st = Get-InstallerState
+    $stated = [string]$st["ubuntu_name"]
+    $mode = [string]$st["ubuntu_mode"]
+    if ($stated) {
+        $isPreferred = [bool]($PreferredDistroAliases | Where-Object { $stated.Equals($_, [System.StringComparison]::OrdinalIgnoreCase) })
+        if (($isPreferred -or $mode -eq "reuse") -and (Test-UbuntuReady $stated)) {
+            return $stated
+        }
+    }
     $finder = Join-Path $RepoRoot "deploy\find-ubuntu.ps1"
     if (Test-Path $finder) {
         $name = & powershell -NoProfile -ExecutionPolicy Bypass -File $finder 2>$null
         if ($name) { return ($name | Select-Object -First 1).ToString().Trim() }
     }
-    try {
-        $raw = & wsl.exe -l -q 2>$null
-        $clean = $raw | ForEach-Object { $_ -replace "`0", "" } | Where-Object { $_.Trim() -ne "" }
-        $match = $clean | Where-Object { $_ -match "(?i)^Ubuntu" -and $_ -notmatch "(?i)docker-desktop" } | Select-Object -First 1
-        if ($match) { return $match.Trim() }
-    } catch {}
+    foreach ($want in $PreferredDistroAliases) {
+        $family = Get-WslUbuntuFamilyNames
+        $hit = $family | Where-Object { $_.Equals($want, [System.StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+        if ($hit) { return $hit }
+    }
     return $null
+}
+
+function Resolve-OtaconDistroInteractive {
+    <#
+      Gate E: existing Ubuntu is NOT silently mutated.
+      Returns chosen distro name, or $null if aborted.
+    #>
+    Write-WslListVerbose
+    $existing = Get-UbuntuDistroName
+    if ($existing) {
+        Write-KeepLog "using dedicated/known distro=$existing" -Stage "WSL"
+        return $existing
+    }
+
+    $family = Get-WslUbuntuFamilyNames
+    $others = @($family | Where-Object {
+            $n = $_
+            -not ($PreferredDistroAliases | Where-Object { $n.Equals($_, [System.StringComparison]::OrdinalIgnoreCase) })
+        })
+
+    if ($others.Count -eq 0) {
+        # Virgin machine — create dedicated Ubuntu-Otacon
+        $script:ChosenDistroMode = "dedicated"
+        return $PreferredDistro
+    }
+
+    # Power-user PC with other Ubuntu* — require explicit choice
+    $lines = @(
+        "This PC already has Windows Linux (WSL) distributions:",
+        ""
+    )
+    $idx = 1
+    foreach ($d in $others) {
+        $lines += ("  [{0}] {1}" -f $idx, $d)
+        $idx++
+    }
+    $lines += ""
+    $lines += "OtaconsKeep prefers a dedicated distro named $PreferredDistro"
+    $lines += "so your existing Ubuntu is not silently changed."
+    $lines += ""
+    $lines += "[ R ] Reuse an existing distro (you choose which)"
+    $lines += "[ C ] Create dedicated $PreferredDistro (side-by-side)"
+    $lines += "[ A ] Abort setup"
+    Show-Box "WSL DISTRIBUTION CHOICE" $lines -Color Yellow
+
+    $c = Read-Choice "  Choice [R/C/A]: " @("R","C","A")
+    if ($c -eq "A") {
+        Write-KeepLog "user aborted WSL distro selection" -Stage "WSL"
+        return $null
+    }
+    if ($c -eq "C") {
+        $script:ChosenDistroMode = "dedicated"
+        Write-KeepLog "user chose create dedicated $PreferredDistro" -Stage "WSL"
+        return $PreferredDistro
+    }
+
+    # Reuse — pick which
+    if ($others.Count -eq 1) {
+        $script:ChosenDistroMode = "reuse"
+        Save-InstallerState @{ ubuntu_name = $others[0]; ubuntu_mode = "reuse" }
+        Write-KeepLog "user reused sole distro=$($others[0])" -Stage "WSL"
+        return $others[0]
+    }
+    Write-Host "  Enter the number of the distro to reuse:" -ForegroundColor Cyan
+    while ($true) {
+        $raw = Read-Host "  Number"
+        $n = 0
+        if ([int]::TryParse($raw, [ref]$n) -and $n -ge 1 -and $n -le $others.Count) {
+            $pick = $others[$n - 1]
+            $script:ChosenDistroMode = "reuse"
+            Save-InstallerState @{ ubuntu_name = $pick; ubuntu_mode = "reuse" }
+            Write-KeepLog "user reused distro=$pick" -Stage "WSL"
+            return $pick
+        }
+        Write-Host "  Invalid number." -ForegroundColor DarkYellow
+    }
+}
+
+function Test-OtaconIdentity {
+    <#
+      Gate B/J: READY only when /api/branding positively identifies Otacon.
+      Returns hashtable: ok, reason, product_name, occupied_non_otacon
+    #>
+    $result = @{
+        ok                   = $false
+        reason               = "unreachable"
+        product_name         = ""
+        occupied_non_otacon  = $false
+        root_status          = $null
+        brand_status         = $null
+    }
+    try {
+        $root = Invoke-WebRequest -Uri $HealthUrl -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+        $result.root_status = [int]$root.StatusCode
+        if ($root.StatusCode -lt 200 -or $root.StatusCode -ge 500) {
+            $result.reason = "root_bad_status"
+            return $result
+        }
+    } catch {
+        $result.reason = "root_unreachable"
+        return $result
+    }
+
+    try {
+        $b = Invoke-WebRequest -Uri $BrandUrl -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+        $result.brand_status = [int]$b.StatusCode
+        if ($b.StatusCode -lt 200 -or $b.StatusCode -ge 300) {
+            $result.reason = "branding_bad_status"
+            $result.occupied_non_otacon = $true
+            return $result
+        }
+        $json = $null
+        try { $json = $b.Content | ConvertFrom-Json } catch {
+            $result.reason = "branding_invalid_json"
+            $result.occupied_non_otacon = $true
+            return $result
+        }
+        $pname = [string]($json.product_name)
+        $result.product_name = $pname
+        if ($pname -eq "Otacon") {
+            $result.ok = $true
+            $result.reason = "ok"
+            return $result
+        }
+        $result.reason = "branding_wrong_product"
+        $result.occupied_non_otacon = $true
+        return $result
+    } catch {
+        # Root answered but branding missing/failed → foreign service on 5757
+        $result.reason = "branding_missing"
+        $result.occupied_non_otacon = $true
+        return $result
+    }
+}
+
+function Test-OtaconHealth {
+    $id = Test-OtaconIdentity
+    return [bool]$id.ok
+}
+
+function Test-OtaconTts {
+    <#
+      P0-1: Voice engine must be reachable for green READY when Piper was installed.
+      Returns hashtable: ok, reason, unit_active
+    #>
+    $result = @{ ok = $false; reason = 'unchecked'; unit_active = $false; preview_ok = $false }
+    $ubuntu = Get-UbuntuDistroName
+    if (-not $ubuntu) {
+        $result.reason = 'no_distro'
+        return $result
+    }
+    try {
+        $unit = & wsl.exe -d $ubuntu -u root -- bash -lc "systemctl is-active otacon-tts.service 2>/dev/null || echo inactive" 2>$null
+        $unitStr = (($unit | Out-String) -replace '\s+', '').Trim()
+        $result.unit_active = ($unitStr -eq 'active')
+    } catch {
+        $result.unit_active = $false
+    }
+    # Preview / wyoming health via local API when Core is up
+    try {
+        $body = '{"text":"Otacon voice check.","purpose":"preview"}'
+        $prev = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/preview_voice" `
+            -Method POST -Body $body -ContentType 'application/json' `
+            -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
+        if ($prev.StatusCode -ge 200 -and $prev.StatusCode -lt 300) {
+            $result.preview_ok = $true
+            $result.ok = $true
+            $result.reason = 'preview_ok'
+            return $result
+        }
+    } catch {
+        $result.reason = 'preview_unreachable'
+    }
+    if ($result.unit_active) {
+        $result.ok = $true
+        $result.reason = 'unit_active_preview_pending'
+        return $result
+    }
+    # Piper never installed → TTS not required for Core READY
+    try {
+        $draft = & wsl.exe -d $ubuntu -- bash -lc "test -f `$HOME/.config/otacon/otacon-tts.service.draft || test -d `$HOME/.config/otacon/piper; echo `$?" 2>$null
+        if (($draft | Out-String).Trim() -match '1') {
+            $result.ok = $true
+            $result.reason = 'piper_not_configured'
+            return $result
+        }
+    } catch {}
+    $result.reason = 'tts_down'
+    return $result
+}
+
+function Show-NonOtaconPortDiagnostic {
+    param($Identity)
+    Show-Box "PORT $Port OCCUPIED" @(
+        "Port $Port is occupied by a non-Otacon service.",
+        "",
+        "Otacon identity check failed:",
+        ("  {0}" -f $Identity.reason),
+        $(if ($Identity.product_name) { "  product_name: $($Identity.product_name)" } else { "  /api/branding missing or invalid" }),
+        "",
+        "This installer will NOT kill the foreign process.",
+        "",
+        "Free or rebind port $Port, then rerun setup.",
+        "",
+        "press X to exit"
+    ) -Color Red
+    Write-KeepLog "non-otacon on :$Port reason=$($Identity.reason) product=$($Identity.product_name)" -Level "ERROR" -Stage "HEALTH"
+    [void](Read-Choice "  Choice [X]: " @("X"))
 }
 
 function Test-WslPresent {
@@ -239,21 +517,6 @@ function Test-OtaconService {
     return (($out | Out-String) -match "active")
 }
 
-function Test-OtaconHealth {
-    try {
-        $r = Invoke-WebRequest -Uri $HealthUrl -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-        if ($r.StatusCode -lt 200 -or $r.StatusCode -ge 500) { return $false }
-        try {
-            $b = Invoke-WebRequest -Uri $BrandUrl -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-            if ($b.StatusCode -ge 200 -and $b.StatusCode -lt 500) { return $true }
-        } catch {
-            # root answered; branding optional
-            return $true
-        }
-        return $true
-    } catch { return $false }
-}
-
 function Get-WhereYouAre {
     $admin = Test-IsAdmin
     $wsl = Test-WslPresent
@@ -261,7 +524,9 @@ function Get-WhereYouAre {
     $ubuntuReady = Test-UbuntuReady $ubuntu
     $files = Test-OtaconFiles $ubuntu
     $svc = Test-OtaconService $ubuntu
-    $health = Test-OtaconHealth
+    $identity = Test-OtaconIdentity
+    $health = [bool]$identity.ok
+    $tts = Test-OtaconTts
     $state = Get-InstallerState
     $rebootPending = $false
     try {
@@ -271,25 +536,39 @@ function Get-WhereYouAre {
     } catch {}
     if ($state["stage"] -eq "waiting_for_reboot") { $rebootPending = $true }
 
+    # Gate J: never COMPLETE with unresolved fatal installer error
+    $staleFail = ($state["stage"] -eq "failed") -or (
+        $state["last_error"] -and $state["stage"] -ne "complete"
+    )
+
     $overall = "WORKING"
-    if ($health -and $files) { $overall = "COMPLETE" }
+    if ($identity.occupied_non_otacon) { $overall = "PORT_CONFLICT" }
+    elseif ($health -and $files -and $tts.ok -and -not $staleFail) { $overall = "COMPLETE" }
+    elseif ($health -and $files -and -not $tts.ok) { $overall = "DEGRADED_TTS" }
     elseif (-not $wsl -or $rebootPending) { $overall = if ($rebootPending) { "WAITING_FOR_REBOOT" } else { "WAITING_FOR_WINDOWS" } }
     elseif ($wsl -and -not $ubuntuReady) { $overall = "WAITING_FOR_UBUNTU_SETUP" }
     elseif ($ubuntuReady -and -not $files) { $overall = "INSTALLING_OTACON" }
     elseif ($files -and -not $health) { $overall = "VERIFYING" }
-    elseif ($health) { $overall = "READY" }
+    elseif ($health -and -not $staleFail) { $overall = "READY" }
 
     return [ordered]@{
-        admin           = $admin
-        wsl             = $wsl
-        ubuntu_name     = $ubuntu
-        ubuntu_ready    = $ubuntuReady
-        otacon_files    = $files
-        otacon_service  = $svc
-        web_health      = $health
-        reboot_pending  = $rebootPending
-        overall         = $overall
-        state_stage     = $state["stage"]
+        admin                 = $admin
+        wsl                   = $wsl
+        ubuntu_name           = $ubuntu
+        ubuntu_ready          = $ubuntuReady
+        otacon_files          = $files
+        otacon_service        = $svc
+        web_health            = $health
+        tts_ok                = [bool]$tts.ok
+        tts_reason            = $tts.reason
+        tts_unit_active       = [bool]$tts.unit_active
+        identity_ok           = $health
+        identity_reason       = $identity.reason
+        occupied_non_otacon   = [bool]$identity.occupied_non_otacon
+        reboot_pending        = $rebootPending
+        overall               = $overall
+        state_stage           = $state["stage"]
+        last_error            = $state["last_error"]
     }
 }
 
@@ -300,10 +579,15 @@ function Show-WhereYouAre {
     $ubL  = if ($Snap.ubuntu_ready) { "ready ($($Snap.ubuntu_name))" } elseif ($Snap.ubuntu_name) { "installed but not finished setup" } else { "not ready yet" }
     $otL  = if ($Snap.web_health) { "running" } elseif ($Snap.otacon_files) { "installed (starting)" } else { "not installed yet" }
     $webL = if ($Snap.web_health) { "responding" } else { "not available yet" }
+    $ttsL = if ($Snap.tts_ok) { "ok ($($Snap.tts_reason))" } else { "down ($($Snap.tts_reason))" }
 
     $next = "please wait - setup will continue"
-    if ($Snap.overall -eq "COMPLETE" -or $Snap.web_health) {
+    if ($Snap.overall -eq "DEGRADED_TTS") {
+        $next = "voice engine is down - choose Repair to restore Piper TTS"
+    } elseif ($Snap.overall -eq "COMPLETE" -and $Snap.web_health -and $Snap.tts_ok) {
         $next = "open http://localhost:$Port - Otacon is ready"
+    } elseif ($Snap.web_health -and -not $Snap.tts_ok) {
+        $next = "chat may work but voice is down - Repair recommended"
     } elseif ($Snap.reboot_pending) {
         $next = "restart Windows, then this installer continues"
     } elseif (-not $Snap.ubuntu_ready) {
@@ -320,6 +604,7 @@ function Show-WhereYouAre {
         "ubuntu (inside Windows)    $ubL",
         "otacon                     $otL",
         "website                    $webL",
+        "voice (piper tts)          $ttsL",
         "",
         "overall state              $($Snap.overall)",
         "",
@@ -331,7 +616,7 @@ function Show-WhereYouAre {
         "",
         "Note: an Ubuntu VM in Proxmox is SEPARATE and is not used here."
     ) -Color Cyan
-    Write-KeepLog "where-you-are overall=$($Snap.overall) wsl=$($Snap.wsl) ubuntu=$($Snap.ubuntu_ready) health=$($Snap.web_health)" -Stage "STATUS"
+    Write-KeepLog "where-you-are overall=$($Snap.overall) wsl=$($Snap.wsl) ubuntu=$($Snap.ubuntu_ready) health=$($Snap.web_health) tts=$($Snap.tts_ok)" -Stage "STATUS"
 }
 
 function Show-StatusReport {
@@ -346,10 +631,21 @@ function Show-StatusReport {
     Write-Host ("otacon files       {0}" -f $(if ($s.otacon_files) { "ready" } else { "missing" }))
     Write-Host ("otacon service     {0}" -f $(if ($s.otacon_service) { "running" } else { "stopped/unknown" }))
     Write-Host ("web interface      {0}" -f $(if ($s.web_health) { "responding" } else { "not responding" }))
+    Write-Host ("voice (piper tts)  {0}" -f $(if ($s.tts_ok) { "ok ($($s.tts_reason))" } else { "down ($($s.tts_reason))" }))
+    Write-Host ("wake task          {0}" -f $(if (Test-WakeTaskRegistered) { "registered" } else { "missing" }))
     Write-Host ""
     Write-Host "overall status" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host $(if ($s.web_health) { "READY" } else { $s.overall })
+    # P0-2: web alone is not READY — require identity + TTS when Piper configured
+    if ($s.overall -eq "COMPLETE") {
+        Write-Host "READY"
+    } elseif ($s.overall -eq "DEGRADED_TTS") {
+        Write-Host "DEGRADED (voice engine down — run Setup with --repair)"
+    } elseif ($s.web_health -and -not $s.tts_ok) {
+        Write-Host "DEGRADED_TTS"
+    } else {
+        Write-Host $s.overall
+    }
     Write-Host ""
 }
 
@@ -369,6 +665,10 @@ function Write-DiagnosticsFile {
         "otacon_files: $($s.otacon_files)",
         "otacon_service: $($s.otacon_service)",
         "web_health: $($s.web_health)",
+        "tts_ok: $($s.tts_ok)",
+        "tts_reason: $($s.tts_reason)",
+        "tts_unit_active: $($s.tts_unit_active)",
+        "wake_task: $(Test-WakeTaskRegistered)",
         "reboot_pending: $($s.reboot_pending)",
         "",
         "--- wsl -l -v ---",
@@ -539,11 +839,11 @@ function Show-SetupNeedsHelp {
 function Register-ResumeAfterReboot {
     $launcher = Join-Path $RepoRoot "OtaconsKeep-Setup.bat"
     if (-not (Test-Path -LiteralPath $launcher)) { $launcher = Join-Path $RepoRoot "install_otacon.bat" }
-    # Quote for cmd.exe RunOnce; supports spaces and parentheses in the path.
-    $cmd = '"' + $launcher + '"'
+    # Quote for cmd.exe RunOnce; always pass --resume (Gate G).
+    $cmd = '"' + $launcher + '" --resume'
     reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce" /v OtaconsKeepSetupResume /t REG_SZ /d $cmd /f | Out-Null
     Save-InstallerState @{ stage = "waiting_for_reboot"; resume_registered = $true }
-    Write-KeepLog "RunOnce registered for $launcher" -Stage "WAITING_FOR_REBOOT"
+    Write-KeepLog "RunOnce registered for $cmd" -Stage "WAITING_FOR_REBOOT"
 }
 
 function Clear-ResumeMarkers {
@@ -636,8 +936,10 @@ function Ensure-Admin {
     ) -Color Yellow
     $bat = Join-Path $RepoRoot "OtaconsKeep-Setup.bat"
     if (-not (Test-Path -LiteralPath $bat)) { $bat = Join-Path $RepoRoot "install_otacon.bat" }
-    # Pass path as FilePath argument data - never concatenate into a -Command string.
-    Start-Process -FilePath $bat -WorkingDirectory (Split-Path -Parent $bat) -Verb RunAs
+    # Pass --resume via ArgumentList (Gate G). Never concatenate into -Command.
+    $elevateArgs = @("--resume")
+    if ($script:ForceInstall) { $elevateArgs += "--force" }
+    Start-Process -FilePath $bat -ArgumentList $elevateArgs -WorkingDirectory (Split-Path -Parent $bat) -Verb RunAs
     Write-Host ""
     Write-Host "  A new elevated Setup window should open after you click Yes." -ForegroundColor Green
     Write-Host "  You can close THIS window now - setup continues in the new one." -ForegroundColor Green
@@ -647,17 +949,35 @@ function Ensure-Admin {
         $c = Read-Choice "  Choice [R/X]: " @("R","X")
         if ($c -eq "X") { return $false }
         if ($c -eq "R") {
-            Start-Process -FilePath $bat -WorkingDirectory (Split-Path -Parent $bat) -Verb RunAs
+            Start-Process -FilePath $bat -ArgumentList $elevateArgs -WorkingDirectory (Split-Path -Parent $bat) -Verb RunAs
             continue
         }
     }
 }
 
 function Step-EnableWsl {
-    Write-KeepLog "wsl --install -d Ubuntu" -Stage "WAITING_FOR_WINDOWS"
-    Save-InstallerState @{ stage = "waiting_for_windows"; step = 3 }
+    param([string]$DistroName = $PreferredDistro)
+    Write-WslListVerbose
+    Save-InstallerState @{ stage = "waiting_for_windows"; step = 3; target_distro = $DistroName }
     $started = Get-Date
     Show-WorkingPanel -Step 3 -StepName "PREPARING WINDOWS" -Detail "Windows is currently enabling Linux support" -Started $started -Typical "2 to 10 minutes"
+
+    # Prefer dedicated name. Store Ubuntu may only offer "Ubuntu" — import path for side-by-side.
+    $family = Get-WslUbuntuFamilyNames
+    $already = $family | Where-Object { $_.Equals($DistroName, [System.StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+    if ($already) {
+        Write-KeepLog "distro already present: $already" -Stage "WAITING_FOR_WINDOWS"
+        return 0
+    }
+
+    if ($DistroName -eq $PreferredDistro -and $family.Count -gt 0) {
+        # Side-by-side dedicated create via Ubuntu WSL rootfs import
+        $rc = Install-DedicatedUbuntuOtacon
+        Write-KeepLog "dedicated import exit=$rc" -Stage "WAITING_FOR_WINDOWS"
+        return $rc
+    }
+
+    Write-KeepLog "wsl --install -d Ubuntu (virgin path; will rename/use as dedicated when possible)" -Stage "WAITING_FOR_WINDOWS"
     $p = Start-Process -FilePath "wsl.exe" -ArgumentList "--install","-d","Ubuntu" -PassThru -NoNewWindow
     while (-not $p.HasExited) {
         Show-WorkingPanel -Step 3 -StepName "PREPARING WINDOWS" -Detail "Windows is currently enabling Linux support" -Started $started -Typical "2 to 10 minutes"
@@ -665,7 +985,50 @@ function Step-EnableWsl {
         Start-Sleep -Seconds 4
     }
     Write-KeepLog "wsl --install exit=$($p.ExitCode)" -Stage "WAITING_FOR_WINDOWS"
+    # On virgin machines the store distro is named Ubuntu — record intent for dedicated rename/import next run.
+    if ($DistroName -eq $PreferredDistro) {
+        Save-InstallerState @{ ubuntu_name = "Ubuntu"; ubuntu_mode = "virgin_ubuntu_pending_dedicated"; target_distro = $PreferredDistro }
+    }
     return $p.ExitCode
+}
+
+function Install-DedicatedUbuntuOtacon {
+    <#
+      Create Ubuntu-Otacon beside existing Ubuntu* via rootfs import.
+      Does not mutate existing distros.
+    #>
+    $destRoot = Join-Path $KeepDir "wsl\$PreferredDistro"
+    $tarPath  = Join-Path $KeepDir "cache\ubuntu-wsl.rootfs.tar.gz"
+    New-Item -ItemType Directory -Force -Path (Split-Path $destRoot), (Split-Path $tarPath) | Out-Null
+
+    if (-not (Test-Path -LiteralPath $tarPath)) {
+        $url = "https://cloud-images.ubuntu.com/wsl/releases/jammy/current/ubuntu-jammy-wsl-amd64-wsl.rootfs.tar.gz"
+        Write-KeepLog "downloading Ubuntu WSL rootfs for $PreferredDistro from $url" -Stage "WAITING_FOR_WINDOWS"
+        Write-Host "  Downloading dedicated Ubuntu image for $PreferredDistro ..." -ForegroundColor Cyan
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tarPath -UseBasicParsing -ErrorAction Stop
+        } catch {
+            Write-KeepLog "rootfs download failed: $($_.Exception.Message)" -Level "ERROR" -Stage "WAITING_FOR_WINDOWS"
+            Show-Box "COULD NOT CREATE DEDICATED DISTRO" @(
+                "Could not download the Ubuntu image for $PreferredDistro.",
+                "",
+                $_.Exception.Message,
+                "",
+                "You can Retry, or choose Reuse on the previous screen next time.",
+                "",
+                "Existing Ubuntu distributions were not changed."
+            ) -Color Red
+            return 1
+        }
+    }
+
+    Write-KeepLog "wsl --import $PreferredDistro $destRoot $tarPath" -Stage "WAITING_FOR_WINDOWS"
+    $p = Start-Process -FilePath "wsl.exe" -ArgumentList "--import",$PreferredDistro,$destRoot,$tarPath,"--version","2" -PassThru -NoNewWindow -Wait
+    $code = $p.ExitCode
+    if ($code -eq 0) {
+        Save-InstallerState @{ ubuntu_name = $PreferredDistro; ubuntu_mode = "dedicated" }
+    }
+    return $code
 }
 
 function Step-WaitUbuntuInit {
@@ -812,18 +1175,34 @@ function Invoke-WslInstallPhase {
     $targetEnv = ""
     if ($TargetUser) { $targetEnv = "OTACON_TARGET_USER=$TargetUser" }
 
+    # Prefer local package install_otacon.sh (pinned tree) over floating GitHub main.
+    $localWin = Join-Path $RepoRoot "install_otacon.sh"
+    $localWsl = ""
+    if (Test-Path -LiteralPath $localWin) {
+        try {
+            $localWsl = ((& wsl.exe -d $Name -- wslpath -a $localWin 2>$null) | Select-Object -First 1)
+            if ($localWsl) { $localWsl = "$localWsl".Trim() }
+        } catch { $localWsl = "" }
+    }
+    $localEsc = if ($localWsl) { $localWsl.Replace("'", "'\''") } else { "" }
+
     $bash = @"
 set -euo pipefail
 TMP=`$(mktemp /tmp/otacon-install.XXXXXX.sh)
 trap 'rm -f "`$TMP"' EXIT
-curl -fsSL --connect-timeout 30 --max-time 120 https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/$Branch/install_otacon.sh -o "`$TMP"
+LOCAL_SH='$localEsc'
+if [ -n "`$LOCAL_SH" ] && [ -s "`$LOCAL_SH" ]; then
+  cp "`$LOCAL_SH" "`$TMP"
+else
+  curl -fsSL --connect-timeout 30 --max-time 120 https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/$Branch/install_otacon.sh -o "`$TMP"
+fi
 test -s "`$TMP" || { echo 'Download failed or empty installer' >&2; exit 1; }
 head -n1 "`$TMP" | grep -q bash || { echo 'Downloaded file does not look like the Otacon installer' >&2; exit 1; }
 env $EnvPass OTACON_INSTALL_PHASE=$Phase $targetEnv bash "`$TMP"
 "@
 
     if (Test-Path $LogPipe) { Remove-Item -LiteralPath $LogPipe -Force -ErrorAction SilentlyContinue }
-    Write-KeepLog "starting linux phase=$Phase as=$AsUser target=$TargetUser in $Name" -Stage "INSTALLING_OTACON"
+    Write-KeepLog "starting linux phase=$Phase as=$AsUser target=$TargetUser in $Name branch=$Branch local=$([bool]$localWsl)" -Stage "INSTALLING_OTACON"
 
     $bashWrapped = $bash + " 2>&1"
     $argList = @("-d", $Name) + $userArg + @("--", "bash", "-lc", $bashWrapped)
@@ -1047,13 +1426,24 @@ function Step-InstallOtacon {
             Write-Host "---- last 50 log lines (finalize) ----" -ForegroundColor Yellow
             Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
         }
-        Write-KeepLog "finalize failed exit=$code (user phase was $userCode); service may still be running via nohup" -Level "WARN" -Stage "INSTALLING_OTACON"
-        # Degraded: user phase may have started Otacon via nohup; don't hard-fail READY if user was 0/2
-        if ($userCode -eq 0 -or $userCode -eq 2) { return $userCode }
+        # P0-5: finalize soft-fail must NOT look like success. Durable systemd units
+        # (otacon + otacon-tts) are installed only in finalize — never treat nohup as READY.
+        Write-KeepLog "finalize failed exit=$code (user phase was $userCode) — hard FAIL" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        Save-InstallerState @{ stage = "failed"; last_error = "Finalize failed (exit $code). systemd units not durable." }
+        Show-SetupNeedsHelp -Step "finalizing systemd services" -PlainError (
+            "Finalize failed (exit $code). Otacon may be running temporarily but will not survive reboot. Log: $logPipe"
+        ) | Out-Null
         return $code
     }
 
     return $userCode
+}
+
+function Test-WakeTaskRegistered {
+    try {
+        $task = Get-ScheduledTask -TaskName "OtaconAutoStart" -ErrorAction SilentlyContinue
+        return [bool]$task
+    } catch { return $false }
 }
 
 function Step-RegisterWakeTask {
@@ -1063,7 +1453,37 @@ function Step-RegisterWakeTask {
         Write-KeepLog "install-wake-task.ps1 missing - skip" -Level "WARN" -Stage "STARTING"
         return $false
     }
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $ps1 -DistroName $Name -Port $Port | Out-Null
+    # P0-3: Register-ScheduledTask needs elevation; surface errors (never Out-Null).
+    $ok = $false
+    $errText = ""
+    try {
+        $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $ps1 -DistroName $Name -Port $Port 2>&1
+        $ok = ($LASTEXITCODE -eq 0)
+        if (-not $ok) { $errText = ($out | Out-String).Trim() }
+    } catch {
+        $ok = $false
+        $errText = $_.Exception.Message
+    }
+    if (-not $ok -or -not (Test-WakeTaskRegistered)) {
+        Write-KeepLog "wake task register failed: $errText — elevating" -Level "WARN" -Stage "STARTING"
+        if (-not (Test-IsAdmin)) {
+            if (-not (Ensure-Admin)) {
+                Write-KeepLog "wake task: user declined elevation" -Level "ERROR" -Stage "STARTING"
+                return $false
+            }
+        }
+        try {
+            $out2 = & powershell -NoProfile -ExecutionPolicy Bypass -File $ps1 -DistroName $Name -Port $Port 2>&1
+            $ok = ($LASTEXITCODE -eq 0) -and (Test-WakeTaskRegistered)
+            if (-not $ok) {
+                Write-KeepLog "wake task still failed after elevation: $($out2 | Out-String)" -Level "ERROR" -Stage "STARTING"
+                return $false
+            }
+        } catch {
+            Write-KeepLog "wake task elevated register exception: $($_.Exception.Message)" -Level "ERROR" -Stage "STARTING"
+            return $false
+        }
+    }
     # Also drop an Open Otacon launcher
     $openBat = Join-Path $KeepDir "Open-Otacon.bat"
     $assistant = Join-Path $RepoRoot "deploy\windows-setup-assistant.ps1"
@@ -1072,8 +1492,33 @@ function Step-RegisterWakeTask {
 title Open Otacon
 powershell -NoProfile -ExecutionPolicy Bypass -File "$assistant" -Open -RepoRoot "$RepoRoot"
 "@ | Set-Content -Path $openBat -Encoding ASCII
-    Write-KeepLog "wake task + Open-Otacon.bat registered" -Stage "STARTING"
-    return $true
+    Write-KeepLog "wake task + Open-Otacon.bat registered ok=$(Test-WakeTaskRegistered)" -Stage "STARTING"
+    return (Test-WakeTaskRegistered)
+}
+
+function Invoke-RepairTtsAndWake {
+    <# P0-2 / P1-5: Repair path — promote TTS unit, start TTS+Core, register wake, spoken preview. #>
+    param([string]$Name)
+    Write-KeepLog "Repair: finalize TTS + wake + preview" -Stage "REPAIR"
+    $targetUser = (& wsl.exe -d $Name -- bash -lc "whoami" 2>$null | Select-Object -First 1)
+    if (-not $targetUser) { $targetUser = "root" }
+    $logPipe = Join-Path $LogDir "repair-finalize.log"
+    $started = Get-Date
+    $gpuWin = Get-WindowsNvidiaName
+    $gpuWsl = Get-WslNvidiaName -Name $Name
+    $envPass = "OTACON_CHAT_PORT=$Port"
+    $code = Invoke-WslInstallPhase -Name $Name -Phase "finalize" -AsUser "root" -TargetUser $targetUser `
+        -EnvPass $envPass -Started $started -GpuWin $gpuWin -GpuWsl $gpuWsl -LogPipe $logPipe `
+        -OverallTimeoutMin 15 -StallTimeoutMin 10
+    if ($code -ne 0) {
+        Write-KeepLog "Repair finalize exit=$code" -Level "WARN" -Stage "REPAIR"
+    }
+    & wsl.exe -d $Name -u root -- bash -lc "systemctl start otacon-tts.service 2>/dev/null; systemctl start otacon.service 2>/dev/null; true" 2>$null | Out-Null
+    $wakeOk = Step-RegisterWakeTask -Name $Name
+    Start-Sleep -Seconds 2
+    $tts = Test-OtaconTts
+    Write-KeepLog "Repair done wake=$wakeOk tts=$($tts.ok) reason=$($tts.reason)" -Stage "REPAIR"
+    return ($tts.ok -and $wakeOk)
 }
 
 function Step-Verify {
@@ -1082,12 +1527,14 @@ function Step-Verify {
     $started = Get-Date
     for ($i = 0; $i -lt 40; $i++) {
         Show-WorkingPanel -Step 8 -StepName "VERIFYING OTACON" -Detail "Performing final systems check on localhost:$Port" -Started $started -Typical "1 to 3 minutes"
-        if (Test-OtaconHealth) { return $true }
-        # try start service
-        & wsl.exe -d $Name -u root -- systemctl start otacon 2>$null | Out-Null
+        $tts = Test-OtaconTts
+        if ((Test-OtaconHealth) -and $tts.ok) { return $true }
+        # P0-1: start TTS then Core (wake path parity)
+        & wsl.exe -d $Name -u root -- bash -lc "systemctl start otacon-tts.service 2>/dev/null; systemctl start otacon.service 2>/dev/null; true" 2>$null | Out-Null
         Start-Sleep -Seconds 3
     }
-    return (Test-OtaconHealth)
+    $tts = Test-OtaconTts
+    return ((Test-OtaconHealth) -and $tts.ok)
 }
 
 # ---------------------------------------------------------------------------
@@ -1095,7 +1542,7 @@ function Step-Verify {
 # ---------------------------------------------------------------------------
 function Start-GuidedSetup {
     Show-Banner
-    Write-KeepLog "installer launch Resume=$Resume" -Stage "READY"
+    Write-KeepLog "installer launch Resume=$Resume Force=$($script:ForceInstall)" -Stage "READY"
 
     $st = Get-InstallerState
     if ($Resume -or $st["stage"] -eq "waiting_for_reboot" -or $st["resume_registered"]) {
@@ -1113,23 +1560,87 @@ function Start-GuidedSetup {
     $snap = Get-WhereYouAre
     Show-WhereYouAre $snap
 
-    if ($snap.web_health) {
-        Show-Box "OTACON IS READY" @(
-            "installation completed successfully",
+    # Gate B: foreign HTTP on 5757 must never look like READY
+    if ($snap.occupied_non_otacon) {
+        Show-NonOtaconPortDiagnostic (Test-OtaconIdentity)
+        return 1
+    }
+
+    # Gate A: healthy existing install → Open / Repair / Reinstall (never silent exit)
+    # P0-2 / P1-4: do NOT claim COMPLETE / clear errors if TTS is down.
+    if ($snap.web_health -and -not $script:ForceInstall) {
+        $ttsOk = [bool]$snap.tts_ok
+        $title = if ($ttsOk) { "OTACON IS READY" } else { "OTACON NEEDS REPAIR" }
+        $color = if ($ttsOk) { [ConsoleColor]::Green } else { [ConsoleColor]::Yellow }
+        $lines = @(
+            $(if ($ttsOk) { "otacon is already installed and responding" } else { "chat may be up, but the voice engine is not healthy" }),
             "",
-            "otacon responded to its health check",
-            "",
-            "open otacon",
+            $(if ($ttsOk) { "identity check passed on localhost:$Port" } else { "voice reason: $($snap.tts_reason)" }),
             "",
             "http://localhost:$Port",
             "",
-            "press O to open otacon",
-            "press X to finish"
-        ) -Color Green
-        Save-InstallerState @{ stage = "complete" }
-        $c = Read-Choice "  Choice [O/X]: " @("O","X")
-        if ($c -eq "O") { Start-Process $HealthUrl }
-        return 0
+            "[ O ] Open Otacon",
+            "[ P ] Repair  (TTS unit + wake + spoken preview)",
+            "[ R ] Reinstall  (force reinstall path)",
+            "[ X ] Exit"
+        )
+        Show-Box $title $lines -Color $color
+        if ($ttsOk) {
+            Save-InstallerComplete
+        } else {
+            Save-InstallerState @{ stage = "degraded"; last_error = "TTS down: $($snap.tts_reason)" }
+        }
+        $c = Read-Choice "  Choice [O/P/R/X]: " @("O","P","R","X")
+        if ($c -eq "O") {
+            Start-Process $HealthUrl
+            return $(if ($ttsOk) { 0 } else { 2 })
+        }
+        if ($c -eq "X") { return $(if ($ttsOk) { 0 } else { 2 }) }
+        if ($c -eq "P") {
+            $script:ForceInstall = $true
+            Write-KeepLog "user chose Repair" -Stage "READY"
+            $ubuntu = Get-UbuntuDistroName
+            if ($ubuntu) {
+                if (Invoke-RepairTtsAndWake -Name $ubuntu) {
+                    Save-InstallerComplete
+                    Show-Box "REPAIR COMPLETE" @(
+                        "voice engine and wake task restored",
+                        "",
+                        "http://localhost:$Port",
+                        "",
+                        "press O to open, X to finish"
+                    ) -Color Green
+                    $c2 = Read-Choice "  Choice [O/X]: " @("O","X")
+                    if ($c2 -eq "O") { Start-Process $HealthUrl }
+                    return 0
+                }
+                Write-Host "  Repair did not fully restore TTS — continuing into guided setup." -ForegroundColor DarkYellow
+            }
+        }
+        if ($c -eq "R") {
+            $script:ForceInstall = $true
+            $script:ReinstallRequested = $true
+            Write-KeepLog "user chose Reinstall" -Stage "READY"
+        }
+        # Fall through into guided install (do not return)
+    } elseif ($snap.web_health -and $script:ForceInstall) {
+        Write-KeepLog "Force/Repair/Reinstall bypass of READY short-circuit" -Stage "READY"
+        if ($Repair -or ($script:ForceInstall -and -not $script:ReinstallRequested)) {
+            $ubuntu = Get-UbuntuDistroName
+            if ($ubuntu -and (Invoke-RepairTtsAndWake -Name $ubuntu)) {
+                Save-InstallerComplete
+                Show-Box "REPAIR COMPLETE" @(
+                    "voice engine and wake task restored (--repair/--force)",
+                    "",
+                    "http://localhost:$Port",
+                    "",
+                    "press O to open, X to finish"
+                ) -Color Green
+                $c2 = Read-Choice "  Choice [O/X]: " @("O","X")
+                if ($c2 -eq "O") { Start-Process $HealthUrl }
+                return 0
+            }
+        }
     }
 
     Show-Box "BEFORE WE START" @(
@@ -1169,16 +1680,22 @@ function Start-GuidedSetup {
     # [2/8] virtualization / admin for feature enable
     Write-Host "  [2/$TotalSteps] checking virtualization / permissions" -ForegroundColor Cyan
 
-    # [3/8] WSL
+    # [3/8] WSL — Gate E: explicit distro choice
     Write-Host "  [3/$TotalSteps] checking wsl" -ForegroundColor Cyan
-    $ubuntu = Get-UbuntuDistroName
-    if (-not (Test-WslPresent) -or -not $ubuntu) {
+    Write-WslListVerbose
+    $ubuntu = Resolve-OtaconDistroInteractive
+    if ($null -eq $ubuntu) {
+        Write-Host "  Aborted. Existing WSL distributions were not changed." -ForegroundColor DarkYellow
+        return 1
+    }
+    $needCreate = -not (Get-WslUbuntuFamilyNames | Where-Object { $_.Equals($ubuntu, [System.StringComparison]::OrdinalIgnoreCase) })
+    if (-not (Test-WslPresent) -or $needCreate) {
         if (-not (Ensure-Admin)) { return 0 }
-        Write-Host "  [ OTACON ] preparing linux environment" -ForegroundColor Cyan
-        $code = Step-EnableWsl
+        Write-Host "  [ OTACON ] preparing linux environment ($ubuntu)" -ForegroundColor Cyan
+        $code = Step-EnableWsl -DistroName $ubuntu
         $ubuntu = Get-UbuntuDistroName
+        if (-not $ubuntu) { $ubuntu = $PreferredDistro }
         if (-not (Test-UbuntuReady $ubuntu)) {
-            # Often reboot required after feature enable
             $s2 = Get-WhereYouAre
             if (-not $s2.ubuntu_ready) {
                 Request-RestartConfirmation
@@ -1186,7 +1703,8 @@ function Start-GuidedSetup {
             }
         }
     } else {
-        Write-Host "  [ok] wsl already installed" -ForegroundColor Green
+        Write-Host "  [ok] wsl already installed (distro=$ubuntu)" -ForegroundColor Green
+        Save-InstallerState @{ ubuntu_name = $ubuntu }
     }
 
     # [4/8] ubuntu
@@ -1194,7 +1712,7 @@ function Start-GuidedSetup {
     $ubuntu = Get-UbuntuDistroName
     if (-not $ubuntu) {
         if (-not (Ensure-Admin)) { return 0 }
-        Step-EnableWsl | Out-Null
+        Step-EnableWsl -DistroName $PreferredDistro | Out-Null
         $ubuntu = Get-UbuntuDistroName
         if (-not $ubuntu) {
             $act = Show-SetupNeedsHelp -Step "installing ubuntu" -PlainError "Windows did not create an Ubuntu environment for OtaconsKeep yet. A restart may still be required."
@@ -1233,41 +1751,95 @@ function Start-GuidedSetup {
 
     # [6/8] install otacon
     Write-Host "  [6/$TotalSteps] installing otacon" -ForegroundColor Cyan
-    if (Test-OtaconFiles $ubuntu -and (Test-OtaconHealth)) {
-        Write-Host "  [ok] otaconskeep already installed and healthy" -ForegroundColor Green
+    $preTts = Test-OtaconTts
+    if ((-not $script:ForceInstall) -and (Test-OtaconFiles $ubuntu) -and (Test-OtaconHealth) -and $preTts.ok) {
+        Write-Host "  [ok] otaconskeep already installed and healthy (incl. voice)" -ForegroundColor Green
     } else {
         $rc = Step-InstallOtacon -Name $ubuntu
         if ($rc -ne 0 -and $rc -ne 2) {
-            $act = Show-SetupNeedsHelp -Step "installing otacon" -PlainError "The Linux installer exited with code $rc. Your files were not wiped. You can retry."
+            # Gate C: leave stage=failed with last_error (Show-SetupNeedsHelp already sets it)
+            $tail = Join-Path $LogDir "linux-install-tail.log"
+            $act = Show-SetupNeedsHelp -Step "installing otacon" -PlainError (
+                "The Linux installer exited with code $rc. Your files were not wiped. You can retry. Log: $tail"
+            )
             if ($act -eq "retry") { return (Start-GuidedSetup) }
             return $rc
         }
         if ($rc -eq 2) {
-            Write-Host "  [warn] Otacon installed DEGRADED (core up, optional piece failed)" -ForegroundColor DarkYellow
+            Write-Host "  [warn] Otacon installed DEGRADED (core up, optional piece failed — not green READY yet)" -ForegroundColor DarkYellow
+            Save-InstallerState @{ stage = "degraded"; last_error = "Linux installer returned DEGRADED (exit 2)" }
         }
     }
 
     # [7/8] starting services
     Write-Host "  [7/$TotalSteps] starting services" -ForegroundColor Cyan
-    Step-RegisterWakeTask -Name $ubuntu | Out-Null
-    & wsl.exe -d $ubuntu -u root -- systemctl start otacon 2>$null | Out-Null
+    $wakeOk = Step-RegisterWakeTask -Name $ubuntu
+    if (-not $wakeOk) {
+        Write-Host "  [warn] logon wake task not registered (Access Denied or missing) — voice may not survive reboot" -ForegroundColor DarkYellow
+        Write-KeepLog "wake task missing before READY" -Level "WARN" -Stage "STARTING"
+    }
+    & wsl.exe -d $ubuntu -u root -- bash -lc "systemctl start otacon-tts.service 2>/dev/null; systemctl start otacon.service 2>/dev/null; true" 2>$null | Out-Null
     Write-Host "  [ OTACON ] bringing the keep online" -ForegroundColor Cyan
 
-    # [8/8] verify
+    # [8/8] verify — identity + TTS health required for green READY
     Write-Host "  [8/$TotalSteps] verifying otacon" -ForegroundColor Cyan
     Write-Host "  [ OTACON ] performing final systems check" -ForegroundColor Cyan
     if (-not (Step-Verify -Name $ubuntu)) {
-        $act = Show-SetupNeedsHelp -Step "starting otacon" -PlainError "Otacon did not answer http://localhost:$Port yet. The install may still be finishing - retry in a minute."
+        $id = Test-OtaconIdentity
+        if ($id.occupied_non_otacon) {
+            Show-NonOtaconPortDiagnostic $id
+            Save-InstallerState @{ stage = "failed"; last_error = "Port $Port is occupied by a non-Otacon service."; last_step = "verifying otacon" }
+            return 1
+        }
+        $tts = Test-OtaconTts
+        if ((Test-OtaconHealth) -and -not $tts.ok) {
+            Save-InstallerState @{ stage = "degraded"; last_error = "TTS down after verify: $($tts.reason)" }
+            Show-Box "OTACON DEGRADED" @(
+                "chat interface responded, but the voice engine did not",
+                "",
+                "reason: $($tts.reason)",
+                "",
+                "press P to repair voice now, X to finish (not green READY)"
+            ) -Color Yellow
+            $c = Read-Choice "  Choice [P/X]: " @("P","X")
+            if ($c -eq "P") {
+                if (Invoke-RepairTtsAndWake -Name $ubuntu) {
+                    Save-InstallerComplete
+                    Show-Box "OTACON IS READY" @(
+                        "voice restored",
+                        "",
+                        "http://localhost:$Port",
+                        "",
+                        "press O to open, X to finish"
+                    ) -Color Green
+                    $c2 = Read-Choice "  Choice [O/X]: " @("O","X")
+                    if ($c2 -eq "O") { Start-Process $HealthUrl }
+                    return 0
+                }
+            }
+            return 2
+        }
+        $act = Show-SetupNeedsHelp -Step "starting otacon" -PlainError "Otacon did not answer http://localhost:$Port/api/branding yet. The install may still be finishing - retry in a minute."
         if ($act -eq "retry") { return (Start-GuidedSetup) }
         return 1
     }
 
-    Save-InstallerState @{ stage = "complete"; step = 8 }
+    if (-not (Test-WakeTaskRegistered)) {
+        Write-Host "  [warn] OtaconAutoStart wake task still missing — registering once more" -ForegroundColor DarkYellow
+        [void](Step-RegisterWakeTask -Name $ubuntu)
+    }
+
+    Save-InstallerComplete
     Clear-ResumeMarkers
-    Show-Box "OTACON IS READY" @(
+    $ttsFinal = Test-OtaconTts
+    $sttNote = "mic/STT: not installed by default (set OTACON_INSTALL_STT=1 to enable)"
+    $readyLines = @(
         "installation completed successfully",
         "",
-        "otacon responded to its health check",
+        "otacon identity check passed",
+        "voice engine: $($ttsFinal.reason)",
+        "wake task: $(if (Test-WakeTaskRegistered) { 'registered' } else { 'MISSING — reboot may not auto-start' })",
+        $sttNote,
         "",
         "open otacon",
         "",
@@ -1277,8 +1849,9 @@ function Start-GuidedSetup {
         "",
         "press O to open otacon",
         "press X to finish"
-    ) -Color Green
-    Write-KeepLog "COMPLETE health ok" -Stage "COMPLETE"
+    )
+    Show-Box "OTACON IS READY" $readyLines -Color Green
+    Write-KeepLog "COMPLETE identity+tts health ok wake=$(Test-WakeTaskRegistered)" -Stage "COMPLETE"
     $c = Read-Choice "  Choice [O/X]: " @("O","X")
     if ($c -eq "O") { Start-Process $HealthUrl }
     return 0

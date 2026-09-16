@@ -30,7 +30,8 @@ set -Eeuo pipefail
 #   - Installs Tauri CLI v2 if missing
 #   - Builds the native .deb package
 #   - Optionally installs the generated .deb
-#   - Launches the setup wizard and checks http://127.0.0.1:8787
+#   - Launches the setup wizard and checks http://127.0.0.1:5757
+#     (legacy wizard default 8787 is retired — Core/canonical port is always 5757)
 #   - Installs Ollama + a VRAM-sized default chat model (skip: OTACON_INSTALL_DEFAULT_MODEL=0)
 #   - Installs Genome Voice Trainer when a GPU path is available (skip: OTACON_INSTALL_VOICE_TRAINER=0)
 #
@@ -1016,25 +1017,49 @@ phase_finalize() {
     die "Service draft owner is '$draft_owner', expected '$TARGET_USER'. Aborting finalize."
   fi
   install -m 644 "$service_draft" "$service_file"
+
+  # P0-1 / P0-5: Piper was installed in user phase ⇒ TTS unit is required for finalize PASS.
+  local piper_expected=0
+  if [[ -f "$tts_draft" ]] || [[ -d "$user_home/.config/otacon/piper" ]] || \
+     [[ -f "$user_home/.config/otacon/tts.env" ]]; then
+    piper_expected=1
+  fi
   if [[ -f "$tts_draft" ]]; then
     local tts_owner
     tts_owner="$(stat -c '%U' "$tts_draft" 2>/dev/null || true)"
     if [[ "$tts_owner" == "$TARGET_USER" ]]; then
       install -m 644 "$tts_draft" "$tts_file"
+      ok "Installed otacon-tts.service from user draft"
     else
-      warn "Skipping otacon-tts.service — draft owner '$tts_owner' != '$TARGET_USER'"
+      die "otacon-tts.service.draft owner is '$tts_owner', expected '$TARGET_USER'"
     fi
+  elif [[ "$piper_expected" == "1" ]]; then
+    die "Piper data present but otacon-tts.service.draft missing — re-run user phase 6.5t"
   else
-    warn "No otacon-tts.service.draft yet — voice preview needs Piper from user-phase 6.5t"
+    warn "No otacon-tts.service.draft — voice preview not configured this install"
   fi
+
   if command_exists systemctl && [[ -d /run/systemd/system ]]; then
+    # Kill orphan nohup Piper so the unit owns :10200
+    pkill -f "wyoming-piper.*10200" 2>/dev/null || true
+    sleep 1
     systemctl daemon-reload
     if [[ -f "$tts_file" ]]; then
       systemctl enable otacon-tts.service >/dev/null 2>&1 || true
       systemctl restart otacon-tts.service || true
+      sleep 2
+      if ! systemctl is-active --quiet otacon-tts.service; then
+        die "otacon-tts.service failed to become active after finalize (journalctl -u otacon-tts)"
+      fi
+      ok "otacon-tts.service enabled and active"
+    elif [[ "$piper_expected" == "1" ]]; then
+      die "Piper expected but otacon-tts.service was not installed"
     fi
     systemctl enable otacon.service >/dev/null 2>&1 || true
     systemctl restart otacon.service
+    if ! systemctl is-enabled --quiet otacon.service 2>/dev/null; then
+      warn "otacon.service enable returned non-zero — check systemd"
+    fi
     if command_exists ollama; then
       systemctl enable ollama >/dev/null 2>&1 || true
       systemctl restart ollama >/dev/null 2>&1 || true
@@ -1042,6 +1067,9 @@ phase_finalize() {
     ok "otacon.service installed and started as user=$TARGET_USER"
   else
     warn "systemd not active yet; unit installed to $service_file for next boot"
+    if [[ "$piper_expected" == "1" && ! -f "$tts_file" ]]; then
+      die "systemd inactive and TTS unit missing — cannot guarantee durable voice"
+    fi
   fi
   stage "6.7" "PASS" "Finalize complete"
   emit_phase_exit 0 "finalize-ok"
@@ -1372,7 +1400,7 @@ piper_health_ok() {
 }
 
 ensure_otacon_tts_running() {
-  # Re-start Piper if the install left it dead or a prior session died.
+  # Prefer systemd unit (durable). Fall back to nohup only if unit absent.
   local data_dir="${OTACON_PIPER_DATA_DIR:-$HOME/.config/otacon/piper}"
   local port="${OTACON_TTS_PORT:-10200}"
   local endpoint="wyoming://127.0.0.1:${port}"
@@ -1385,20 +1413,33 @@ ensure_otacon_tts_running() {
   if piper_health_ok "$endpoint" 3; then
     return 0
   fi
-  warn "Piper TTS not healthy — restarting wyoming-piper on port $port"
+  warn "Piper TTS not healthy — restarting"
+  if command_exists systemctl && [[ -d /run/systemd/system ]] && \
+     systemctl list-unit-files otacon-tts.service >/dev/null 2>&1; then
+    # Clear orphan nohup so the unit owns the port
+    pkill -f "wyoming-piper.*${port}" 2>/dev/null || true
+    sleep 1
+    systemctl restart otacon-tts.service >/dev/null 2>&1 || systemctl start otacon-tts.service >/dev/null 2>&1 || true
+    sleep 3
+    if piper_health_ok "$endpoint" 5; then
+      ok "Piper TTS restarted via systemd otacon-tts.service"
+      return 0
+    fi
+  fi
   if ! "$VPIP" show wyoming-piper >/dev/null 2>&1 && ! "$VPY" -c "import wyoming_piper" 2>/dev/null; then
     warn "wyoming-piper is not installed in the venv — voice preview will fail until Setup stage 6.5t succeeds"
     return 1
   fi
+  # Last resort session-only start (finalize must still promote the unit)
   start_piper_process "$data_dir" "$port"
   sleep 3
   if piper_health_ok "$endpoint" 5; then
-    ok "Piper TTS restarted at $endpoint"
+    ok "Piper TTS restarted at $endpoint (session nohup — finalize must install systemd unit)"
     return 0
   fi
   sleep 8
   if piper_health_ok "$endpoint" 5; then
-    ok "Piper TTS restarted at $endpoint"
+    ok "Piper TTS restarted at $endpoint (session nohup — finalize must install systemd unit)"
     return 0
   fi
   warn "Piper TTS still unhealthy. Check $HOME/.config/otacon/logs/piper-tts.log"
@@ -1554,8 +1595,7 @@ if cfg_path.is_file():
     cfg['llm_service'] = llm
     if not cfg.get('agents'):
         cfg['agents'] = [
-            {'id': 'agent_001', 'display_name': 'Billy', 'voice_id': 'voice_001', 'role': 'primary', 'personality': 'friendly'},
-            {'id': 'agent_002', 'display_name': 'Sarah', 'voice_id': 'voice_002', 'role': 'secondary', 'personality': 'friendly'},
+            {'id': 'agent_001', 'display_name': 'Aria', 'voice_id': 'voice_aria', 'role': 'primary', 'personality': 'friendly'},
         ]
     feats = cfg.setdefault('features', {})
     feats.setdefault('chat', True)
@@ -1565,12 +1605,11 @@ else:
     plan = recommend_hardware_plan(detect())
     cfg = build_config(
         plan,
-        'Billy',
+        'Aria',
         ['chat', 'memory'],
         branding={'product_name': 'Otacon', 'tagline': 'Local AI Command System', 'creator': 'Antonio G. Garcia', 'show_creator_credit': True},
         agents=[
-            {'id': 'agent_001', 'display_name': 'Billy', 'voice_id': 'voice_001', 'role': 'primary', 'personality': 'friendly'},
-            {'id': 'agent_002', 'display_name': 'Sarah', 'voice_id': 'voice_002', 'role': 'secondary', 'personality': 'friendly'},
+            {'id': 'agent_001', 'display_name': 'Aria', 'voice_id': 'voice_aria', 'role': 'primary', 'personality': 'friendly'},
         ],
         llm_service=llm,
     )
@@ -2045,8 +2084,8 @@ if [[ "$LAUNCH_WIZARD" == "1" ]]; then
       E2E_OK=0
     fi
 
-    # Spoken TTS proof (Billy / Warm Male via Piper). Fail soft → OPTIONAL_FAIL so chat still works,
-    # but make it loud — this is the "faint beep" class of bugs.
+    # Spoken TTS proof (Aria / voice_aria via Piper). Fail soft → OPTIONAL_FAIL so chat still works,
+    # but make it loud — this is the "faint beep" class of bugs. Windows must not claim green READY.
     log "End-to-end TTS validation (Preview → Piper → audible speech)"
     ensure_otacon_tts_running || true
     if [[ -f "$HOME/.config/otacon/tts.env" ]]; then
@@ -2056,13 +2095,13 @@ if [[ "$LAUNCH_WIZARD" == "1" ]]; then
     if PYTHONPATH=. \
       OTACON_TTS_PROVIDER="${OTACON_TTS_PROVIDER:-piper}" \
       OTACON_TTS_ENDPOINT="${OTACON_TTS_ENDPOINT:-wyoming://127.0.0.1:10200}" \
-      "$VPY" -m installer.backend_entry validate-voice --agent Billy --real; then
-      ok "Real spoken TTS succeeded (Billy / Warm Male)"
+      "$VPY" -m installer.backend_entry validate-voice --agent Aria --real; then
+      ok "Real spoken TTS succeeded (Aria / voice_aria)"
       TTS_E2E_OK=1
     else
       warn "Spoken TTS validation FAILED — Preview will be broken until Piper is healthy"
       warn "  Check: $HOME/.config/otacon/logs/piper-tts.log"
-      warn "  Then: otacon doctor   OR re-run OtaconsKeep Setup"
+      warn "  Then: otacon doctor   OR OtaconsKeep Setup → Repair (--repair)"
       OPTIONAL_FAIL=1
       TTS_E2E_OK=0
     fi

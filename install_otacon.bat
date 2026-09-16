@@ -19,7 +19,7 @@ goto ENC_VIA_ENV
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ENC_PS1%" -Path "%~f0"
 goto ENC_AFTER_CHECK
 :ENC_VIA_ENV
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $p = $env:OTACON_SETUP_SELF; if ([string]::IsNullOrWhiteSpace($p)) { Write-Host 'ERROR: installer path missing'; exit 2 }; if (-not (Test-Path -LiteralPath $p)) { Write-Host 'ERROR: installer file not found'; exit 2 }; $b = [IO.File]::ReadAllBytes($p); if ($b.Length -lt 8) { Write-Host 'ERROR: installer file empty'; exit 2 }; if ($b[0] -eq 255 -and $b[1] -eq 254) { Write-Host 'ERROR: UTF-16 encoding'; exit 3 }; if ($b[0] -eq 254 -and $b[1] -eq 255) { Write-Host 'ERROR: UTF-16 encoding'; exit 3 }; if (-not ($b[0] -eq 239 -and $b[1] -eq 187 -and $b[2] -eq 191)) { Write-Host 'ERROR: missing UTF-8 BOM. Re-download from the Otaconskeep website.'; exit 4 }; exit 0 }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $p = $env:OTACON_SETUP_SELF; if ([string]::IsNullOrWhiteSpace($p)) { Write-Host 'ERROR: installer path missing'; exit 2 }; if (-not (Test-Path -LiteralPath $p)) { Write-Host 'ERROR: installer file not found'; exit 2 }; $b = [IO.File]::ReadAllBytes($p); if ($b.Length -lt 8) { Write-Host 'ERROR: installer file empty'; exit 2 }; if ($b[0] -eq 255 -and $b[1] -eq 254) { Write-Host 'ERROR: UTF-16 encoding'; exit 3 }; if ($b[0] -eq 254 -and $b[1] -eq 255) { Write-Host 'ERROR: UTF-16 encoding'; exit 3 }; if (-not ($b[0] -eq 239 -and $b[1] -eq 187 -and $b[2] -eq 191)) { Write-Host 'ERROR: missing UTF-8 BOM. Re-download from the Otaconskeep website.'; exit 4 }; $bare = 0; for ($i = 0; $i -lt $b.Length; $i++) { if ($b[$i] -eq 10 -and ($i -eq 0 -or $b[$i-1] -ne 13)) { $bare++ } }; if ($bare -gt 0) { Write-Host 'ERROR: Unix line endings (bare LF). Re-download OtaconsKeep-Setup.bat from the Otaconskeep website.'; exit 5 }; exit 0 }"
 :ENC_AFTER_CHECK
 if errorlevel 1 goto ENC_FAIL
 goto ENC_OK
@@ -81,6 +81,12 @@ if /I "%~1"=="--open" goto SET_OPEN
 if /I "%~1"=="-open" goto SET_OPEN
 if /I "%~1"=="--resume" goto SET_RESUME
 if /I "%~1"=="-resume" goto SET_RESUME
+if /I "%~1"=="--force" goto SET_FORCE
+if /I "%~1"=="-force" goto SET_FORCE
+if /I "%~1"=="--repair" goto SET_REPAIR
+if /I "%~1"=="-repair" goto SET_REPAIR
+if /I "%~1"=="--reinstall" goto SET_REINSTALL
+if /I "%~1"=="-reinstall" goto SET_REINSTALL
 goto PARSE_SHIFT
 :SET_SYNTAX
 set "SYNTAX_ONLY=1"
@@ -89,16 +95,25 @@ goto PARSE_SHIFT
 set "DEBUG=1"
 goto PARSE_SHIFT
 :SET_STATUS
-set "MODE=-Status"
+set "MODE=!MODE! -Status"
 goto PARSE_SHIFT
 :SET_DIAG
-set "MODE=-Diagnostics"
+set "MODE=!MODE! -Diagnostics"
 goto PARSE_SHIFT
 :SET_OPEN
-set "MODE=-Open"
+set "MODE=!MODE! -Open"
 goto PARSE_SHIFT
 :SET_RESUME
-set "MODE=-Resume"
+set "MODE=!MODE! -Resume"
+goto PARSE_SHIFT
+:SET_FORCE
+set "MODE=!MODE! -Force"
+goto PARSE_SHIFT
+:SET_REPAIR
+set "MODE=!MODE! -Repair"
+goto PARSE_SHIFT
+:SET_REINSTALL
+set "MODE=!MODE! -Reinstall"
 goto PARSE_SHIFT
 :PARSE_SHIFT
 shift

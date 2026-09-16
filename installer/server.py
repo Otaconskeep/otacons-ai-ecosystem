@@ -51,6 +51,42 @@ STATIC_CONTENT_TYPES = {
     '.mp4': 'video/mp4', '.svg': 'image/svg+xml', '.json': 'application/json',
 }
 
+_PIPER_RESTART_ATTEMPTED = False
+
+
+def _try_restart_piper_once() -> bool:
+    """P1-5: one local systemd restart before telling the user to Repair Setup."""
+    global _PIPER_RESTART_ATTEMPTED
+    if _PIPER_RESTART_ATTEMPTED:
+        return False
+    _PIPER_RESTART_ATTEMPTED = True
+    import subprocess
+    import time
+    try:
+        subprocess.run(
+            ['systemctl', 'restart', 'otacon-tts.service'],
+            capture_output=True, text=True, timeout=20, check=False,
+        )
+        time.sleep(2)
+        return True
+    except Exception:
+        try:
+            subprocess.run(
+                ['systemctl', '--user', 'restart', 'otacon-tts.service'],
+                capture_output=True, text=True, timeout=20, check=False,
+            )
+            time.sleep(2)
+            return True
+        except Exception:
+            return False
+
+
+def _tts_unreachable_message() -> str:
+    return (
+        'The voice engine is not running. Open OtaconsKeep Setup and choose Repair '
+        '(or run with --repair) so Piper TTS and the wake task are restored.'
+    )
+
 
 def _llm_settings() -> tuple[str, str, str]:
     """Return (provider, endpoint, ollama_model_tag).
@@ -482,14 +518,24 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 self.send_json(payload)
             except TTSError as e:
+                if e.code == 'TTS_SERVICE_UNREACHABLE' and _try_restart_piper_once():
+                    try:
+                        result = synthesize_voice(d, agent, text, purpose=purpose)
+                        payload = public_result(result, include_audio_b64=True)
+                        if is_preview:
+                            print('[TTS PREVIEW] recovered after otacon-tts restart', flush=True)
+                        self.send_json(payload)
+                        return
+                    except TTSError as e2:
+                        e = e2
                 plain = e.message
                 if e.code == 'TTS_SERVICE_UNREACHABLE':
-                    plain = 'The voice engine is not running. Re-run OtaconsKeep Setup so Piper TTS can start.'
+                    plain = _tts_unreachable_message()
                 elif 'test double' in (e.message or '').lower() or 'near-silent' in (e.message or '').lower() or 'too short' in (e.message or '').lower():
                     plain = (
                         'Voice preview cannot play spoken audio yet. '
                         'TTS is not producing real speech (test beep or silent placeholder). '
-                        'Re-run Setup to install Piper, then try Preview again.'
+                        'Open OtaconsKeep Setup → Repair to install/start Piper, then try Preview again.'
                     )
                 if is_preview:
                     print(f'[TTS PREVIEW] FAIL code={e.code} message={e.message}', flush=True)
@@ -601,7 +647,8 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     global BIND_HOST, BIND_MODE, LAN_TOKEN
     BIND_HOST, BIND_MODE = resolve_bind_host()
-    port = int(os.getenv('OTACON_PORT', '8787'))
+    # Canonical Otacon Core port is 5757. Legacy 8787 was an early wizard default only.
+    port = int(os.getenv('OTACON_PORT', '5757'))
     if BIND_MODE == 'lan':
         LAN_TOKEN = ensure_lan_token()
         print(f'Otacon LAN mode: http://{BIND_HOST}:{port}')

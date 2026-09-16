@@ -53,6 +53,7 @@ echo ============================================================
 echo This removes:
 echo   - the Windows logon task that wakes Otacon
 echo   - the otacon.service systemd unit inside WSL
+echo   - the otacon-tts.service systemd unit inside WSL
 echo.
 echo This does NOT remove binaries, your Ubuntu/WSL environment,
 echo your Otacon install folder, your venv, or any of your data.
@@ -69,8 +70,8 @@ for /f "delims=" %%D in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%
 
 if defined UBUNTU_NAME (
     echo.
-    echo Removing the otacon.service systemd unit inside %UBUNTU_NAME%...
-    wsl.exe -d "%UBUNTU_NAME%" -u root -- bash -lc "systemctl disable --now otacon.service >/dev/null 2>&1; rm -f /etc/systemd/system/otacon.service; systemctl daemon-reload; echo removed"
+    echo Removing otacon.service and otacon-tts.service inside %UBUNTU_NAME%...
+    wsl.exe -d "%UBUNTU_NAME%" -u root -- bash -lc "systemctl disable --now otacon-tts.service >/dev/null 2>&1; systemctl disable --now otacon.service >/dev/null 2>&1; pkill -f 'wyoming-piper.*10200' 2>/dev/null || true; rm -f /etc/systemd/system/otacon-tts.service /etc/systemd/system/otacon.service; systemctl daemon-reload; echo removed"
 ) else (
     echo.
     echo No Ubuntu environment found -- nothing to remove on the Linux side.
@@ -86,9 +87,10 @@ echo install_otacon.bat again.
 echo.
 echo Full uninstall (manual - binaries/data are NOT removed above):
 echo   In Ubuntu/WSL:
-echo     systemctl disable --now otacon.service
-echo     sudo rm -f /etc/systemd/system/otacon.service
+echo     systemctl disable --now otacon-tts.service otacon.service
+echo     sudo rm -f /etc/systemd/system/otacon-tts.service /etc/systemd/system/otacon.service
 echo     sudo systemctl daemon-reload
+echo     pkill -f 'wyoming-piper' 2>/dev/null || true
 echo     rm -rf ~/otacon-ai-ecosystem ~/.config/otacon ~/.local/share/otacon
 echo     rm -f ~/.local/bin/otacon
 echo.

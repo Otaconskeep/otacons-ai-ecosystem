@@ -94,11 +94,25 @@ jobs:
           $paths = Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "bat-paths.txt")
           foreach ($p in $paths) {
             if (-not (Test-Path -LiteralPath $p)) { throw "missing $p" }
-            # Mirror Ensure-Admin construction without -Verb RunAs
+            # Mirror Ensure-Admin construction without -Verb RunAs (Gate G: --resume)
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = $p
+            $psi.Arguments = "--resume"
             $psi.WorkingDirectory = [IO.Path]::GetDirectoryName($p)
             $psi.UseShellExecute = $false
             if ([string]::IsNullOrWhiteSpace($psi.FileName)) { throw "empty FileName for $p" }
-            Write-Host "Elevation FileName OK: $($psi.FileName)"
+            if ($psi.Arguments -notmatch '--resume') { throw "elevation must pass --resume for $p" }
+            Write-Host "Elevation FileName OK: $($psi.FileName) args=$($psi.Arguments)"
           }
+
+      - name: Encoding helper rejects bare LF
+        shell: pwsh
+        run: |
+          $helper = Join-Path $env:GITHUB_WORKSPACE "deploy\check-bat-encoding.ps1"
+          $bad = Join-Path $env:RUNNER_TEMP "bare-lf.bat"
+          $bom = [byte[]](0xEF,0xBB,0xBF)
+          $body = [Text.Encoding]::UTF8.GetBytes("@echo off`necho hi`n")
+          [IO.File]::WriteAllBytes($bad, ($bom + $body))
+          & powershell -NoProfile -ExecutionPolicy Bypass -File $helper -Path $bad
+          if ($LASTEXITCODE -ne 5) { throw "expected exit 5 for bare LF, got $LASTEXITCODE" }
+          Write-Host "Bare-LF rejection OK (exit 5)"

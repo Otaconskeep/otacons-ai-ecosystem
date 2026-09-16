@@ -14,6 +14,9 @@ python3 deploy/verify-bat-cmd-syntax.py
 echo "== PowerShell -Command argument boundaries =="
 python3 deploy/verify-bat-ps-boundaries.py
 
+echo "== Windows installer release gate (A-J contracts) =="
+python3 tests/test_windows_installer_release_gate.py
+
 echo "== website download copy must match ecosystem BAT =="
 SITE_BAT="${SITE_BAT_PATH:-}"
 if [[ -z "$SITE_BAT" && -f /root/otaconskeep-site/downloads/OtaconsKeep-Setup.bat ]]; then
