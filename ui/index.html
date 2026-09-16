@@ -1,1 +1,190 @@
-<!doctype html><meta charset="utf-8"><title>Otacon Setup</title><style>body{font:16px system-ui;background:#10141d;color:#eef;max-width:820px;margin:40px auto;padding:0 24px}button{padding:12px 20px;border:0;border-radius:8px;background:#5b8cff;color:white;font-weight:600;margin:8px 4px}button:disabled{opacity:.45;cursor:not-allowed}button.speak{padding:6px 12px;min-width:2.5rem}input,select{padding:10px;border-radius:6px;border:1px solid #445;background:#202838;color:white}input:disabled,select:disabled{opacity:.5}section{background:#192131;padding:24px;border-radius:12px;margin-top:20px}.muted{color:#9aa8bd}.card{padding:12px;background:#222d40;border-radius:8px;margin:8px 0}.cap-off{opacity:.72}.msg{margin:10px 0}label{display:block;margin:12px 0}</style><h1 id="title">Welcome to Otacon</h1><p id="tag" class="muted">Local AI Command System</p><section id="page"></section><script src="/wizard.js"></script>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Otacon Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700;800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#090c11; --bg-elevated:#0e131b; --surface:#121926; --surface-2:#17202f;
+  --line:#1e2a3b; --line-bright:#2d3e56;
+  --ink:#e4edf5; --ink-dim:#8ea0b6; --ink-faint:#556579;
+  --accent:#16a893; --accent-bright:#39e6c8; --accent-dim:#0e5f52;
+  --signal:#43d98a; --signal-dim:#226b48;
+  --warn:#e0a83c; --warn-dim:#8a641f;
+  --danger:#ef5f6b; --danger-dim:#7a2c34;
+  --radius:8px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; min-height:100vh;
+  background:
+    radial-gradient(1100px 480px at 15% -10%, rgba(57,230,200,.06), transparent 60%),
+    var(--bg);
+  color:var(--ink);
+  font-family:'Figtree',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* ---------- top brand bar ---------- */
+.topbar{
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+  padding:16px 24px; border-bottom:1px solid var(--line);
+  background:rgba(9,12,17,.85); backdrop-filter:blur(6px);
+  position:sticky; top:0; z-index:10;
+}
+.brand{display:flex; align-items:center; gap:10px}
+.brand-dot{width:9px; height:9px; border-radius:50%; background:var(--accent-bright); box-shadow:0 0 10px var(--accent-bright)}
+.brand-word{font-family:'Bricolage Grotesque',sans-serif; font-weight:800; letter-spacing:.04em; text-transform:uppercase; font-size:1.05rem}
+.brand-tier{
+  font-family:'JetBrains Mono',monospace; font-size:.66rem; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--accent-bright); border:1px solid var(--accent-dim); padding:3px 8px; border-radius:20px;
+}
+.topbar-help{font-family:'JetBrains Mono',monospace; font-size:.72rem; color:var(--ink-faint)}
+
+/* ---------- wrap ---------- */
+.wrap{max-width:760px; margin:0 auto; padding:32px 24px 80px}
+
+/* ---------- hero (step 0 title area) ---------- */
+.hero{margin-bottom:28px}
+.hero .eyebrow{
+  font-family:'JetBrains Mono',monospace; font-size:.74rem; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--accent-bright); margin-bottom:10px;
+}
+h1{
+  font-family:'Bricolage Grotesque',sans-serif; font-weight:800; font-size:clamp(1.7rem,4.5vw,2.4rem);
+  margin:0 0 8px; letter-spacing:-.01em; text-wrap:balance;
+}
+#tag{font-size:.98rem; color:var(--ink-dim); margin:0}
+
+/* ---------- step progress ---------- */
+#progress{margin:22px 0 30px}
+.steps{display:flex; gap:6px; margin-bottom:10px}
+.step-seg{flex:1; height:4px; border-radius:2px; background:var(--line-bright); transition:background .2s ease}
+.step-seg.done{background:var(--accent-dim)}
+.step-seg.active{background:var(--accent-bright); box-shadow:0 0 8px rgba(57,230,200,.5)}
+.step-label{
+  font-family:'JetBrains Mono',monospace; font-size:.72rem; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--ink-faint); display:flex; justify-content:space-between; align-items:baseline;
+}
+.step-label .current{color:var(--accent-bright); font-weight:600}
+
+/* ---------- page content: #page is the only section element on the page,
+   styled as the framed panel every step (and chat) renders inside ---------- */
+#page{
+  display:flex; flex-direction:column; gap:14px;
+  background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:24px;
+}
+#page > p{color:var(--ink-dim); margin:0 0 4px; max-width:60ch}
+h2{font-family:'Bricolage Grotesque',sans-serif; font-weight:800; font-size:1.4rem; margin:0 0 14px}
+
+/* ---------- cards ---------- */
+.card{
+  background:var(--surface-2); border:1px solid var(--line-bright); border-radius:var(--radius);
+  padding:16px 18px; line-height:1.55;
+}
+.card b{color:var(--ink); font-weight:600}
+.card.cap-off{opacity:.6; border-style:dashed}
+
+/* ---------- buttons ---------- */
+button{
+  font-family:'Figtree',sans-serif; font-weight:600; font-size:.95rem;
+  padding:11px 20px; border-radius:var(--radius); border:1px solid var(--accent-bright);
+  background:var(--accent-bright); color:#04130f; cursor:pointer; margin:4px 6px 4px 0;
+  transition:background .15s ease, box-shadow .15s ease, transform .05s ease, opacity .15s ease;
+}
+button:hover:not(:disabled){background:#5cf0d6; box-shadow:0 0 14px rgba(57,230,200,.4)}
+button:active:not(:disabled){transform:translateY(1px)}
+button:disabled{opacity:.4; cursor:not-allowed; box-shadow:none}
+/* ghost variant: any button that appears alongside a primary action */
+#page button:nth-of-type(n+2), section button:nth-of-type(n+2){
+  background:transparent; color:var(--ink); border-color:var(--line-bright);
+}
+#page button:nth-of-type(n+2):hover:not(:disabled), section button:nth-of-type(n+2):hover:not(:disabled){
+  border-color:var(--accent-bright); color:var(--accent-bright); background:rgba(57,230,200,.08);
+}
+button.speak{
+  padding:6px 12px; min-width:2.6rem; background:var(--surface-2); color:var(--ink);
+  border-color:var(--line-bright); font-family:'JetBrains Mono',monospace;
+}
+button.speak:hover:not(:disabled){border-color:var(--accent-bright); color:var(--accent-bright)}
+#micButton{background:var(--surface-2); color:var(--ink); border-color:var(--line-bright); font-size:1.1rem; padding:9px 14px}
+#micButton[data-state="recording"]{background:var(--danger); border-color:var(--danger); color:#1a0708; animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,95,107,.5)}50%{box-shadow:0 0 0 8px rgba(239,95,107,0)}}
+
+/* ---------- inputs ---------- */
+input,select{
+  font-family:'Figtree',sans-serif; font-size:.95rem; padding:11px 13px; border-radius:6px;
+  border:1px solid var(--line-bright); background:var(--bg-elevated); color:var(--ink); width:100%;
+}
+input:focus,select:focus{outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent)}
+input:disabled,select:disabled{opacity:.5}
+label{display:block; margin:14px 0; font-size:.9rem; color:var(--ink-dim)}
+label > input, label > select{margin-top:6px}
+#chat{width:calc(100% - 130px); display:inline-block; vertical-align:middle}
+
+/* ---------- misc text ---------- */
+.muted{color:var(--ink-faint); font-size:.86rem}
+
+/* ---------- chat messages ---------- */
+#messages{max-height:420px; overflow-y:auto; display:flex; flex-direction:column; gap:10px}
+.msg{
+  padding:10px 14px; border-radius:10px; background:var(--surface-2); border:1px solid var(--line);
+  max-width:88%; position:relative;
+}
+.msg-user{align-self:flex-end; background:var(--accent-dim); border-color:var(--accent-dim); color:#eafff9}
+.msg-user b{color:#bdf5ea}
+.msg-agent{align-self:flex-start}
+.msg-agent b{color:var(--accent-bright)}
+.msg p{margin:0}
+
+/* ---------- capability badges ---------- */
+.card .muted{display:inline}
+
+/* ---------- footer credit ---------- */
+.credit{
+  margin-top:60px; padding-top:20px; border-top:1px solid var(--line);
+  font-family:'JetBrains Mono',monospace; font-size:.72rem; color:var(--ink-faint); text-align:center;
+}
+
+/* ---------- responsive ---------- */
+@media (max-width:520px){
+  .wrap{padding:24px 16px 60px}
+  #chat{width:100%; margin-bottom:8px}
+  .topbar-help{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001ms!important; transition-duration:.001ms!important}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <span class="brand-word">Otaconskeep</span>
+    <span class="brand-tier">Core &middot; Free</span>
+  </div>
+  <span class="topbar-help mono">discord.gg/cZDeqECzX</span>
+</div>
+
+<div class="wrap">
+  <div class="hero">
+    <p class="eyebrow">Local AI Setup</p>
+    <h1 id="title">Welcome to Otacon</h1>
+    <p id="tag" class="muted">Local AI Command System</p>
+  </div>
+  <div id="progress"></div>
+  <section id="page"></section>
+  <p class="credit">Otaconskeep &middot; Designed &amp; Engineered by Antonio G. Garcia</p>
+</div>
+
+<script src="/wizard.js"></script>
+</body>
+</html>

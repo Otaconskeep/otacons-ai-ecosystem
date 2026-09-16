@@ -33,8 +33,16 @@ function capAnnotate(key, readyLabel, fallback){
   return String(s).replace(/_/g,' ').toUpperCase();
 }
 
+function renderProgress(){
+  const bar=document.getElementById('progress');
+  if(!bar) return;
+  const s=state.step;
+  const segs=labels.map((_,i)=>`<span class="step-seg${i<s?' done':''}${i===s?' active':''}"></span>`).join('');
+  bar.innerHTML=`<div class=steps>${segs}</div><div class=step-label><span>Step ${s+1} of ${labels.length}</span><span class=current>${labels[s]}</span></div>`;
+}
+
 function render(){
-  let s=state.step; document.getElementById('title').textContent=labels[s];
+  let s=state.step; document.getElementById('title').textContent=labels[s]; renderProgress();
   if(s===0) page.innerHTML='<p>This wizard configures your local AI system. No Docker or YAML knowledge is required.</p><button onclick="next()">Get Started</button><button onclick="showChat()">Open Chat</button><button onclick="showNodes()">Compute Nodes</button>';
   if(s===1) page.innerHTML='<p>Detect your computer, GPUs, storage, and available capacity.</p><button onclick="scan()">Scan My System</button>';
   if(s===2){let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles; page.innerHTML=`<div class=card>System: ${h.os}<br>CPU: ${h.cpu.model} (${h.cpu.cores} cores)<br>Memory: ${h.ram_gb} GB</div>`+(h.gpus.length?h.gpus.map(x=>`<div class=card>${x.model} — ${x.vram_gb} GB VRAM — ${x.capability}</div>`).join(''):'<div class=card>CPU fallback (no GPU detected)</div>')+`<p class=muted>Recommended primary: ${g.primary_gpu}</p><button onclick="next()">Use Recommended Setup</button>`;}
@@ -193,9 +201,9 @@ async function toggleSpeak(msgId, text){
 
 function messageHtml(role, content, msgId){
   if(role!=='assistant' && role!==state.name){
-    return `<div class=msg><p><b>${role==='user'?'You':role}:</b> ${escapeHtml(content)}</p></div>`;
+    return `<div class="msg msg-user"><p><b>${role==='user'?'You':role}:</b> ${escapeHtml(content)}</p></div>`;
   }
-  return `<div class=msg data-msg="${msgId}">
+  return `<div class="msg msg-agent" data-msg="${msgId}">
     <p><b>${state.name}:</b> ${escapeHtml(content)}</p>
     <button type=button class=speak data-speak-btn="${msgId}" data-state=idle onclick='toggleSpeak(${msgId}, ${JSON.stringify(content)})' title="Play voice">▶</button>
     <span class=muted data-speak-err="${msgId}"></span>
