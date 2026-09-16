@@ -57,6 +57,30 @@ def test_C_failed_bootstrap_keeps_failed_state():
     assert "last_error = $null" in ASSISTANT or "last_error=$null" in ASSISTANT.replace(" ", "")
 
 
+def test_C3_honest_exit_code_never_blank_success():
+    """Blank/null PowerShell exit must not become BAT exit 0 after FAILED."""
+    assert "function ConvertTo-InstallerExitCode" in ASSISTANT
+    assert "exit (ConvertTo-InstallerExitCode" in ASSISTANT
+    setup = SETUP_BAT
+    assert "--update" in setup
+    assert "pinned local installer" in setup
+    fetch = (ROOT / "deploy" / "bootstrap-fetch.ps1").read_text(encoding="utf-8", errors="replace")
+    assert "installer-revision.txt" in fetch
+
+
+def test_C2_wsl_phase_uses_file_script_and_exit_marker():
+    """Privileged exit 42 must not become blank Start-Process ExitCode."""
+    assert "wsl-phase-" in ASSISTANT
+    assert "OTACON_PHASE_EXIT" in ASSISTANT
+    assert "fromMarker" in ASSISTANT
+    assert "WriteAllText" in ASSISTANT
+    assert '", "-c",' in ASSISTANT
+    # Stale waiting_for_reboot must yield when Ubuntu is already ready
+    assert "ubuntuReady -and -not $rebootPending" in ASSISTANT
+    fetch = (ROOT / "deploy" / "bootstrap-fetch.ps1").read_text(encoding="utf-8", errors="replace")
+    assert "install_otacon.sh" in fetch
+
+
 def test_D_success_clears_last_error():
     assert "Save-InstallerComplete" in ASSISTANT
     assert 'last_step  = "complete"' in ASSISTANT or 'last_step = "complete"' in ASSISTANT
