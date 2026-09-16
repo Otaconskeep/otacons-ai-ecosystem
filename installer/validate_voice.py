@@ -7,6 +7,7 @@ import sys
 
 from core.deployment import local_deployment
 from core.voice import (
+    assert_audible_speech,
     synthesize_voice,
     profile_for,
     profile_hash,
@@ -45,15 +46,18 @@ def main(argv=None):
             print('Then: otacon-backend validate-voice --agent Billy --real')
             return 2
         provider = os.getenv('OTACON_TTS_PROVIDER', 'piper')
-        # Real Piper voices need a non-fixture voice id unless overridden
-        if agent['voice_id'].startswith('voice_'):
+        # Allow override; default keeps Billy → voice_001 (Warm Male / Bryce Piper).
+        if os.getenv('OTACON_VOICE_ID'):
             agent = dict(agent)
-            agent['voice_id'] = os.getenv('OTACON_VOICE_ID', 'en_US-lessac-medium')
+            agent['voice_id'] = os.getenv('OTACON_VOICE_ID')
         deployment = local_deployment(tts_endpoint=endpoint, tts_provider=provider)
         mode = 'REAL'
+        purpose = 'preview'
     else:
+        os.environ['OTACON_ALLOW_TEST_TTS'] = '1'
         deployment = local_deployment(tts_endpoint='test://tts', tts_provider='test')
         mode = 'SANDBOX'
+        purpose = 'validate-voice'
 
     print(f'Mode: {mode}')
     print(f'Agent: {agent["display_name"]} ({agent["id"]})')
@@ -68,8 +72,15 @@ def main(argv=None):
             print(f'License: {profile.license}')
             print(f'Source: {profile.source}')
 
-        result = synthesize_voice(deployment, agent, text, purpose='validate-voice')
+        result = synthesize_voice(deployment, agent, text, purpose=purpose)
         validate_wav(result['bytes'])
+        if mode == 'REAL':
+            audible = assert_audible_speech(result['bytes'])
+            print(f'Audible: duration={audible["duration_sec"]:.3f}s peak={audible.get("peak")}')
+            if result.get('provider') == 'test':
+                print('Detail: REAL mode resolved TestTTSProvider — Piper is not wired')
+                print('Result: FAIL')
+                return 1
         print(f'Service: {result["service_id"]}')
         print(f'Provider (resolved): {result["provider"]}')
         print(f'Health: {result.get("health", TTS_READY)}')
@@ -81,7 +92,6 @@ def main(argv=None):
             print('REAL_TTS_ACCEPTANCE_PENDING')
             print('External acceptance command:')
             print('  OTACON_TTS_PROVIDER=piper OTACON_TTS_ENDPOINT=wyoming://<host>:<port> \\')
-            print('    OTACON_VOICE_ID=en_US-lessac-medium \\')
             print('    otacon-backend validate-voice --agent Billy --real')
         else:
             print('REAL_TTS_PASS')
