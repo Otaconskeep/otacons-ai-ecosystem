@@ -812,6 +812,26 @@ function Show-PackageRepairFailed {
     }
 }
 
+function ConvertTo-InstallerExitCode {
+    <#
+      PowerShell `exit ""` / `exit $null` becomes process exit 0 — which made the
+      BAT log "Root bootstrap failed" then "assistant exit=0". Always emit an int.
+    #>
+    param($Code)
+    $n = 0
+    if ($null -eq $Code) { return 1 }
+    if ($Code -is [int]) {
+        if ($Code -eq 0) { return 0 }
+        return [int]$Code
+    }
+    $s = [string]$Code
+    if ([string]::IsNullOrWhiteSpace($s)) { return 1 }
+    if ($s -eq "exit" -or $s -eq "failed") { return 1 }
+    if ($s -eq "retry") { return 1 }
+    if ([int]::TryParse($s, [ref]$n)) { return $n }
+    return 1
+}
+
 function Show-SetupNeedsHelp {
     param([string]$Step, [string]$PlainError)
     Show-Box "SETUP NEEDS HELP" @(
@@ -1473,7 +1493,7 @@ function Step-InstallOtacon {
                 Write-Host "  Retrying the privileged install phase against the existing WSL environment..." -ForegroundColor Yellow
                 continue
             }
-            return $code
+            return (ConvertTo-InstallerExitCode $code)
         }
         break
     }
@@ -1490,9 +1510,10 @@ function Step-InstallOtacon {
         Show-SetupNeedsHelp -Step "installing otacon (user phase)" -PlainError (
             "User install phase failed (exit $code). Log: $logPipe"
         ) | Out-Null
-        return $code
+        return (ConvertTo-InstallerExitCode $code)
     }
-    $userCode = $code
+    $userCode = [int](ConvertTo-InstallerExitCode $code)
+    if ($code -eq 2) { $userCode = 2 }
 
     # --- Phase 3: finalize (wsl -u root) — install systemd unit drafted by user phase ---
     $code = Invoke-WslInstallPhase -Name $Name -Phase "finalize" -AsUser "root" -TargetUser $targetUser `
@@ -1510,10 +1531,10 @@ function Step-InstallOtacon {
         Show-SetupNeedsHelp -Step "finalizing systemd services" -PlainError (
             "Finalize failed (exit $code). Otacon may be running temporarily but will not survive reboot. Log: $logPipe"
         ) | Out-Null
-        return $code
+        return (ConvertTo-InstallerExitCode $code)
     }
 
-    return $userCode
+    return [int]$userCode
 }
 
 function Test-WakeTaskRegistered {
@@ -1840,7 +1861,7 @@ function Start-GuidedSetup {
                 "The Linux installer exited with code $rc. Your files were not wiped. You can retry. Log: $tail"
             )
             if ($act -eq "retry") { return (Start-GuidedSetup) }
-            return $rc
+            return (ConvertTo-InstallerExitCode $rc)
         }
         if ($rc -eq 2) {
             Write-Host "  [warn] Otacon installed DEGRADED (core up, optional piece failed — not green READY yet)" -ForegroundColor DarkYellow
@@ -1938,14 +1959,19 @@ function Start-GuidedSetup {
 # Entry
 # ---------------------------------------------------------------------------
 try {
+    $revFile = Join-Path $RepoRoot "deploy\installer-revision.txt"
+    if (Test-Path -LiteralPath $revFile) {
+        $rev = (Get-Content -LiteralPath $revFile -TotalCount 1 -ErrorAction SilentlyContinue)
+        Write-KeepLog "installer revision=$rev assistantBytes=$((Get-Item -LiteralPath $MyInvocation.MyCommand.Path).Length)" -Stage "READY"
+    }
     if ($Status) { Show-StatusReport; exit 0 }
     if ($Diagnostics) { Write-DiagnosticsFile | Out-Null; exit 0 }
     if ($Open) {
         $cont = Open-OtaconIfReady
-        if ($cont -and -not (Test-OtaconHealth)) { exit (Start-GuidedSetup) }
+        if ($cont -and -not (Test-OtaconHealth)) { exit (ConvertTo-InstallerExitCode (Start-GuidedSetup)) }
         exit 0
     }
-    exit (Start-GuidedSetup)
+    exit (ConvertTo-InstallerExitCode (Start-GuidedSetup))
 } catch {
     Write-KeepLog "UNHANDLED $($_.Exception.Message)" -Level "ERROR" -Stage "FAILED"
     Show-SetupNeedsHelp -Step "unexpected error" -PlainError $_.Exception.Message | Out-Null

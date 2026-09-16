@@ -65,6 +65,7 @@ set "LAST_FAIL_CMD="
 set "LAST_FAIL_REASON="
 set "LAST_FAIL_OUT="
 set "SYNTAX_ONLY="
+set "FORCE_UPDATE="
 
 :PARSE_ARGS
 if "%~1"=="" goto ARGS_DONE
@@ -72,6 +73,9 @@ if /I "%~1"=="--syntax-check" goto SET_SYNTAX
 if /I "%~1"=="-syntax-check" goto SET_SYNTAX
 if /I "%~1"=="--debug" goto SET_DEBUG
 if /I "%~1"=="-debug" goto SET_DEBUG
+if /I "%~1"=="--update" goto SET_UPDATE
+if /I "%~1"=="-update" goto SET_UPDATE
+if /I "%~1"=="--refresh" goto SET_UPDATE
 set "ARGS=!ARGS! %~1"
 goto PARSE_SHIFT
 :SET_SYNTAX
@@ -79,6 +83,9 @@ set "SYNTAX_ONLY=1"
 goto PARSE_SHIFT
 :SET_DEBUG
 set "DEBUG=1"
+goto PARSE_SHIFT
+:SET_UPDATE
+set "FORCE_UPDATE=1"
 goto PARSE_SHIFT
 :PARSE_SHIFT
 shift
@@ -115,6 +122,16 @@ if not "!RC!"=="0" call :STAY_OPEN_AFTER_CHILD !RC!
 exit /b !RC!
 
 :NEED_FETCH
+REM Pin local AppData installer across retries unless --update/--refresh.
+REM Floating main between clicks was making Josh test a different build every run.
+if defined FORCE_UPDATE goto NEED_FETCH_FORCE
+if exist "%ASSISTANT%" if exist "%INST%\deploy\installer-revision.txt" goto USE_PINNED_LOCAL
+goto NEED_FETCH_FORCE
+:USE_PINNED_LOCAL
+call :LOG "pinned local installer present; skipping refetch - pass --update to refresh from GitHub"
+for /f "usebackq delims=" %%R in ("%INST%\deploy\installer-revision.txt") do call :LOG "pinned revision=%%R"
+goto FETCH_VERIFY_OK
+:NEED_FETCH_FORCE
 echo.
 echo ============================================================
 echo                  OTACONSKEEP SETUP
