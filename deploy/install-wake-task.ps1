@@ -1,4 +1,4 @@
-# Registers (or re-registers) the "OtaconAutoStart" logon task that wakes
+﻿# Registers (or re-registers) the "OtaconAutoStart" logon task that wakes
 # WSL so Otacon is already running by the time the user opens it. Safe to
 # run more than once -- it replaces any existing registration rather than
 # duplicating it.

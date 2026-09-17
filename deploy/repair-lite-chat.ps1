@@ -1,4 +1,4 @@
-# Otacon Lite — repair chat from Windows PowerShell (no line wrapping).
+﻿# Otacon Lite - repair chat from Windows PowerShell (no line wrapping).
 # Usage: right-click -> Run with PowerShell, OR paste the whole file into PowerShell.
 $ErrorActionPreference = "Stop"
 $Distro = "Ubuntu-22.04"

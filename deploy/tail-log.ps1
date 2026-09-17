@@ -1,4 +1,4 @@
-# Write the last N lines of a log file to an output path (Windows helper).
+﻿# Write the last N lines of a log file to an output path (Windows helper).
 # Keeps parentheses out of BAT IF (...) blocks.
 
 [CmdletBinding()]

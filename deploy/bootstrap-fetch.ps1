@@ -1,8 +1,8 @@
-# OtaconsKeep bootstrap file fetch — stdout/stderr + exit codes for the BAT wrapper.
+﻿# OtaconsKeep bootstrap file fetch - stdout/stderr + exit codes for the BAT wrapper.
 # No git. Safe to re-run. Does not store credentials.
 #
 # ROOT CAUSE FIX: never overwrite the running bootstrap-fetch.ps1 via -OutFile.
-# powershell -File keeps that path open; rewriting it fails on Windows → exit 1
+# powershell -File keeps that path open; rewriting it fails on Windows -> exit 1
 # even when the on-disk helper is already valid.
 
 [CmdletBinding()]
@@ -67,7 +67,7 @@ function Get-NormalizedPath {
 }
 
 # Do NOT list bootstrap-fetch.ps1 here when this script is already running from that path.
-# Re-fetching the running script overwrites a locked file on Windows → exit code 1.
+# Re-fetching the running script overwrites a locked file on Windows -> exit code 1.
 $full = @(
     "install_otacon.bat",
     "OtaconsKeep-Setup.bat",
@@ -187,7 +187,7 @@ foreach ($rel in $files) {
         New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     }
 
-    # Skip overwriting the running script (file lock → false failure on Windows).
+    # Skip overwriting the running script (file lock -> false failure on Windows).
     if ($selfPath -and $outFull -and ($selfPath -eq $outFull)) {
         Write-Log "skip self-overwrite $rel (running script)"
         Write-Host "  SKIP (already running): $rel" -ForegroundColor DarkYellow

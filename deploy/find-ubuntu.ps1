@@ -1,4 +1,4 @@
-# Resolve the OtaconsKeep WSL distro name (stdout) or nothing.
+﻿# Resolve the OtaconsKeep WSL distro name (stdout) or nothing.
 # Never silently mutate / pick the first random Ubuntu* on power-user PCs.
 #
 # Preference order:
@@ -59,5 +59,5 @@ if ($AllowFirstMatch) {
     }
 }
 
-# No dedicated distro and no silent first-match — caller must decide.
+# No dedicated distro and no silent first-match - caller must decide.
 exit 0

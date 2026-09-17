@@ -1,6 +1,6 @@
-# Validate a .bat file is UTF-8 with BOM and CRLF line endings.
+﻿# Validate a .bat file is UTF-8 with BOM and CRLF line endings.
 # Invoked ONLY via: powershell -File check-bat-encoding.ps1 -Path <bat>
-# Never pass the bat path after -Command — Windows PowerShell appends those
+# Never pass the bat path after -Command - Windows PowerShell appends those
 # tokens into the command text (breaks on "OtaconsKeep-Setup (1).bat").
 
 [CmdletBinding()]
@@ -37,7 +37,7 @@ if (-not ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)) {
     exit 4
 }
 
-# Reject bare LF (Unix) or mixed endings — CMD.exe and some download paths break.
+# Reject bare LF (Unix) or mixed endings - CMD.exe and some download paths break.
 $bareLf = 0
 for ($i = 0; $i -lt $b.Length; $i++) {
     if ($b[$i] -eq 0x0A) {

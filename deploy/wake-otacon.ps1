@@ -1,4 +1,4 @@
-# Wakes the Otacon WSL environment and waits for it to answer, silently.
+﻿# Wakes the Otacon WSL environment and waits for it to answer, silently.
 # No windows, no browser launch -- this only runs from a logon scheduled
 # task so Otacon is already warm by the time someone opens it manually.
 #
@@ -43,7 +43,7 @@ systemctl enable otacon.service >/dev/null 2>&1 || true
 systemctl restart otacon.service >/dev/null 2>&1 || systemctl start otacon.service >/dev/null 2>&1 || true
 # Soft ensure: if unit missing but piper venv exists, fall back once
 if ! systemctl is-active --quiet otacon-tts.service 2>/dev/null; then
-  # Public Core markers only — never /opt/otacon (private Keep).
+  # Public Core markers only - never /opt/otacon (private Keep).
   if [ -x "$HOME/.local/bin/otacon" ] || [ -d "${OTACON_INSTALL_DIR:-$HOME/otacon-ai-ecosystem}/core" ] || [ -f "$HOME/.config/otacon/config.json" ]; then
     true
   fi
@@ -67,7 +67,7 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if (-not $up) {
-    Write-Log "Not up after $TimeoutSeconds s — starting otacon-tts + otacon via systemd"
+    Write-Log "Not up after $TimeoutSeconds s - starting otacon-tts + otacon via systemd"
     try {
         Start-OtaconStack
     } catch {

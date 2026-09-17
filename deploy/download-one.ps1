@@ -1,4 +1,4 @@
-# Download a single raw GitHub file to a destination path (Windows helper).
+﻿# Download a single raw GitHub file to a destination path (Windows helper).
 # Avoids embedding parentheses-heavy PowerShell inside BAT IF (...) blocks.
 
 [CmdletBinding()]
