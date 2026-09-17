@@ -277,6 +277,9 @@ if [ "$REV_OK" -ne 1 ]; then
   exit 4
 fi
 echo "APP_REV_OK=1"
+# Preserve runtime trees across update (never delete; prove they survived).
+if [ -d "$ROOT/.venv" ]; then echo "VENV_PRESENT=1"; else echo "VENV_PRESENT=0"; fi
+if [ -d "$ROOT/.build" ]; then echo "BUILD_PRESENT=1"; else echo "BUILD_PRESENT=0"; fi
 echo "stage=content-proofs"
 
 # Content proofs for known Linux-side fixes
@@ -524,7 +527,38 @@ echo "=== capabilities ==="
 echo "$caps" | head -c 800; echo
 case "$caps" in
   *"\"chat\": \"ready\""*|*"\"chat\":\"ready\""*) echo "CHAT_CAP_OK=1" ;;
-  *) echo "CHAT_CAP_WARN"; ;;
+  *) echo "CHAT_CAP_WARN"; E2E_OK=0 ;;
+esac
+
+# Model presence (configured model must exist in Ollama when Default Model path is live).
+MODEL_OK=1
+WANT_MODEL="$(grep -E '^Environment=OTACON_LLM_MODEL=' "$UNIT" 2>/dev/null | head -1 | cut -d= -f3 || true)"
+WANT_MODEL="${WANT_MODEL:-qwen2.5:7b}"
+echo "WANT_MODEL=$WANT_MODEL"
+if command -v curl >/dev/null 2>&1; then
+  tags="$(curl -fsS --max-time 5 http://127.0.0.1:11434/api/tags 2>/dev/null || true)"
+  if [ -n "$tags" ]; then
+    if echo "$tags" | grep -q "$WANT_MODEL"; then
+      echo "MODEL_PRESENT=1"
+    else
+      echo "MODEL_PRESENT=0"
+      MODEL_OK=0
+    fi
+  else
+    echo "MODEL_TAGS_UNREACHABLE=1"
+    MODEL_OK=0
+  fi
+fi
+if [ "$MODEL_OK" -ne 1 ]; then E2E_OK=0; fi
+
+# Memory path probe (create conversation via API).
+mem_body='{"agent_id":"agent_001","user_id":"repair-probe","title":"repair-mem"}'
+mem_resp="$(curl -fsS --max-time 20 -X POST "http://127.0.0.1:${PORT}/api/conversation" \
+  -H 'Content-Type: application/json' -d "$mem_body" 2>/dev/null || true)"
+echo "MEMORY_PROBE_RAW=${mem_resp}" | head -c 300; echo
+case "$mem_resp" in
+  *'"id":'*|*"\"id\":"*) echo "MEMORY_OK=1" ;;
+  *) echo "MEMORY_FAIL"; E2E_OK=0 ;;
 esac
 
 # Memory + Aria chat twice (honest probes; not bare HTTP 200).
@@ -621,6 +655,85 @@ if (-not (Ensure-DistroRunning $distro)) {
     Write-RepairLog "WARN: distro may still be starting"
     Start-Sleep -Seconds 3
 }
+
+# --- A. INSPECT (before any mutation) ---
+Write-RepairLog "==== INSPECT BEGIN (pre-modify) ===="
+Write-RepairLog ("WINDOWS_USER={0}" -f $env:USERNAME)
+Write-RepairLog ("WINDOWS_PROFILE={0}" -f $env:USERPROFILE)
+Write-RepairLog ("WINDOWS_LOCALAPPDATA={0}" -f $env:LOCALAPPDATA)
+Write-RepairLog ("INSTALLER_ROOT={0}" -f $KeepDir)
+$installerVer = ""
+try {
+    $relPath = Join-Path (Split-Path -Parent $PSScriptRoot) "release.json"
+    if (-not (Test-Path -LiteralPath $relPath)) { $relPath = Join-Path $KeepDir "installer\release.json" }
+    if (Test-Path -LiteralPath $relPath) {
+        $rel = Get-Content -LiteralPath $relPath -Raw | ConvertFrom-Json
+        $installerVer = [string]$rel.installer_version
+        Write-RepairLog ("INSTALLER_VERSION={0} commit={1}" -f $installerVer, $rel.commit)
+    }
+} catch {}
+try {
+    $eff = (& wsl.exe -d $distro --exec id -un 2>$null | Select-Object -First 1)
+    Write-RepairLog ("WSL_EFFECTIVE_USER={0}" -f (("{0}" -f $eff).Trim()))
+} catch { Write-RepairLog "WSL_EFFECTIVE_USER=unknown" }
+$inspectBash = @'
+set +e
+echo "stage=inspect"
+ROOT=""
+while IFS=: read -r _u _x _uid _gid _gecos home _shell; do
+  case "$home" in ""|"/"|"/nonexistent") continue ;; esac
+  if [ -d "$home/otacon-ai-ecosystem" ]; then ROOT="$home/otacon-ai-ecosystem"; break; fi
+done <<EOF
+$(getent passwd)
+EOF
+if [ -z "$ROOT" ] && [ -d /root/otacon-ai-ecosystem ]; then ROOT=/root/otacon-ai-ecosystem; fi
+echo "ROOT=${ROOT:-}"
+if [ -n "$ROOT" ]; then
+  OWNER="$(stat -c '%U' "$ROOT" 2>/dev/null || true)"
+  echo "OWNER=${OWNER:-}"
+  if [ -d "$ROOT/.git" ]; then
+    if [ -n "$OWNER" ] && [ "$OWNER" != "root" ] && command -v runuser >/dev/null 2>&1; then
+      echo "REV_BEFORE=$(runuser -u "$OWNER" -- git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+    else
+      echo "REV_BEFORE=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+    fi
+  fi
+  if [ -d "$ROOT/.venv" ]; then echo "VENV_BEFORE=1"; else echo "VENV_BEFORE=0"; fi
+  if [ -d "$ROOT/.build" ]; then echo "BUILD_BEFORE=1"; else echo "BUILD_BEFORE=0"; fi
+fi
+UNIT=/etc/systemd/system/otacon.service
+echo "UNIT_ACTIVE=$(systemctl is-active otacon.service 2>/dev/null || echo missing)"
+echo "UNIT_ENABLED=$(systemctl is-enabled otacon.service 2>/dev/null || echo missing)"
+if [ -f "$UNIT" ]; then
+  echo "UNIT_HOST=$(sed -n 's/^Environment=OTACON_HOST=//p' "$UNIT" | tail -n1)"
+  echo "UNIT_LAN=$(sed -n 's/^Environment=OTACON_LAN_MODE=//p' "$UNIT" | tail -n1)"
+  echo "UNIT_SKIP=$(sed -n 's/^Environment=OTACON_SKIP_NVIDIA_SMI=//p' "$UNIT" | tail -n1)"
+  echo "UNIT_MODEL=$(sed -n 's/^Environment=OTACON_LLM_MODEL=//p' "$UNIT" | tail -n1)"
+fi
+PORT="__PORT__"
+if command -v ss >/dev/null 2>&1; then
+  echo "LISTEN_5757=$(ss -lntp 2>/dev/null | grep ":${PORT}" | head -n3 | tr '\n' ';')"
+fi
+curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/branding" >/tmp/otacon-inspect-brand.json 2>/dev/null && echo "UI_BRANDING=ok" || echo "UI_BRANDING=down"
+exit 0
+'@
+$inspectBash = $inspectBash.Replace("__PORT__", [string]$Port)
+try {
+    $helper = Join-Path $PSScriptRoot "wsl-bash-file.ps1"
+    if (Test-Path -LiteralPath $helper) {
+        . $helper
+        $ins = Invoke-OtaconWslBashFile -Distro $distro -ScriptBody $inspectBash -User "root" -Label "otacon-inspect"
+        if ($ins.Output) {
+            foreach ($ln in ($ins.Output -split "`n")) {
+                $t = ("{0}" -f $ln).Trim()
+                if ($t) { Write-RepairLog $t }
+            }
+        }
+    }
+} catch {
+    Write-RepairLog "INSPECT failed: $($_.Exception.Message)"
+}
+Write-RepairLog "==== INSPECT END ===="
 
 $script:OtaconWslTransportExit = 0
 $text = Invoke-WslAppUpdate -Name $distro -PortNum $Port -TargetRev $target

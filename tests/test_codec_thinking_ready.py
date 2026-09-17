@@ -32,7 +32,8 @@ def main() -> int:
     must("I couldn't complete that request." in js, "friendly failure copy on chat error", fails)
     must("return false;" in js[js.find("function capReady"): js.find("function capReady") + 220],
          "capReady is false when capabilities missing", fails)
-    must("No GPU reported" in js and "gpu_detection" in js, "GPU line uses scan/detection not hard skip", fails)
+    must("GPU status unavailable" in js and "gpu_detection" in js, "GPU line uses scan/detection states", fails)
+    must("No supported GPU detected" in js, "GPU none state has explicit copy", fails)
     must("let scan=null; // GPU sidebar line is cosmetic; skip scan" not in js,
          "Codec no longer skips /api/scan forever", fails)
 

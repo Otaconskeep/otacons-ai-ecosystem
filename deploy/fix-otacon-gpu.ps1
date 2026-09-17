@@ -139,27 +139,57 @@ else
   exit 3
 fi
 
-echo "stage=systemd"
+echo "stage=retire-stale-fallback"
 UNIT=/etc/systemd/system/otacon.service
+UNIT_PID="$(systemctl show -p MainPID --value otacon.service 2>/dev/null || echo 0)"
+case "$UNIT_PID" in ''|*[!0-9]*) UNIT_PID=0 ;; esac
+LISTEN_PIDS=""
+if command -v ss >/dev/null 2>&1; then
+  LISTEN_PIDS="$(ss -lntp 2>/dev/null | awk -v p=":$PORT" '
+    index($0, p) {
+      while (match($0, /pid=[0-9]+/)) {
+        print substr($0, RSTART+4, RLENGTH-4)
+        $0 = substr($0, RSTART+RLENGTH)
+      }
+    }' | sort -u)"
+fi
+for pid in $LISTEN_PIDS; do
+  [ "$pid" = "$UNIT_PID" ] && continue
+  cmd="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+  case "$cmd" in
+    *"installer.server"*|*" -m installer.server"*)
+      echo "RETIRE_FALLBACK_PID=$pid"
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$pid" 2>/dev/null || true
+      ;;
+    *) echo "KEEP_LISTENER_PID=$pid" ;;
+  esac
+done
 systemctl stop otacon.service 2>/dev/null || true
-pkill -9 -f "installer.server" 2>/dev/null || true
 sleep 1
 
 if [ -f "$UNIT" ]; then
+  cp -a "$UNIT" "${UNIT}.before-otacon-repair" 2>/dev/null || true
   # Preserve user's network mode. Never silently enable LAN auth.
   EXISTING_LAN="$(sed -n 's/^Environment=OTACON_LAN_MODE=//p' "$UNIT" 2>/dev/null | tail -n1)"
+  EXISTING_HOST="$(sed -n 's/^Environment=OTACON_HOST=//p' "$UNIT" 2>/dev/null | tail -n1)"
   case "$(echo "${EXISTING_LAN:-0}" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|lan) PRESERVE_LAN=1 ;;
     *) PRESERVE_LAN=0 ;;
   esac
+  if [ "$PRESERVE_LAN" -eq 1 ]; then WANT_HOST="0.0.0.0"
+  elif [ "$EXISTING_HOST" = "127.0.0.1" ] || [ "$EXISTING_HOST" = "0.0.0.0" ]; then WANT_HOST="$EXISTING_HOST"
+  else WANT_HOST="0.0.0.0"; fi
   echo "NETWORK_MODE_PRESERVED=$PRESERVE_LAN"
+  echo "NETWORK_HOST_RECONCILED=$WANT_HOST"
   # Wipe every SKIP line, then pin 0 (never leave this ambiguous).
   sed -i '/OTACON_SKIP_NVIDIA_SMI=/d' "$UNIT"
   sed -i "/\[Service\]/a Environment=OTACON_SKIP_NVIDIA_SMI=0" "$UNIT"
   if grep -q "OTACON_HOST=" "$UNIT"; then
-    sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=0.0.0.0|" "$UNIT"
+    sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=${WANT_HOST}|" "$UNIT"
   else
-    sed -i "/\[Service\]/a Environment=OTACON_HOST=0.0.0.0" "$UNIT"
+    sed -i "/\[Service\]/a Environment=OTACON_HOST=${WANT_HOST}" "$UNIT"
   fi
   sed -i '/OTACON_LAN_MODE=/d' "$UNIT"
   sed -i "/\[Service\]/a Environment=OTACON_LAN_MODE=${PRESERVE_LAN}" "$UNIT"
@@ -168,8 +198,11 @@ if [ -f "$UNIT" ]; then
   echo "unit_lan=$(grep OTACON_LAN_MODE= "$UNIT" || echo missing)"
 fi
 
+systemctl enable otacon.service 2>/dev/null || true
 systemctl restart otacon.service 2>/dev/null || systemctl start otacon.service 2>/dev/null || true
 sleep 3
+ACTIVE="$(systemctl is-active otacon.service 2>/dev/null || echo inactive)"
+echo "UNIT_ACTIVE=$ACTIVE"
 
 # Prove scan
 echo "=== /api/scan gpu ==="

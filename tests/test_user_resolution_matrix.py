@@ -105,6 +105,9 @@ def main() -> int:
          "keepalive uses LOCALAPPDATA\\OtaconsKeep", fails)
     must("keep-ubuntu-awake.ps1" in WAKE_TASK, "keepalive script name keep-ubuntu-awake.ps1", fails)
     must("OtaconsKeep-KeepAlive.vbs" in WAKE_TASK, "Startup launcher OtaconsKeep-KeepAlive.vbs", fails)
+    keep = (ROOT / "deploy" / "keep-ubuntu-awake.ps1").read_text(encoding="utf-8-sig")
+    must("sleep infinity" in keep, "keepalive uses wsl --exec sleep infinity", fails)
+    must("Mutex" in keep, "keepalive uses named mutex", fails)
     must(r"C:\Users\\" not in WAKE_TASK and "C:\\Users\\" not in WAKE_TASK,
          "install-wake-task has no C:\\Users\\ literal", fails)
 

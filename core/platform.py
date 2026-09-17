@@ -113,15 +113,15 @@ def detect():
  except Exception:
   free=round(shutil.disk_usage(Path.home()).free/1024**3,1)
   ram=round(int(next(x for x in open('/proc/meminfo') if x.startswith('MemTotal')).split()[1])/1024**2,1)
- g=[]; gpu_status='unavailable'; gpu_message='NVIDIA inspection tool is unavailable in this environment.'
+ g=[]; gpu_status='unavailable'; gpu_message='GPU status unavailable'
  smi=_resolve_nvidia_smi()
  skip = os.environ.get('OTACON_SKIP_NVIDIA_SMI', '').strip().lower() in ('1', 'true', 'yes')
  if skip:
   smi = None
   gpu_status = 'skipped'
-  gpu_message = 'NVIDIA inspection skipped (OTACON_SKIP_NVIDIA_SMI).'
+  gpu_message = 'GPU status unavailable'
  if smi:
-  gpu_status='none'; gpu_message='No NVIDIA GPUs were reported.'
+  gpu_status='none'; gpu_message='No supported GPU detected'
   try:
    out=_nvidia_smi_query(smi, timeout_s=5.0)
    for i,line in enumerate(out.splitlines()):
@@ -139,7 +139,7 @@ def detect():
     gpu_message=f'Detected {len(g)} NVIDIA GPU(s) via {smi}.'
    else:
     gpu_status='none'
-    gpu_message=f'{smi} ran but reported no GPUs.'
+    gpu_message='No supported GPU detected'
   except (subprocess.CalledProcessError, subprocess.TimeoutExpired, TimeoutError, OSError) as exc:
    gpu_status='error'
    detail = ''
@@ -147,8 +147,8 @@ def detect():
      detail = ' ' + str(exc.output).strip().splitlines()[-1][:160]
    elif isinstance(exc, TimeoutError):
      detail = ' ' + str(exc)
-   gpu_message=f'GPU inspection failed ({type(exc).__name__}) using {smi}.{detail}'
- # Proc fallback: never claim "no GPU" when the driver is clearly present.
+   gpu_message='GPU status unavailable' + (f' ({type(exc).__name__})' if not detail else f'.{detail}')
+ # Proc fallback: never claim ABSENT when the driver is clearly present.
  if not g:
   proc_gpus = _proc_nvidia_gpus()
   if proc_gpus:
@@ -156,6 +156,10 @@ def detect():
    gpu_status = 'detected'
    src = 'proc (nvidia-smi skipped)' if skip else 'proc fallback'
    gpu_message = f'Detected {len(g)} NVIDIA GPU(s) via {src}.'
+  elif gpu_status in ('unavailable', 'error', 'skipped'):
+   gpu_message = 'GPU status unavailable'
+  elif gpu_status == 'none':
+   gpu_message = 'No supported GPU detected'
  h=Hardware(platform.system(),platform.processor() or platform.machine(),os.cpu_count() or 1,ram,free,g)
  h.gpu_detection={'status':gpu_status,'message':gpu_message,'nvidia_smi':(_resolve_nvidia_smi() or '') if not skip else '', 'skipped': skip}
  return h

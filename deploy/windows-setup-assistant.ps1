@@ -2261,6 +2261,11 @@ function Invoke-WslRootBashFile {
     $scriptWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $ScriptWin -EnsureExists
     if (-not $scriptWsl) { return @{ Ok = $false; Output = "wslpath-failed" } }
     $scriptEsc = $scriptWsl.Replace("'", "'\''")
+    # Syntax-check before execute (same contract as wsl-bash-file.ps1).
+    $syntax = & wsl.exe -d $Name -u root -- bash -c "bash -n '$scriptEsc'" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        return @{ Ok = $false; Output = (("bash -n failed: " + ($syntax | Out-String)).Trim()); ScriptWsl = $scriptWsl }
+    }
     $out = & wsl.exe -d $Name -u root -- bash -c "bash '$scriptEsc'" 2>&1
     return @{ Ok = $true; Output = (($out | Out-String)); ScriptWsl = $scriptWsl }
 }

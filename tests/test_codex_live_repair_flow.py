@@ -66,8 +66,25 @@ def main() -> int:
          or 'GetFolderPath("Startup")' in WAKE_TASK,
          "G: Startup via GetFolderPath", fails)
     must("LOCALAPPDATA" in WAKE_TASK, "G: LOCALAPPDATA based keepalive", fails)
+    keep = (ROOT / "deploy" / "keep-ubuntu-awake.ps1").read_text(encoding="utf-8-sig")
+    must("sleep infinity" in keep, "G: keepalive holds WSL with sleep infinity", fails)
+    must("Mutex" in keep, "G: keepalive single-instance mutex", fails)
+    must("backoff" in keep.lower() or "backoffSec" in keep, "G: keepalive backoff (no busy-loop)", fails)
+    must("crist" not in keep.lower() and r"C:\Users\\" not in keep,
+         "G: keepalive has no hardcoded user paths", fails)
     must("keep-ubuntu-awake.ps1" in UNINSTALL and "OtaconsKeep-KeepAlive.vbs" in UNINSTALL,
          "G: uninstall removes keepalive", fails)
+
+    # A: pre-modify inspect
+    must("INSPECT BEGIN" in REPAIR or "stage=inspect" in REPAIR, "A: pre-modify inspect stage", fails)
+    must("WINDOWS_USER=" in REPAIR, "A: logs Windows user", fails)
+    must("WSL_EFFECTIVE_USER=" in REPAIR or "id -un" in REPAIR, "A: logs WSL effective user", fails)
+    must("VENV_PRESENT" in REPAIR, "B: proves .venv survived update", fails)
+
+    # H: Fix-GPU no longer blind-pkills
+    fix = (ROOT / "deploy" / "fix-otacon-gpu.ps1").read_text(encoding="utf-8-sig")
+    must('pkill -9 -f "installer.server"' not in fix, "H: fix-gpu no blind pkill installer.server", fails)
+    must("RETIRE_FALLBACK_PID" in fix or "KEEP_LISTENER_PID" in fix, "H: fix-gpu careful listener retirement", fails)
 
     # H: E2E not bare HTTP 200
     must("E2E_HEALTH_OK" in REPAIR, "H: E2E health gate", fails)

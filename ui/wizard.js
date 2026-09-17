@@ -658,17 +658,20 @@ async function showChat(){
   const hw=((scan&&scan.hardware&&scan.hardware.hardware)||{});
   const gpus=hw.gpus||[];
   const gpuDet=hw.gpu_detection||{};
-  let gpuLine='No GPU reported';
+  let gpuLine='GPU status unavailable';
+  const st=(gpuDet&&gpuDet.status)?String(gpuDet.status):'';
   if(gpus.length){
     gpuLine=gpus.map(g=>{
       const name=g.model||g.name||'GPU';
       const vram=g.vram_gb?` · ${g.vram_gb} GB`:'';
       return `${name}${vram}`;
     }).join(' / ');
+  }else if(st==='none'){
+    gpuLine=(gpuDet&&gpuDet.message)?String(gpuDet.message):'No supported GPU detected';
+  }else if(st==='error'||st==='unavailable'||st==='skipped'){
+    gpuLine=(gpuDet&&gpuDet.message)?String(gpuDet.message):'GPU status unavailable';
   }else if(gpuDet&&gpuDet.message){
     gpuLine=String(gpuDet.message);
-  }else if(gpuDet&&(gpuDet.status==='detected'||gpuDet.nvidia_smi)){
-    gpuLine='NVIDIA GPU detected';
   }
   const vtOk=capStatus('voice_trainer')==='ready';
   const voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
