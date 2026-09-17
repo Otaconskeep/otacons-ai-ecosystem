@@ -1,15 +1,16 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "dec19c8cbfd383a442431ab58a223a1b2159edb2",
+  "commit": "961ff1f8384fbe8ae862c0a5914ef6434ee6bc02",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
   "ai9_ref": "main",
   "python_requires": ">=3.10,<3.14",
   "python_preferred": "3.12",
-  "hash_rule": "Each sha256 is the exact published/download bytes (GitHub raw). Downloader verifies raw bytes before any local normalization.",
+  "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on 'main').",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
+  "installer_revision": "dec19c8cbfd383a442431ab58a223a1b2159edb2",
   "files": [
     {
       "path": "install_otacon.bat",
@@ -37,14 +38,9 @@
       "bytes": 91763
     },
     {
-      "path": "deploy/installer-revision.txt",
-      "sha256": "d352105f0df7b0011f052b3269770af86cd2be2c64bb5b235c0aad332828edf7",
-      "bytes": 41
-    },
-    {
       "path": "deploy/bootstrap-fetch.ps1",
-      "sha256": "6c45549811ae137f716208308219c861e2a71dad7d8b23c5395f3a7b36dd08ae",
-      "bytes": 21918
+      "sha256": "dc6e9ddcad23b1de4beeae2e15e71841e9f7cc09f2f26210798aef00adaa8f05",
+      "bytes": 23497
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
@@ -102,5 +98,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Windows Setup always refreshes bootstrap-fetch.ps1, then refreshes this bundle. Pin ecosystem_ref to a tag/commit for production cutovers."
+  "notes": "Windows Setup always refreshes bootstrap-fetch.ps1, then refreshes this bundle from commit-pinned raw URLs. Pin ecosystem_ref to a tag/commit for production cutovers."
 }

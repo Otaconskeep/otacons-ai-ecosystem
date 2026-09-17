@@ -24,7 +24,7 @@ BUNDLE_FILES = [
     "Fix-Otacon-GPU.bat",
     "install_otacon.sh",
     "release.json",  # excluded from files[] self-hash
-    "deploy/installer-revision.txt",
+    # installer-revision.txt is downloaded from branch tip (unhashed); Linux sync target.
     "deploy/bootstrap-fetch.ps1",
     "deploy/windows-setup-assistant.ps1",
     "deploy/repair-otacon-core.ps1",
@@ -104,15 +104,22 @@ def ensure_published_encoding(rel: str, path: Path) -> None:
 
 def main() -> int:
     write_rev = "--pin-revision" in sys.argv
+    # `commit` is the git object used for commit-pinned raw downloads (exact bytes).
+    # GitHub's raw CDN for branch names like "main" may normalize CRLF->LF; commit
+    # URLs serve the blob unchanged. Always record HEAD here (not installer-revision).
     commit = git_head()
+    app_rev = commit
     if write_rev:
-        (ROOT / "deploy" / "installer-revision.txt").write_text(commit + "\n", encoding="utf-8")
-    else:
-        rev_path = ROOT / "deploy" / "installer-revision.txt"
-        if rev_path.is_file():
-            pinned = rev_path.read_text(encoding="utf-8").strip()
-            if pinned:
-                commit = pinned
+        # Optional: --pin-revision=<sha> pins Linux app sync target separately.
+        explicit = None
+        for arg in sys.argv:
+            if arg.startswith("--pin-revision=") and len(arg) > len("--pin-revision="):
+                explicit = arg.split("=", 1)[1].strip()
+        if explicit:
+            app_rev = explicit
+        (ROOT / "deploy" / "installer-revision.txt").write_text(app_rev + "\n", encoding="utf-8")
+    elif (ROOT / "deploy" / "installer-revision.txt").is_file():
+        app_rev = (ROOT / "deploy" / "installer-revision.txt").read_text(encoding="utf-8").strip() or commit
 
     # Finalize on-disk published bytes, then hash those exact bytes.
     for rel in BUNDLE_FILES:
@@ -153,14 +160,16 @@ def main() -> int:
         "python_requires": ">=3.10,<3.14",
         "python_preferred": "3.12",
         "hash_rule": (
-            "Each sha256 is the exact published/download bytes (GitHub raw). "
-            "Downloader verifies raw bytes before any local normalization."
+            "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. "
+            "Downloader verifies those raw bytes before any local normalization. "
+            "Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on 'main')."
         ),
         "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
+        "installer_revision": app_rev,
         "files": files_meta,
         "notes": (
-            "Windows Setup always refreshes bootstrap-fetch.ps1, then refreshes this bundle. "
-            "Pin ecosystem_ref to a tag/commit for production cutovers."
+            "Windows Setup always refreshes bootstrap-fetch.ps1, then refreshes this bundle "
+            "from commit-pinned raw URLs. Pin ecosystem_ref to a tag/commit for production cutovers."
         ),
     }
 

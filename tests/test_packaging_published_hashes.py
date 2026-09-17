@@ -45,6 +45,8 @@ def main() -> int:
          "bootstrap normalizes only after hash verification", fails)
     must("ExpectedSha256" in fetch and "Get-FileSha256Hex" in fetch,
          "bootstrap still verifies SHA256 on raw download", fails)
+    must("pin RawBase to commit" in fetch or "RAW_PIN" in fetch,
+         "bootstrap pins RawBase to release.json commit for exact blobs", fails)
 
     must("UTF-8 BOM is not allowed" in check or "not allowed in .bat" in check,
          "check-bat-encoding rejects UTF-8 BOM for BAT", fails)
@@ -53,8 +55,14 @@ def main() -> int:
     must("0xFF" in check and "0xFE" in check, "check-bat-encoding rejects UTF-16", fails)
     must("bareLf" in check or "0x0A" in check, "check-bat-encoding detects bare LF", fails)
 
-    must("exact published" in build or "published/download bytes" in build,
-         "build-release-manifest hashes published bytes", fails)
+    must(
+        "exact git blob" in build
+        or "commit-pinned" in build
+        or "published/download bytes" in build
+        or "exact published" in build,
+        "build-release-manifest hashes published bytes",
+        fails,
+    )
 
     # Exact published bytes == manifest for every listed file
     for entry in release["files"]:

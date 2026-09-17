@@ -222,10 +222,10 @@ function Save-FileDownload {
 }
 
 # --- Load release.json first (versioned installer bundle) ---
+$branchRawBase = $RawBase
 $releaseRel = "release.json"
 $releaseUrl = "$RawBase/$releaseRel"
 $releaseOut = Join-Path $DestRoot $releaseRel
-$releaseTmp = "$releaseOut.otacon-download"
 Show-Status -StepLabel "[meta] release.json" -Source $releaseUrl -Status "downloading..." -File $releaseRel
 $relResult = Save-FileDownload -Url $releaseUrl -OutPath $releaseOut -Rel $releaseRel
 if ($relResult.Ok) {
@@ -245,6 +245,10 @@ if ($relResult.Ok) {
             }
             Write-Log ("release.json hashes loaded count={0}" -f $hashByPath.Count)
         }
+        # Never SHA-pin branch-tip-only files (EOL-safe commit pin does not apply to these).
+        if ($hashByPath.ContainsKey("deploy/installer-revision.txt")) { $hashByPath.Remove("deploy/installer-revision.txt") }
+        if ($hashByPath.ContainsKey("release.json")) { $hashByPath.Remove("release.json") }
+        if ($hashByPath.ContainsKey("deploy/bootstrap-fetch.ps1")) { $hashByPath.Remove("deploy/bootstrap-fetch.ps1") }
         # Prefer release.json file list when present (still force-include required helpers).
         if ($relJson.files -and $relJson.files.Count -gt 0) {
             $fromRelease = @()
@@ -271,11 +275,31 @@ if ($relResult.Ok) {
             }
             if ($fromRelease.Count -gt 0) { $files = $fromRelease | Select-Object -Unique }
         }
+        # Pin downloads to the commit that owns the hashed blobs.
+        # Branch-name raw URLs (e.g. /main/) can normalize CRLF->LF and break SHA256.
+        if ($bundleCommit -match '^[0-9a-fA-F]{7,40}$') {
+            if ($RawBase -match '^(https?://raw\.githubusercontent\.com/[^/]+/[^/]+/)([^/]+)/?$') {
+                $RawBase = $Matches[1] + $bundleCommit.ToLowerInvariant()
+                Write-Log "pin RawBase to commit for exact blob bytes: $RawBase (was $branchRawBase)"
+                Write-Host ("  RAW_PIN commit={0}" -f $bundleCommit) -ForegroundColor Cyan
+            }
+        }
     } catch {
         Write-Log ("release.json parse warn: {0}" -f $_.Exception.Message) "WARN"
     }
 } else {
     Write-Log ("release.json download failed (continuing with hardcoded manifest): {0}" -f $relResult.Error) "WARN"
+}
+
+# Always refresh Linux sync pin from branch tip (not commit-pinned / not hashed).
+$revRel = "deploy/installer-revision.txt"
+$revOut = Join-Path $DestRoot ($revRel -replace "/", [IO.Path]::DirectorySeparatorChar)
+$revUrl = "$branchRawBase/$revRel"
+$revResult = Save-FileDownload -Url $revUrl -OutPath $revOut -Rel $revRel
+if ($revResult.Ok) {
+    Write-Log ("installer-revision.txt from branch tip ok sha={0}" -f $revResult.Sha256)
+} else {
+    Write-Log ("installer-revision.txt branch tip download warn: {0}" -f $revResult.Error) "WARN"
 }
 
 $failures = New-Object System.Collections.Generic.List[string]
