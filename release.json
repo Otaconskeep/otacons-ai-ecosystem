@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "7e25830ef174404bea114c32f6b41b598d18f561",
+  "commit": "9922e838085257b9f6095b0e98b2ec6800500d4f",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -34,8 +34,8 @@
     },
     {
       "path": "install_otacon.sh",
-      "sha256": "386f495e1cdcf3b0d2a7382bc15850ea40a6b12a071ee6566a15b1eb48f045a1",
-      "bytes": 91763
+      "sha256": "896c6fc8b23f583543d46b71b49fcf6348dae3024fb5b1a0f5a61595d28a5361",
+      "bytes": 91881
     },
     {
       "path": "deploy/bootstrap-fetch.ps1",
@@ -44,13 +44,13 @@
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
-      "sha256": "4fe0aedd7817f9bfb1a623f3c2efe6af9732df0ab2c4302552f1b75a74b7addc",
-      "bytes": 166426
+      "sha256": "daaa3ebc3916c19cee16f9b3a1fc3b4f4f0baf8ac4edfd78b20da3b5249fb768",
+      "bytes": 171395
     },
     {
       "path": "deploy/repair-otacon-core.ps1",
-      "sha256": "5991232f6b586026febac935c002ace7a1ee6c0696f764a240e06c9b785cc24d",
-      "bytes": 19072
+      "sha256": "fe8f3792f6d68c9eb219e2698cdc2f8bb1503330cee1efbf01c826f811b863ab",
+      "bytes": 19441
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
@@ -59,8 +59,8 @@
     },
     {
       "path": "deploy/fix-otacon-gpu.ps1",
-      "sha256": "76c5c2eae8cda53bb9a825da1d47551e9a8cfe531e223820c07d14afb9005267",
-      "bytes": 8600
+      "sha256": "e17be25515aabc891afb9d36bbb59129593001734b0f0ed3270ae59c732dc84c",
+      "bytes": 8786
     },
     {
       "path": "deploy/get-fix-codec.cmd",
@@ -74,13 +74,13 @@
     },
     {
       "path": "deploy/install-wake-task.ps1",
-      "sha256": "cca9aaea86316c48f9bb3bea5aa0f08e4082df8d25789519353d9da0bb8c69ec",
-      "bytes": 1702
+      "sha256": "b19cedd881d7ace096c805a4f99e24be9a30d7c25a355e474564ad9b9c790721",
+      "bytes": 2352
     },
     {
       "path": "deploy/wake-otacon.ps1",
-      "sha256": "caa509521c16070c4fe93a54183e1db37d88291d141890df21cae12ecb895086",
-      "bytes": 4872
+      "sha256": "571c38126f1102cfa3b4d1ff505e3d96c9e1a47321150db79cbec1d3392a6f10",
+      "bytes": 5509
     },
     {
       "path": "deploy/download-one.ps1",

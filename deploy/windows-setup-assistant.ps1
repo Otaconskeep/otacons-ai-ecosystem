@@ -1889,13 +1889,28 @@ function ConvertTo-OtaconLinuxUsername {
     return $s
 }
 
+function Get-OtaconSanitizedWindowsUsername {
+    <#
+      Linux username derived from the invoking Windows account only.
+      Used for create-path (D) when no existing valid Linux account is found.
+    #>
+    $raw = [string]$env:USERNAME
+    if (-not $raw) { $raw = "otacon" }
+    return (ConvertTo-OtaconLinuxUsername -Raw $raw)
+}
+
 function Get-OtaconExpectedWslUsername {
     <#
-      Expected Linux username for dedicated Ubuntu-Otacon.
-      Prefer OTACON_TARGET_USER, else sanitize the Windows username, else "otacon".
+      Explicit target preference only (not Windows auto-derive).
+      Order: PreferredUser caller arg is handled by Ensure-WslTargetUser;
+      here: OTACON_TARGET_USER, else installer-state wsl_user, else sanitized Windows.
     #>
     $raw = ""
     if ($env:OTACON_TARGET_USER) { $raw = [string]$env:OTACON_TARGET_USER }
+    if (-not $raw) {
+        $st = Get-InstallerState
+        if ($st -and $st["wsl_user"]) { $raw = [string]$st["wsl_user"] }
+    }
     if (-not $raw) { $raw = [string]$env:USERNAME }
     if (-not $raw) { $raw = "otacon" }
     return (ConvertTo-OtaconLinuxUsername -Raw $raw)
@@ -1993,16 +2008,19 @@ function ConvertFrom-WslPasswdRecord {
 
     $uidNum = 0
     $uidParsed = [int]::TryParse([string]$uid, [ref]$uidNum)
-    $result.UidOk = ($uidParsed -and $uidNum -ne 0)
-    $result.ShellOk = (-not [string]::IsNullOrWhiteSpace($linuxShell))
+    $result.UidOk = ($uidParsed -and $uidNum -ne 0 -and $uidNum -ne 65534)
+    $badShells = @("/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/nologin", "/usr/sbin/false")
+    $shellTrim = if ($null -eq $linuxShell) { "" } else { "$linuxShell".Trim() }
+    $result.ShellOk = ($shellTrim -ne "" -and ($badShells -notcontains $shellTrim))
     $homeNonEmpty = (-not [string]::IsNullOrWhiteSpace($linuxHome))
+    $homeUsable = ($homeNonEmpty -and $linuxHome -ne "/" -and $linuxHome -ne "/nonexistent")
     if (-not $HomeChecked) {
         # Intermediate parse only - caller must probe home with --exec test -d.
         $result.Status = "PARSED"
         $result.Detail = "home_check_pending"
         return $result
     }
-    $result.HomeOk = ($homeNonEmpty -and $HomeExists)
+    $result.HomeOk = ($homeUsable -and $HomeExists)
 
     if ($result.UidOk -and $result.HomeOk -and $result.ShellOk) {
         $result.Status = "VALID"
@@ -2019,12 +2037,15 @@ function ConvertFrom-WslPasswdRecord {
     if (-not $homeNonEmpty) {
         $bits += "home_empty"
         $result.FixableHome = $true
+    } elseif (-not $homeUsable) {
+        $bits += "home_invalid"
+        $result.FixableHome = $true
     } elseif (-not $HomeExists) {
         $bits += "home_missing"
         $result.FixableHome = $true
     }
     if (-not $result.ShellOk) {
-        $bits += "shell_empty"
+        if (-not $shellTrim) { $bits += "shell_empty" } else { $bits += "shell_invalid" }
         $result.FixableShell = $true
     }
     $result.Detail = ($bits -join ",")
@@ -2146,11 +2167,27 @@ function Test-WslEffectiveDefaultUser {
     return ($eff -eq $User)
 }
 
+function Get-WslFirstNormalUser {
+    <#
+      Scan getent passwd for a normal account (C):
+        UID >= 1000, UID != 65534, usable home, usable shell.
+      Home need not be under /home/<name>.
+    #>
+    param([string]$Name)
+    if (-not $Name) { return "" }
+    try {
+        $cand = (& wsl.exe -d $Name -u root -- bash -lc "getent passwd | awk -F: '`$3+0>=1000 && `$3+0!=65534 && `$1!=\"root\" && `$6!=\"\" && `$6!=\"/\" && `$6!=\"/nonexistent\" && `$7!=\"\" && `$7!=\"/usr/sbin/nologin\" && `$7!=\"/sbin/nologin\" && `$7!=\"/bin/false\" && `$7!=\"/usr/bin/nologin\" {print `$1; exit}'" 2>$null | Select-Object -Last 1)
+        $c = if ($cand) { ("{0}" -f $cand).Trim() } else { "" }
+        if ($c -and $c -ne "root") { return $c }
+    } catch {}
+    return ""
+}
+
 function Get-WslDefaultUser {
     <#
       Resolve a candidate non-root account for install targeting.
-      Prefers effective default (B), then wsl.conf, then first uid>=1000 home user.
-      Account validity (A) is checked separately by callers.
+      Prefers effective default (B), then wsl.conf, then first normal user (C).
+      Account validity is checked separately by callers.
     #>
     param([string]$Name)
     if (-not $Name) { return "" }
@@ -2163,12 +2200,7 @@ function Get-WslDefaultUser {
             if (Test-WslUserExists -Name $Name -User $cu) { return $cu }
         }
     } catch {}
-    try {
-        $cand = (& wsl.exe -d $Name -u root -- bash -lc "getent passwd | awk -F: '`$3>=1000 && `$3<65534 && `$6 ~ /^\/home\// {print `$1; exit}'" 2>$null | Select-Object -Last 1)
-        $c = if ($cand) { ("{0}" -f $cand).Trim() } else { "" }
-        if ($c -and $c -ne "root") { return $c }
-    } catch {}
-    return ""
+    return (Get-WslFirstNormalUser -Name $Name)
 }
 
 function Invoke-WslRootBashFile {
@@ -2386,13 +2418,16 @@ function Repair-WslLinuxUser {
 
 function Ensure-WslTargetUser {
     <#
-      Resolve install target user with separate A/B states:
-        A) account validity (exists, not root, home/shell)
-        B) effective default (`wsl -d Distro --exec id -un` == target)
-      Creates the account only when NOT_FOUND.
+      Resolve install target user:
+        A) Existing installer state / explicit PreferredUser / OTACON_TARGET_USER, if VALID
+        B) Effective default: wsl -d Distro --exec id -un (if VALID, not root)
+        C) First normal getent account (uid>=1000, usable home/shell)
+        D) Create account derived from sanitized Windows username
+      Creates the account only when D is reached and user is NOT_FOUND.
       Auto-repairs ONLY on DefectConfirmed fixable issues.
       DIAGNOSTIC_ERROR / UNKNOWN => leave account unchanged (no create/repair/fallback).
       Never clears an existing password.
+      Repo OWNER is separate (stat on install tree) - never assumed equal to this user.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -2406,13 +2441,112 @@ function Ensure-WslTargetUser {
     }
     $script:WslUserNeededRepair = $false
 
-    $preferred = if ($PreferredUser) {
-        ConvertTo-OtaconLinuxUsername -Raw $PreferredUser
-    } else {
-        Get-OtaconExpectedWslUsername
+    # --- Resolve candidate (A -> B -> C -> D) without mutating yet ---
+    $explicit = @()
+    if ($PreferredUser) {
+        $explicit += (ConvertTo-OtaconLinuxUsername -Raw $PreferredUser)
+    }
+    $st = Get-InstallerState
+    if ($st -and $st["wsl_user"]) {
+        $explicit += (ConvertTo-OtaconLinuxUsername -Raw ([string]$st["wsl_user"]))
+    }
+    if ($env:OTACON_TARGET_USER) {
+        $explicit += (ConvertTo-OtaconLinuxUsername -Raw ([string]$env:OTACON_TARGET_USER))
+    }
+    $explicit = @($explicit | Where-Object { $_ -and $_ -ne "root" } | Select-Object -Unique)
+
+    $candidate = ""
+    $source = ""
+
+    foreach ($cand in $explicit) {
+        $d = Get-WslLinuxUserDiagnosis -Name $Name -User $cand
+        if ($d.Status -eq "DIAGNOSTIC_ERROR") {
+            Write-KeepLog "Ensure-WslTargetUser: DIAGNOSTIC_ERROR user=$cand detail=$($d.Detail) - no mutation" -Level "ERROR" -Stage "WSL_USER"
+            if (-not $Quiet) {
+                Write-OtaconSay "I couldn't verify this safely." -Mood "alert"
+                Write-OtaconSay "I'm leaving your Linux account unchanged." -Mood "warn" -NoType
+            }
+            return @{
+                User             = $cand
+                AccountValid     = $false
+                DefaultOk        = $false
+                Error            = "diagnostic_error"
+                DiagnosticError  = $true
+                Detail           = $d.Detail
+            }
+        }
+        if ($d.Status -eq "VALID") {
+            $candidate = $cand
+            $source = "A_explicit"
+            break
+        }
     }
 
-    $candidate = $preferred
+    if (-not $candidate) {
+        # B: effective Ubuntu-Otacon default user
+        $eff = Get-WslEffectiveDefaultUser -Name $Name
+        if ($eff -and $eff -ne "root") {
+            $d = Get-WslLinuxUserDiagnosis -Name $Name -User $eff
+            if ($d.Status -eq "DIAGNOSTIC_ERROR") {
+                Write-KeepLog "Ensure-WslTargetUser: DIAGNOSTIC_ERROR effective=$eff detail=$($d.Detail) - no mutation" -Level "ERROR" -Stage "WSL_USER"
+                if (-not $Quiet) {
+                    Write-OtaconSay "I couldn't verify this safely." -Mood "alert"
+                    Write-OtaconSay "I'm leaving your Linux account unchanged." -Mood "warn" -NoType
+                }
+                return @{
+                    User             = $eff
+                    AccountValid     = $false
+                    DefaultOk        = $false
+                    Error            = "diagnostic_error"
+                    DiagnosticError  = $true
+                    Detail           = $d.Detail
+                }
+            }
+            if ($d.Status -eq "VALID") {
+                $candidate = $eff
+                $source = "B_effective"
+            }
+        }
+    }
+
+    if (-not $candidate) {
+        # C: first normal getent account
+        $norm = Get-WslFirstNormalUser -Name $Name
+        if ($norm -and $norm -ne "root") {
+            $d = Get-WslLinuxUserDiagnosis -Name $Name -User $norm
+            if ($d.Status -eq "DIAGNOSTIC_ERROR") {
+                Write-KeepLog "Ensure-WslTargetUser: DIAGNOSTIC_ERROR scan=$norm detail=$($d.Detail) - no mutation" -Level "ERROR" -Stage "WSL_USER"
+                if (-not $Quiet) {
+                    Write-OtaconSay "I couldn't verify this safely." -Mood "alert"
+                    Write-OtaconSay "I'm leaving your Linux account unchanged." -Mood "warn" -NoType
+                }
+                return @{
+                    User             = $norm
+                    AccountValid     = $false
+                    DefaultOk        = $false
+                    Error            = "diagnostic_error"
+                    DiagnosticError  = $true
+                    Detail           = $d.Detail
+                }
+            }
+            if ($d.Status -eq "VALID") {
+                $candidate = $norm
+                $source = "C_getent"
+            } elseif ($d.Status -eq "INVALID" -and $d.DefectConfirmed) {
+                # Prefer repairing an existing normal account over inventing a new one.
+                $candidate = $norm
+                $source = "C_getent_repair"
+            }
+        }
+    }
+
+    if (-not $candidate) {
+        # D: derive from Windows username (may create)
+        $candidate = Get-OtaconSanitizedWindowsUsername
+        $source = "D_windows_derive"
+    }
+
+    Write-KeepLog "Ensure-WslTargetUser: candidate=$candidate source=$source" -Stage "WSL_USER"
     $diag = Get-WslLinuxUserDiagnosis -Name $Name -User $candidate
 
     # UNKNOWN != BROKEN: never mutate on parser/probe failure.
@@ -2432,33 +2566,7 @@ function Ensure-WslTargetUser {
         }
     }
 
-    if ($diag.Status -eq "NOT_FOUND") {
-        # Preferred missing: reuse another positively VALID account if present.
-        $alt = Get-WslDefaultUser -Name $Name
-        if ($alt -and $alt -ne "root" -and (Test-WslLinuxUserValid -Name $Name -User $alt)) {
-            Write-KeepLog "Ensure-WslTargetUser: preferred missing; reusing valid existing user=$alt" -Stage "WSL_USER"
-            $candidate = $alt
-            $diag = Get-WslLinuxUserDiagnosis -Name $Name -User $candidate
-        }
-    }
-
-    if ($diag.Status -eq "DIAGNOSTIC_ERROR") {
-        Write-KeepLog "Ensure-WslTargetUser: DIAGNOSTIC_ERROR after alt resolve user=$candidate detail=$($diag.Detail)" -Level "ERROR" -Stage "WSL_USER"
-        if (-not $Quiet) {
-            Write-OtaconSay "I couldn't verify this safely." -Mood "alert"
-            Write-OtaconSay "I'm leaving your Linux account unchanged." -Mood "warn" -NoType
-        }
-        return @{
-            User             = $candidate
-            AccountValid     = $false
-            DefaultOk        = $false
-            Error            = "diagnostic_error"
-            DiagnosticError  = $true
-            Detail           = $diag.Detail
-        }
-    }
-
-    # --- State A: create only when NOT_FOUND; repair only when DefectConfirmed ---
+    # --- Account create (D only) / repair ---
     if ($diag.Status -eq "VALID") {
         Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_VALID user=$candidate uid=$($diag.Uid) home=$($diag.Home) shell=$($diag.Shell) (password untouched)" -Stage "WSL_USER"
     } elseif ($diag.Status -eq "NOT_FOUND") {
@@ -2513,7 +2621,8 @@ function Ensure-WslTargetUser {
         return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid"; DiagnosticError = $false; Detail = $diag.Detail }
     }
 
-    # --- State B: effective default-user (auto-fix only after VALID account) ---
+    # --- Effective default-user (auto-fix only after VALID account) ---
+    # Compare against detected/selected target - never a hardcoded username.
     $defaultOk = Test-WslEffectiveDefaultUser -Name $Name -User $candidate
     if (-not $defaultOk) {
         Write-KeepLog "Ensure-WslTargetUser: DEFAULT_MISMATCH want=$candidate effective=$(Get-WslEffectiveDefaultUser -Name $Name)" -Stage "WSL_USER"

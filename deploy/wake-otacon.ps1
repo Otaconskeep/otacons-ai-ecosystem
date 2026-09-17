@@ -10,7 +10,8 @@ param(
     [int]$TimeoutSeconds = 25
 )
 
-$logDir = "$env:LOCALAPPDATA\Otacon"
+$InstallerRoot = Join-Path $env:LOCALAPPDATA "OtaconsKeep"
+$logDir = $InstallerRoot
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $logFile = Join-Path $logDir "wake-log.txt"
 
@@ -56,13 +57,25 @@ systemctl enable otacon.service >/dev/null 2>&1 || true
 systemctl restart otacon.service >/dev/null 2>&1 || systemctl start otacon.service >/dev/null 2>&1 || true
 sleep 2
 if ! curl -fsS --max-time 2 http://127.0.0.1:5757/api/branding >/dev/null 2>&1; then
-  ROOT="$(ls -d /home/*/otacon-ai-ecosystem 2>/dev/null | head -n1)"
+  ROOT=""
+  while IFS=: read -r _u _x _uid _gid _gecos home _shell; do
+    case "$home" in ""|"/"|"/nonexistent") continue ;; esac
+    if [ -d "$home/otacon-ai-ecosystem" ]; then ROOT="$home/otacon-ai-ecosystem"; break; fi
+  done <<EOF
+$(getent passwd)
+EOF
+  if [ -z "$ROOT" ] && [ -d /root/otacon-ai-ecosystem ]; then ROOT=/root/otacon-ai-ecosystem; fi
   if [ -n "$ROOT" ] && [ -x "$ROOT/.venv/bin/python" ]; then
     OWNER="$(stat -c %U "$ROOT" 2>/dev/null || echo root)"
-    mkdir -p "/home/${OWNER}/.config/otacon" 2>/dev/null || true
+    OWNER_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
+    case "$OWNER_HOME" in ""|"/"|"/nonexistent") OWNER_HOME="" ;; esac
+    if [ -z "$OWNER_HOME" ]; then
+      if [ "$OWNER" = "root" ]; then OWNER_HOME=/root; else OWNER_HOME="/tmp/otacon-$OWNER"; fi
+    fi
+    mkdir -p "${OWNER_HOME}/.config/otacon" 2>/dev/null || true
     if command -v runuser >/dev/null 2>&1 && [ "$OWNER" != "root" ]; then
-      runuser -u "$OWNER" -- env OTACON_HOST=0.0.0.0 OTACON_LAN_MODE=0 OTACON_PORT=5757 PYTHONPATH="$ROOT" \
-        bash -lc "cd \"$ROOT\" && unset OTACON_SKIP_NVIDIA_SMI && nohup \"$ROOT/.venv/bin/python\" -m installer.server >\$HOME/.config/otacon/wizard.log 2>&1 &"
+      runuser -u "$OWNER" -- env OTACON_HOST=0.0.0.0 OTACON_LAN_MODE=0 OTACON_PORT=5757 PYTHONPATH="$ROOT" HOME="$OWNER_HOME" \
+        bash -lc "cd \"$ROOT\" && unset OTACON_SKIP_NVIDIA_SMI && nohup \"$ROOT/.venv/bin/python\" -m installer.server >\"$OWNER_HOME/.config/otacon/wizard.log\" 2>&1 &"
     fi
   fi
 fi

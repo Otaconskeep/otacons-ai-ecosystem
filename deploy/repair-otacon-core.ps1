@@ -134,7 +134,13 @@ PORT="__PORT__"
 TARGET="__TARGET__"
 echo "=== repair-otacon-core begin ==="
 echo "APP_REV_TARGET=${TARGET:-origin/main}"
-ROOT="$(ls -d /home/*/otacon-ai-ecosystem 2>/dev/null | head -n1)"
+ROOT=""
+while IFS=: read -r _u _x _uid _gid _gecos home _shell; do
+  case "$home" in ""|"/"|"/nonexistent") continue ;; esac
+  if [ -d "$home/otacon-ai-ecosystem" ]; then ROOT="$home/otacon-ai-ecosystem"; break; fi
+done <<EOF
+$(getent passwd)
+EOF
 if [ -z "$ROOT" ] && [ -d /root/otacon-ai-ecosystem ]; then ROOT=/root/otacon-ai-ecosystem; fi
 echo "ROOT=$ROOT"
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then
@@ -342,9 +348,13 @@ alive=0
 if curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/branding" >/dev/null 2>&1; then alive=1; fi
 if [ "$alive" -ne 1 ] && [ -x "$ROOT/.venv/bin/python" ]; then
   echo "manual_start"
-  mkdir -p "/home/${OWNER}/.config/otacon" /root/.config/otacon 2>/dev/null || true
-  LOGF="/home/${OWNER}/.config/otacon/wizard.log"
-  if [ "$OWNER" = "root" ]; then LOGF=/root/.config/otacon/wizard.log; fi
+  OWNER_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
+  case "$OWNER_HOME" in ""|"/"|"/nonexistent") OWNER_HOME="" ;; esac
+  if [ -z "$OWNER_HOME" ]; then
+    if [ "$OWNER" = "root" ]; then OWNER_HOME=/root; else OWNER_HOME="/tmp/otacon-$OWNER"; fi
+  fi
+  mkdir -p "${OWNER_HOME}/.config/otacon" /root/.config/otacon 2>/dev/null || true
+  LOGF="${OWNER_HOME}/.config/otacon/wizard.log"
   if command -v runuser >/dev/null 2>&1 && [ "$OWNER" != "root" ]; then
     runuser -u "$OWNER" -- env \
       OTACON_HOST=0.0.0.0 OTACON_LAN_MODE="${PRESERVE_LAN:-0}" OTACON_PORT="$PORT" PYTHONPATH="$ROOT" \

@@ -840,7 +840,7 @@ resolve_target_user() {
       fi
     fi
     local cand
-    cand="$(getent passwd | awk -F: '$3>=1000 && $3<65534 && $6 ~ /^\/home\// {print $1; exit}')"
+    cand="$(getent passwd | awk -F: '$3>=1000 && $3!=65534 && $1!="root" && $6!="" && $6!="/" && $6!="/nonexistent" && $7!="" && $7!="/usr/sbin/nologin" && $7!="/sbin/nologin" && $7!="/bin/false" {print $1; exit}')"
     if [[ -n "$cand" ]]; then
       printf '%s\n' "$cand"
       return 0

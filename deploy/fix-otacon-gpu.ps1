@@ -62,7 +62,13 @@ $bash = @'
 set +e
 PORT="__PORT__"
 echo "=== fix-otacon-gpu begin ==="
-ROOT="$(ls -d /home/*/otacon-ai-ecosystem 2>/dev/null | head -n1)"
+ROOT=""
+while IFS=: read -r _u _x _uid _gid _gecos home _shell; do
+  case "$home" in ""|"/"|"/nonexistent") continue ;; esac
+  if [ -d "$home/otacon-ai-ecosystem" ]; then ROOT="$home/otacon-ai-ecosystem"; break; fi
+done <<EOF
+$(getent passwd)
+EOF
 if [ -z "$ROOT" ] && [ -d /root/otacon-ai-ecosystem ]; then ROOT=/root/otacon-ai-ecosystem; fi
 echo "ROOT=$ROOT"
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then

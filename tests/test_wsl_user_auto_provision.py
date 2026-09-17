@@ -63,7 +63,7 @@ def main() -> int:
     eff_get = fn_body("Get-WslEffectiveDefaultUser", "Test-WslEffectiveDefaultUser")
     must("--exec id -un" in eff_get, "B uses wsl -d <distro> --exec id -un", fails)
 
-    eff_test = fn_body("Test-WslEffectiveDefaultUser", "Get-WslDefaultUser")
+    eff_test = fn_body("Test-WslEffectiveDefaultUser", "Get-WslFirstNormalUser")
     must("Get-WslEffectiveDefaultUser" in eff_test, "B compares effective default to target", fails)
 
     new_fn = fn_body("New-WslLinuxUser", "Repair-WslLinuxUser")
@@ -125,7 +125,7 @@ def main() -> int:
         "4. root rejected as effective default target",
         fails,
     )
-    sanitize = fn_body("ConvertTo-OtaconLinuxUsername", "Get-OtaconExpectedWslUsername")
+    sanitize = fn_body("ConvertTo-OtaconLinuxUsername", "Get-OtaconSanitizedWindowsUsername")
     must('"root"' in sanitize and "otacon" in sanitize, "4. sanitizer maps root → otacon", fails)
 
     def sanitize_py(raw: str) -> str:
@@ -138,7 +138,14 @@ def main() -> int:
         return s
 
     must(sanitize_py("Crist") == "crist", "Crist → crist expected target", fails)
+    must(sanitize_py("Alice Smith") == "alicesmith", "Alice Smith → alicesmith", fails)
+    must(sanitize_py("John.Smith") == "johnsmith", "John.Smith → johnsmith", fails)
     must(sanitize_py("Root") == "otacon", "4. Root → otacon", fails)
+
+    must("D_windows_derive" in ensure_fn, "D create path from Windows username", fails)
+    must("B_effective" in ensure_fn, "B prefers effective id -un when valid", fails)
+    must("C_getent" in ensure_fn, "C falls back to getent normal user", fails)
+    must("Get-OtaconSanitizedWindowsUsername" in ensure_fn, "D uses sanitized Windows username", fails)
 
     # Step-InstallOtacon: separate A vs B failures (not one generic "no default user")
     step = PS1.split("function Step-InstallOtacon", 1)[1].split("function ", 1)[0]
