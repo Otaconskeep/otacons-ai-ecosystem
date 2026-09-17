@@ -1,9 +1,13 @@
 ﻿# OtaconsKeep bootstrap file fetch - stdout/stderr + exit codes for the BAT wrapper.
 # No git. Safe to re-run. Does not store credentials.
 #
+# Installer-owned files are NOT valid just because they exist.
+# They are valid only when they match the expected release/version/hash.
+#
 # ROOT CAUSE FIX: never overwrite the running bootstrap-fetch.ps1 via -OutFile.
 # powershell -File keeps that path open; rewriting it fails on Windows -> exit 1
-# even when the on-disk helper is already valid.
+# even when the on-disk helper is already valid. The public launcher MUST refresh
+# this script BEFORE invoking it (atomic temp download + replace).
 
 [CmdletBinding()]
 param(
@@ -17,7 +21,6 @@ param(
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
-# Win11/PS 5.1: GitHub requires TLS 1.2; session default can still be too weak on some images.
 try {
     [Net.ServicePointManager]::SecurityProtocol = `
         [Net.SecurityProtocolType]::Tls12 -bor `
@@ -66,8 +69,22 @@ function Get-NormalizedPath {
     }
 }
 
+function Get-FileSha256Hex {
+    param([string]$Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $fs = [System.IO.File]::OpenRead($Path)
+        try {
+            $hash = $sha.ComputeHash($fs)
+        } finally { $fs.Dispose() }
+        return ([BitConverter]::ToString($hash) -replace "-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+# Hardcoded complete manifest (source of truth if release.json is incomplete).
 # Do NOT list bootstrap-fetch.ps1 here when this script is already running from that path.
-# Re-fetching the running script overwrites a locked file on Windows -> exit code 1.
 $full = @(
     "install_otacon.bat",
     "OtaconsKeep-Setup.bat",
@@ -106,10 +123,10 @@ $deployOnly = @(
 )
 
 $files = if ($Manifest -eq "deploy") { $deployOnly } else { $full }
-$total = $files.Count
-$i = 0
-$failures = New-Object System.Collections.Generic.List[string]
-$lastErrorBlock = New-Object System.Collections.Generic.List[string]
+$hashByPath = @{}
+$bundleVersion = ""
+$bundleCommit = ""
+$bundleRef = ""
 
 $selfPath = ""
 try { $selfPath = Get-NormalizedPath $MyInvocation.MyCommand.Path } catch {}
@@ -124,22 +141,22 @@ try {
     exit 10
 }
 
-Write-Log "begin DestRoot=$DestRoot RawBase=$RawBase Manifest=$Manifest count=$total self=$selfPath"
+Write-Log "begin DestRoot=$DestRoot RawBase=$RawBase Manifest=$Manifest count=$($files.Count) self=$selfPath"
 Write-Log "env=Windows cwd=$(Get-Location) ps=$($PSVersionTable.PSVersion) tls=$([Net.ServicePointManager]::SecurityProtocol)"
-Show-Status -StepLabel "[0/$total] preparing download" -Source $RawBase -Status "connecting..."
+Show-Status -StepLabel "[0/$($files.Count)] preparing download" -Source $RawBase -Status "connecting..."
 
 function Save-FileDownload {
     param(
         [string]$Url,
         [string]$OutPath,
-        [string]$Rel
+        [string]$Rel,
+        [string]$ExpectedSha256 = ""
     )
     $tmp = "$OutPath.otacon-download"
     $errParts = New-Object System.Collections.Generic.List[string]
 
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
 
-    # Prefer curl.exe first (Schannel; reliable on clean Win11). Fall back to Invoke-WebRequest.
     $curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
     if ($curl) {
         Write-Log "curl.exe GET $Url"
@@ -155,8 +172,17 @@ function Save-FileDownload {
         Write-Log "curl.exe exit=$code for $Rel"
         if ($DebugMode) { Write-Host "[DEBUG] errorlevel=$code" }
         if ($code -eq 0 -and (Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -ge 40)) {
+            if ($ExpectedSha256) {
+                $got = Get-FileSha256Hex -Path $tmp
+                if ($got -ne $ExpectedSha256.ToLowerInvariant()) {
+                    $errParts.Add("sha256 mismatch expected=$ExpectedSha256 got=$got")
+                    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                    return @{ Ok = $false; Error = ($errParts -join " | "); Method = "curl.exe"; Replaced = $false; Sha256 = $got }
+                }
+            }
             Move-Item -LiteralPath $tmp -Destination $OutPath -Force
-            return @{ Ok = $true; Error = ""; Method = "curl.exe" }
+            $sha = Get-FileSha256Hex -Path $OutPath
+            return @{ Ok = $true; Error = ""; Method = "curl.exe"; Replaced = $true; Sha256 = $sha }
         }
         $errParts.Add("curl.exe exit $code")
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
@@ -172,20 +198,91 @@ function Save-FileDownload {
         }
         Invoke-WebRequest -Uri $Url -OutFile $tmp -UseBasicParsing -TimeoutSec 120
         if ((Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -ge 40)) {
+            if ($ExpectedSha256) {
+                $got = Get-FileSha256Hex -Path $tmp
+                if ($got -ne $ExpectedSha256.ToLowerInvariant()) {
+                    $errParts.Add("sha256 mismatch expected=$ExpectedSha256 got=$got")
+                    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                    return @{ Ok = $false; Error = ($errParts -join " | "); Method = "Invoke-WebRequest"; Replaced = $false; Sha256 = $got }
+                }
+            }
             Move-Item -LiteralPath $tmp -Destination $OutPath -Force
-            return @{ Ok = $true; Error = ""; Method = "Invoke-WebRequest" }
+            $sha = Get-FileSha256Hex -Path $OutPath
+            return @{ Ok = $true; Error = ""; Method = "Invoke-WebRequest"; Replaced = $true; Sha256 = $sha }
         }
         $errParts.Add("Invoke-WebRequest wrote missing/small file")
     } catch {
         $msg = $_.Exception.Message
         Write-Log "Invoke-WebRequest failed: $msg" "ERROR"
         $errParts.Add($msg)
-        $lastErrorBlock.Add("$Rel : $msg")
     }
 
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
-    return @{ Ok = $false; Error = ($errParts -join " | "); Method = "none" }
+    return @{ Ok = $false; Error = ($errParts -join " | "); Method = "none"; Replaced = $false; Sha256 = "" }
 }
+
+# --- Load release.json first (versioned installer bundle) ---
+$releaseRel = "release.json"
+$releaseUrl = "$RawBase/$releaseRel"
+$releaseOut = Join-Path $DestRoot $releaseRel
+$releaseTmp = "$releaseOut.otacon-download"
+Show-Status -StepLabel "[meta] release.json" -Source $releaseUrl -Status "downloading..." -File $releaseRel
+$relResult = Save-FileDownload -Url $releaseUrl -OutPath $releaseOut -Rel $releaseRel
+if ($relResult.Ok) {
+    try {
+        $relJson = Get-Content -LiteralPath $releaseOut -Raw -Encoding UTF8 | ConvertFrom-Json
+        $bundleVersion = [string]$relJson.installer_version
+        $bundleCommit = [string]$relJson.commit
+        $bundleRef = [string]$relJson.ecosystem_ref
+        if (-not $bundleRef) { $bundleRef = "main" }
+        Write-Log "bundle installer_version=$bundleVersion commit=$bundleCommit ref=$bundleRef"
+        Write-Host ("  INSTALLER_BUNDLE version={0} commit={1} ref={2}" -f $bundleVersion, $bundleCommit, $bundleRef) -ForegroundColor Cyan
+        if ($relJson.files) {
+            foreach ($entry in $relJson.files) {
+                if ($entry.path -and $entry.sha256) {
+                    $hashByPath[[string]$entry.path] = ([string]$entry.sha256).ToLowerInvariant()
+                }
+            }
+            Write-Log ("release.json hashes loaded count={0}" -f $hashByPath.Count)
+        }
+        # Prefer release.json file list when present (still force-include required helpers).
+        if ($relJson.files -and $relJson.files.Count -gt 0) {
+            $fromRelease = @()
+            foreach ($entry in $relJson.files) {
+                $p = [string]$entry.path
+                if (-not $p) { continue }
+                if ($p -eq "deploy/bootstrap-fetch.ps1") { continue } # refreshed by launcher, not self
+                if ($Manifest -eq "deploy") {
+                    if ($p -like "deploy/*" -or $p -eq "install_otacon.sh" -or $p -eq "release.json" -or $p -eq "deploy/installer-revision.txt") {
+                        $fromRelease += $p
+                    }
+                } else {
+                    $fromRelease += $p
+                }
+            }
+            foreach ($must in @(
+                "release.json",
+                "deploy/installer-revision.txt",
+                "deploy/windows-setup-assistant.ps1",
+                "deploy/repair-otacon-core.ps1",
+                "deploy/wsl-bash-file.ps1"
+            )) {
+                if ($fromRelease -notcontains $must) { $fromRelease += $must }
+            }
+            if ($fromRelease.Count -gt 0) { $files = $fromRelease | Select-Object -Unique }
+        }
+    } catch {
+        Write-Log ("release.json parse warn: {0}" -f $_.Exception.Message) "WARN"
+    }
+} else {
+    Write-Log ("release.json download failed (continuing with hardcoded manifest): {0}" -f $relResult.Error) "WARN"
+}
+
+$failures = New-Object System.Collections.Generic.List[string]
+$lastErrorBlock = New-Object System.Collections.Generic.List[string]
+$replaced = New-Object System.Collections.Generic.List[string]
+$total = $files.Count
+$i = 0
 
 foreach ($rel in $files) {
     $i++
@@ -199,20 +296,24 @@ foreach ($rel in $files) {
 
     # Skip overwriting the running script (file lock -> false failure on Windows).
     if ($selfPath -and $outFull -and ($selfPath -eq $outFull)) {
-        Write-Log "skip self-overwrite $rel (running script)"
+        Write-Log "skip self-overwrite $rel (running script; launcher must have refreshed it)"
         Write-Host "  SKIP (already running): $rel" -ForegroundColor DarkYellow
         continue
     }
 
+    # NEVER skip because a cached file already exists.
+    $expected = ""
+    if ($hashByPath.ContainsKey($rel)) { $expected = [string]$hashByPath[$rel] }
+
     Show-Status -StepLabel ("[{0}/{1}] downloading otaconskeep files" -f $i, $total) `
         -Source "https://github.com/Otaconskeep/otacons-ai-ecosystem" `
         -Status "connecting..." -File $rel
-    Write-Log "GET $url -> $out"
+    Write-Log "GET $url -> $out (always replace; expected_sha=$expected)"
 
     Show-Status -StepLabel ("[{0}/{1}] downloading otaconskeep files" -f $i, $total) `
         -Source $url -Status "downloading..." -File $rel
 
-    $result = Save-FileDownload -Url $url -OutPath $out -Rel $rel
+    $result = Save-FileDownload -Url $url -OutPath $out -Rel $rel -ExpectedSha256 $expected
 
     Show-Status -StepLabel ("[{0}/{1}] downloading otaconskeep files" -f $i, $total) `
         -Source $url -Status "verifying files..." -File $rel
@@ -229,10 +330,11 @@ foreach ($rel in $files) {
     }
 
     $len = (Get-Item -LiteralPath $out).Length
-    Write-Log "ok $rel bytes=$len method=$($result.Method)"
-    Write-Host "  OK: $rel ($len bytes) via $($result.Method)" -ForegroundColor Green
+    $replaced.Add($rel)
+    Write-Log ("ok $rel bytes=$len method={0} sha256={1} replaced=1" -f $result.Method, $result.Sha256)
+    Write-Host ("  OK: {0} ({1} bytes) sha={2} via {3}" -f $rel, $len, $result.Sha256.Substring(0, [Math]::Min(12, $result.Sha256.Length)), $result.Method) -ForegroundColor Green
 
-    # PowerShell 5.1-safe: ensure UTF-8 BOM + CRLF on shipped .ps1 helpers.
+    # PowerShell 5.1-safe: ensure UTF-8 BOM + CRLF on shipped .ps1 helpers (after hash check).
     if ($rel -like "*.ps1") {
         try {
             $bytes = [System.IO.File]::ReadAllBytes($out)
@@ -258,7 +360,6 @@ if ($failures.Count -gt 0) {
     Write-Host ""
     Write-Host "FETCH SUMMARY: $($failures.Count) file(s) failed" -ForegroundColor Red
     foreach ($f in $failures) { Write-Host "  - $f" }
-    # Machine-readable trailer for the BAT failure screen
     Write-Host ""
     Write-Host "OTACON_FETCH_FAILED"
     Write-Host "FAILED_COMMAND=download otaconskeep setup files from github raw"
@@ -282,6 +383,7 @@ $required = @(
 )
 $missingReq = New-Object System.Collections.Generic.List[string]
 foreach ($rel in $required) {
+    if ($Manifest -eq "deploy" -and ($rel -eq "install_otacon.bat")) { continue }
     $p = Join-Path $DestRoot ($rel -replace "/", [IO.Path]::DirectorySeparatorChar)
     if (-not (Test-Path -LiteralPath $p) -or ((Get-Item -LiteralPath $p).Length -lt 40)) {
         $missingReq.Add($rel)
@@ -296,11 +398,46 @@ if ($missingReq.Count -gt 0) {
     Write-Host ("LAST_ERROR=missing required files: " + ($missingReq -join ", "))
     exit 1
 }
-Write-Log "required helpers present including repair-otacon-core.ps1"
+Write-Log "required helpers present including repair-otacon-core.ps1 and wsl-bash-file.ps1"
+
+# Prove the INSTALLED repair helper is the temp-.sh transport (not stale bash -lc).
+$repairPath = Join-Path $DestRoot ("deploy/repair-otacon-core.ps1" -replace "/", [IO.Path]::DirectorySeparatorChar)
+$repairText = Get-Content -LiteralPath $repairPath -Raw -Encoding UTF8
+if ($repairText -match 'bash -lc \$bash') {
+    Write-Log "INSTALLED repair still has bash -lc `$bash - stale cache" "ERROR"
+    Write-Host "  STALE repair-otacon-core.ps1 still uses bash -lc `$bash" -ForegroundColor Red
+    Write-Host "OTACON_FETCH_FAILED"
+    Write-Host "FAILED_COMMAND=verify installed repair-otacon-core.ps1 uses temp .sh transport"
+    Write-Host "EXIT_CODE=1"
+    Write-Host "LAST_ERROR=installed repair helper is stale (bash -lc `$bash)"
+    exit 1
+}
+if ($repairText -notmatch 'Invoke-OtaconWslBashFile') {
+    Write-Log "INSTALLED repair missing Invoke-OtaconWslBashFile" "ERROR"
+    Write-Host "  INSTALLED repair-otacon-core.ps1 missing Invoke-OtaconWslBashFile" -ForegroundColor Red
+    Write-Host "OTACON_FETCH_FAILED"
+    Write-Host "FAILED_COMMAND=verify installed repair-otacon-core.ps1 uses Invoke-OtaconWslBashFile"
+    Write-Host "EXIT_CODE=1"
+    Write-Host "LAST_ERROR=installed repair helper missing file transport"
+    exit 1
+}
+Write-Log "installed repair helper uses Invoke-OtaconWslBashFile (temp .sh transport)"
+
+$wslHelper = Join-Path $DestRoot ("deploy/wsl-bash-file.ps1" -replace "/", [IO.Path]::DirectorySeparatorChar)
+$wslText = Get-Content -LiteralPath $wslHelper -Raw -Encoding UTF8
+if ($wslText -notmatch 'function Invoke-OtaconWslBashFile') {
+    Write-Log "wsl-bash-file.ps1 missing Invoke-OtaconWslBashFile" "ERROR"
+    Write-Host "OTACON_FETCH_FAILED"
+    Write-Host "FAILED_COMMAND=verify deploy/wsl-bash-file.ps1"
+    Write-Host "EXIT_CODE=1"
+    Write-Host "LAST_ERROR=wsl-bash-file.ps1 incomplete"
+    exit 1
+}
 
 # Parse-check critical helpers under this host's PowerShell before Setup continues.
 $parseTargets = @(
     "deploy/repair-otacon-core.ps1",
+    "deploy/wsl-bash-file.ps1",
     "deploy/windows-setup-assistant.ps1",
     "deploy/fix-otacon-gpu.ps1"
 )
@@ -322,4 +459,31 @@ foreach ($rel in $parseTargets) {
     }
     Write-Log "parse ok $rel"
 }
+
+# Persist local pin + refresh log.
+$pinPath = Join-Path $DestRoot ("deploy/installer-bundle.pin.json" -replace "/", [IO.Path]::DirectorySeparatorChar)
+$revPath = Join-Path $DestRoot ("deploy/installer-revision.txt" -replace "/", [IO.Path]::DirectorySeparatorChar)
+$revText = ""
+if (Test-Path -LiteralPath $revPath) {
+    $revText = (Get-Content -LiteralPath $revPath -Raw -Encoding UTF8).Trim()
+}
+if (-not $bundleCommit -and $revText) { $bundleCommit = $revText }
+$pinObj = @{
+    installer_version = $bundleVersion
+    commit            = $bundleCommit
+    ecosystem_ref     = $bundleRef
+    raw_base          = $RawBase
+    refreshed_utc     = (Get-Date).ToUniversalTime().ToString("o")
+    files_replaced    = @($replaced)
+}
+try {
+    ($pinObj | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $pinPath -Encoding UTF8
+    Write-Log "wrote pin $pinPath version=$bundleVersion commit=$bundleCommit replaced=$($replaced.Count)"
+} catch {
+    Write-Log ("pin write warn: {0}" -f $_.Exception.Message) "WARN"
+}
+
+Write-Host ""
+Write-Host ("  BOOTSTRAP_OK version={0} commit={1} ref={2} replaced={3}" -f $bundleVersion, $bundleCommit, $bundleRef, $replaced.Count) -ForegroundColor Green
+Write-Log ("BOOTSTRAP_OK version={0} commit={1} ref={2} replaced={3}" -f $bundleVersion, $bundleCommit, $bundleRef, $replaced.Count)
 exit 0

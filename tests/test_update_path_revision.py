@@ -72,7 +72,13 @@ def main() -> int:
     must("repair-otacon-core.ps1" in setup, "Setup.bat checks for repair helper", fails)
     must("FETCH_REPAIR_MISSING" in setup or "missing repair-otacon-core" in setup.lower(),
          "Setup.bat fails fetch verify without repair helper", fails)
-    must("forcing refetch" in setup or "FORCE_UPDATE" in setup, "Setup refetches when repair missing from pin", fails)
+    must(
+        "always refreshes installer bundle" in setup.lower()
+        or "ALWAYS refreshing bootstrap-fetch.ps1" in setup
+        or "FORCE_UPDATE" in setup,
+        "Setup always refreshes installer bundle / bootstrap",
+        fails,
+    )
 
     # Content that Linux proofs look for must exist in tree
     mem = (ROOT / "core" / "memory.py").read_text(encoding="utf-8", errors="replace")

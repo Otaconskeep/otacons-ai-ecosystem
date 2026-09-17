@@ -277,19 +277,16 @@ echo.
 goto SS_CHOICE
 
 :ENSURE_ASSISTANT
-if not exist "%ASSISTANT%" goto ENSURE_NEED
-for %%A in ("%ASSISTANT%") do if %%~zA GEQ 40 goto ENSURE_PRESENT
+REM Always refresh bootstrap + deploy helpers. Existence is not freshness.
+call :LOG "ENSURE_ASSISTANT always refreshing installer-owned deploy files"
 goto ENSURE_NEED
-:ENSURE_PRESENT
-call :LOG "assistant present"
-exit /b 0
 
 :ENSURE_NEED
 echo.
 echo ============================================================
 echo  OTACONSKEEP SETUP
 echo ============================================================
-echo  Downloading setup files first run only...
+echo  Refreshing setup files from GitHub...
 echo  Do not close this window.
 echo  source
 echo    %REPO_WEB%
@@ -299,37 +296,43 @@ call :LOG "ENSURE_ASSISTANT downloading deploy scripts"
 
 if not exist "%SCRIPT_DIR%deploy" mkdir "%SCRIPT_DIR%deploy" >nul 2>&1
 
-if exist "%FETCH_PS1%" goto HAVE_FETCH
-goto GET_FETCH
-:HAVE_FETCH
-for %%A in ("%FETCH_PS1%") do if %%~zA GEQ 40 goto RUN_FETCH
+set "FETCH_TMP=%FETCH_PS1%.otacon-new"
+if exist "%FETCH_TMP%" del /f /q "%FETCH_TMP%" >nul 2>&1
 
 :GET_FETCH
 where curl.exe >nul 2>&1
 if errorlevel 1 goto GET_FETCH_PS
-call :LOG "curl helper bootstrap-fetch.ps1"
+call :LOG "curl ALWAYS refresh bootstrap-fetch.ps1"
 echo  [0/n] preparing download helper
 echo  status
 echo    downloading...
 if defined DEBUG echo [DEBUG] command=curl.exe bootstrap-fetch.ps1
-curl.exe -fsSL --connect-timeout 20 --max-time 120 -o "%FETCH_PS1%" "%RAW%/deploy/bootstrap-fetch.ps1" >>"%LOGFILE%" 2>&1
+curl.exe -fsSL --connect-timeout 20 --max-time 120 -o "%FETCH_TMP%" "%RAW%/deploy/bootstrap-fetch.ps1" >>"%LOGFILE%" 2>&1
 set "RC=!ERRORLEVEL!"
 call :LOG "curl helper exit=!RC!"
 if defined DEBUG echo [DEBUG] errorlevel=!RC!
-if "!RC!"=="0" if exist "%FETCH_PS1%" goto RUN_FETCH
+if not "!RC!"=="0" goto GET_FETCH_PS
+if not exist "%FETCH_TMP%" goto GET_FETCH_PS
+for %%A in ("%FETCH_TMP%") do if %%~zA LSS 40 goto GET_FETCH_PS
+move /Y "%FETCH_TMP%" "%FETCH_PS1%" >nul
+if errorlevel 1 goto GET_FETCH_PS
+goto RUN_FETCH
 
 :GET_FETCH_PS
-call :LOG "powershell helper bootstrap-fetch.ps1"
+call :LOG "powershell ALWAYS refresh bootstrap-fetch.ps1"
 echo  status
 echo    downloading via PowerShell...
-REM Top-level only - never inside IF (...).
 if exist "%DOWNLOAD_ONE%" goto GET_FETCH_PS_FILE
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12}catch{}; Invoke-WebRequest -Uri ($env:RAW+'/deploy/bootstrap-fetch.ps1') -OutFile $env:FETCH_PS1 -UseBasicParsing -TimeoutSec 120; if(-not(Test-Path -LiteralPath $env:FETCH_PS1)){exit 1}; if((Get-Item -LiteralPath $env:FETCH_PS1).Length -lt 40){exit 1}; exit 0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12}catch{}; $tmp=$env:FETCH_PS1+'.otacon-new'; Invoke-WebRequest -Uri ($env:RAW+'/deploy/bootstrap-fetch.ps1') -OutFile $tmp -UseBasicParsing -TimeoutSec 120; if(-not(Test-Path -LiteralPath $tmp)){exit 1}; if((Get-Item -LiteralPath $tmp).Length -lt 40){exit 1}; Move-Item -LiteralPath $tmp -Destination $env:FETCH_PS1 -Force; exit 0"
 set "RC=!ERRORLEVEL!"
 goto GET_FETCH_PS_DONE
 :GET_FETCH_PS_FILE
-powershell -NoProfile -ExecutionPolicy Bypass -File "%DOWNLOAD_ONE%" -Url "%RAW%/deploy/bootstrap-fetch.ps1" -OutFile "%FETCH_PS1%" -LogFile "%LOGFILE%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DOWNLOAD_ONE%" -Url "%RAW%/deploy/bootstrap-fetch.ps1" -OutFile "%FETCH_TMP%" -LogFile "%LOGFILE%"
 set "RC=!ERRORLEVEL!"
+if not "!RC!"=="0" goto GET_FETCH_PS_DONE
+if not exist "%FETCH_TMP%" set "RC=2" & goto GET_FETCH_PS_DONE
+move /Y "%FETCH_TMP%" "%FETCH_PS1%" >nul
+if errorlevel 1 set "RC=2"
 :GET_FETCH_PS_DONE
 call :LOG "ps helper exit=!RC!"
 if not "!RC!"=="0" exit /b !RC!
@@ -351,6 +354,24 @@ if not "!RC!"=="0" exit /b !RC!
 
 if not exist "%ASSISTANT%" (
   call :LOG "assistant missing after fetch"
+  exit /b 2
+)
+if not exist "%SCRIPT_DIR%deploy\repair-otacon-core.ps1" (
+  call :LOG "repair helper missing after fetch"
+  exit /b 2
+)
+if not exist "%SCRIPT_DIR%deploy\wsl-bash-file.ps1" (
+  call :LOG "wsl-bash-file.ps1 missing after fetch"
+  exit /b 2
+)
+findstr /C:"Invoke-OtaconWslBashFile" "%SCRIPT_DIR%deploy\repair-otacon-core.ps1" >nul
+if errorlevel 1 (
+  call :LOG "repair helper stale after fetch"
+  exit /b 2
+)
+findstr /C:"bash -lc $bash" "%SCRIPT_DIR%deploy\repair-otacon-core.ps1" >nul
+if not errorlevel 1 (
+  call :LOG "repair helper still has bash -lc after fetch"
   exit /b 2
 )
 for %%A in ("%ASSISTANT%") do if %%~zA LSS 40 (
