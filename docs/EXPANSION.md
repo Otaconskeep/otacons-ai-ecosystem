@@ -15,7 +15,7 @@ main README) — and so far as the foundation layer goes, that policy is why
 it ships as real, tested code and a real installer rather than a promise.
 See *Install the foundation layer today*, below.
 
-Companion page: https://otaconskeep-site.otaconskeep.workers.dev/expansion/
+Companion page: https://otaconskeep.github.io/expansion/
 
 ## The commercial boundary
 

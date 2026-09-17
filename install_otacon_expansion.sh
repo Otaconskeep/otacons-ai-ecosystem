@@ -20,7 +20,7 @@ set -Eeuo pipefail
 #   It does NOT install a Dashboard, Codec, War Room, Video Studio, or any
 #   other UI wired to that roster -- those surfaces are specified in
 #   docs/EXPANSION.md but not yet built. Nothing here overwrites, gates, or
-#   otherwise touches Otacon Core. Full status: https://otaconskeep-site.otaconskeep.workers.dev/expansion/
+#   otherwise touches Otacon Core. Full status: https://otaconskeep.github.io/expansion/
 #
 # What this installer does:
 #   - Confirms Otacon Core is already installed (Expansion installs on top
@@ -54,7 +54,7 @@ BRAND="ANTONIO G. GARCIA // OTACONSKEEP"
 PRODUCT="OTACON AI ECOSYSTEM -- OTACON EXPANSION (foundation layer)"
 TAGLINE="Built for the Keep."
 DISCORD_URL="https://discord.gg/cZDeqECzX"
-SPEC_URL="https://otaconskeep-site.otaconskeep.workers.dev/expansion/"
+SPEC_URL="https://otaconskeep.github.io/expansion/"
 
 REPO_URL="https://github.com/Otaconskeep/otacons-ai-ecosystem.git"
 INSTALL_DIR="${OTACON_INSTALL_DIR:-$HOME/otacon-ai-ecosystem}"
