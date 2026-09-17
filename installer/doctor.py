@@ -23,7 +23,8 @@ def _warn(name: str, detail: str) -> dict:
 def main(argv=None) -> int:
     results = []
     host, mode = resolve_bind_host()
-    port = int(os.getenv('OTACON_PORT', os.getenv('OTACON_CHAT_PORT', '5757')))
+    raw_port = (os.getenv('OTACON_PORT') or os.getenv('OTACON_CHAT_PORT') or '').strip() or '5757'
+    port = int(raw_port)
     results.append(_check('bind_mode', True, f'{mode} @ {host}:{port}'))
 
     # Port listening

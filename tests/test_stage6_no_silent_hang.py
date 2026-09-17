@@ -69,10 +69,13 @@ def main() -> int:
     must("stallTimeoutMin" in PS1 or "STALL" in PS1, "Stage 6 stall timeout", fails)
     must("overallTimeoutMin" in PS1 or "OVERALL" in PS1, "Stage 6 overall timeout", fails)
     must("phaseStarted" in PS1 and "phase-local clock" in PS1, "phase overall timeout uses phase-local clock not Stage 6 start", fails)
-    must("STAGE" in PS1 and "-match" in PS1 and ("Current substep" in PS1 or "CURRENT :" in PS1), "Windows UI parses STAGE markers", fails)
+    must("STAGE" in PS1 and "-match" in PS1 and ("Current substep" in PS1 or "CURRENT :" in PS1 or "MISSION :" in PS1), "Windows UI parses STAGE markers", fails)
     must("Get-WindowsNvidiaName" in PS1 and "Get-WslNvidiaName" in PS1, "Windows+WSL GPU probe in Stage 6 UI", fails)
     must("last 50 log lines" in PS1 or "linux-install-tail.log" in PS1, "failure dumps last log lines", fails)
-    must("Current substep" in PS1 or "CURRENT :" in PS1, "UI shows current substep", fails)
+    must("Current substep" in PS1 or "CURRENT :" in PS1 or "MISSION :" in PS1, "UI shows current substep", fails)
+    must("Show-OtaconProgressBar" in PS1, "Stage 6 has progress bar", fails)
+    must("LIVE FEED" not in PS1, "Stage 6 does not dump live apt/test feed to user", fails)
+    must("OTACON_CHAT_PORT" in PS1 and "IsNullOrWhiteSpace" in PS1, "blank OTACON_CHAT_PORT not injected", fails)
 
     print("=" * 60)
     if fails:

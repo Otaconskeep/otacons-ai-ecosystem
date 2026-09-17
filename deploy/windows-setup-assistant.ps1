@@ -1572,6 +1572,104 @@ function Step-WaitUbuntuInit {
     return (Test-UbuntuReady (Get-UbuntuDistroName))
 }
 
+function ConvertTo-OtaconMissionStatus {
+    <#
+      Map noisy Linux/apt/test log fragments to short cinematic status lines.
+      Never surface diary / package dump / raw unittest chatter to the user.
+    #>
+    param([string]$Raw, [string]$Phase = "")
+    $t = ("{0}" -f $Raw).Trim()
+    if (-not $t) {
+        return $(switch ($Phase) {
+            "privileged" { "Opening the uplink into Linux..." }
+            "user"       { "Assembling Otacon Core..." }
+            "finalize"   { "Locking durable services into place..." }
+            default      { "Working..." }
+        })
+    }
+    $low = $t.ToLowerInvariant()
+    if ($low -match 'diary|journal\.created|living dossier') {
+        return "Calibrating memory systems..."
+    }
+    if ($low -match 'unittest|pytest|self-check|self-test|ran \d+ tests') {
+        return "Running internal systems check..."
+    }
+    if ($low -match 'cryptography|pip install|requirements-core|wheel') {
+        return "Loading secure runtime modules..."
+    }
+    if ($low -match 'apt-get|get:|hit:|unpacking|setting up|fetched ') {
+        return "Provisioning Linux packages..."
+    }
+    if ($low -match 'ollama|model|pulling|download') {
+        return "Syncing neural payload..."
+    }
+    if ($low -match 'piper|wyoming|tts|voice') {
+        return "Tuning voice uplink..."
+    }
+    if ($low -match 'systemd|service|finalize|enable') {
+        return "Arming persistent services..."
+    }
+    if ($low -match 'venv|python|pyinstaller|backend') {
+        return "Forging the Core binary..."
+    }
+    if ($low -match 'wsl|ubuntu|bootstrap') {
+        return "Linking Windows to Linux..."
+    }
+    # Strip bracketed machine tags; keep a short human fragment if safe.
+    $clean = ($t -replace '\[STAGE\]\s*', '' -replace '\[AGG::\w+\]\s*', '').Trim()
+    if ($clean.Length -gt 52) { $clean = $clean.Substring(0, 52) + "..." }
+    if ($clean -match '(?i)error|traceback|exception|failed') {
+        return "Compensating... still on mission."
+    }
+    if ($clean -and $clean -notmatch '(?i)diary|/root/|site-packages|File \"') {
+        return $clean
+    }
+    return $(switch ($Phase) {
+        "privileged" { "Deep install in progress..." }
+        "user"       { "Core assembly in progress..." }
+        "finalize"   { "Sealing the Keep..." }
+        default      { "Deep install in progress..." }
+    })
+}
+
+function Get-Stage6ProgressPercent {
+    param(
+        [string]$Phase,
+        [datetime]$Started,
+        [int]$TypicalMinutes = 25
+    )
+    $elapsedMin = [Math]::Max(0.0, ((Get-Date) - $Started).TotalMinutes)
+    $base = switch ($Phase) {
+        "privileged" { 5 }
+        "user"       { 48 }
+        "finalize"   { 82 }
+        default      { 10 }
+    }
+    $span = switch ($Phase) {
+        "privileged" { 40 }
+        "user"       { 30 }
+        "finalize"   { 16 }
+        default      { 40 }
+    }
+    $frac = [Math]::Min(1.0, $elapsedMin / [Math]::Max(1.0, [double]$TypicalMinutes))
+    $pct = [int][Math]::Min(97, [Math]::Floor($base + ($span * $frac)))
+    return $pct
+}
+
+function Show-OtaconProgressBar {
+    param([int]$Percent, [int]$Width = 42)
+    if ($Percent -lt 0) { $Percent = 0 }
+    if ($Percent -gt 100) { $Percent = 100 }
+    $filled = [int][Math]::Round(($Width * $Percent) / 100.0)
+    if ($filled -gt $Width) { $filled = $Width }
+    $empty = $Width - $filled
+    $bar = ("#" * $filled) + ("-" * $empty)
+    Write-Host -NoNewline "  [" -ForegroundColor DarkCyan
+    Write-Host -NoNewline $bar -ForegroundColor Green
+    Write-Host -NoNewline "] " -ForegroundColor DarkCyan
+    Write-Host ("{0,3}%" -f $Percent) -ForegroundColor Yellow
+}
+
 function Show-Stage6Panel {
     param(
         [datetime]$Started,
@@ -1579,51 +1677,48 @@ function Show-Stage6Panel {
         [string[]]$RecentLines = @(),
         [datetime]$LastProgress,
         [string]$GpuWin = "unknown",
-        [string]$GpuWsl = "unknown"
+        [string]$GpuWsl = "unknown",
+        [string]$Phase = "",
+        [int]$ProgressPct = -1
     )
     Initialize-OtaconConsole
     $elapsed = (Get-Date) - $Started
     $em = "{0:00}m {1:00}s" -f [int]$elapsed.TotalMinutes, $elapsed.Seconds
-    $since = "n/a"
-    if ($PSBoundParameters.ContainsKey('LastProgress') -and $LastProgress) {
-        $sp = (Get-Date) - $LastProgress
-        $since = ("{0:00}m {1:00}s ago" -f [int]$sp.TotalMinutes, $sp.Seconds)
+    if ($ProgressPct -lt 0) {
+        $ProgressPct = Get-Stage6ProgressPercent -Phase $Phase -Started $Started
     }
+    $mission = ConvertTo-OtaconMissionStatus -Raw $Substep -Phase $Phase
     Clear-Host
     Write-Host ""
     Show-OtaconRule -Color Cyan
-    Write-Host "  OTACON  //  DEEP INSTALL  //  [6/8] LINUX PAYLOAD" -ForegroundColor Cyan
+    Write-Host "  OTACON UPLINK  //  DEEP INSTALL  //  LINK ACTIVE" -ForegroundColor Cyan
     Show-OtaconRule -Color DarkCyan
-    Write-Host "  LINK    : ACTIVE - leave this window open" -ForegroundColor Green
-    $sub = "$Substep"
-    if ($sub.Length -gt 58) { $sub = $sub.Substring(0, 58) }
-    Write-Host ("  CURRENT : {0}" -f $sub) -ForegroundColor Yellow
-    Write-Host ("  GPU WIN : {0}" -f $GpuWin) -ForegroundColor DarkCyan
-    Write-Host ("  GPU WSL : {0}" -f $GpuWsl) -ForegroundColor DarkCyan
-    Write-Host ("  ELAPSED : {0}   last pulse {1}" -f $em, $since) -ForegroundColor Gray
-    Write-Host "  OTACON  : Installing Core - you don't need to touch anything." -ForegroundColor Cyan
+    Write-Host "  STATUS  : OPERATIONAL - leave this window open" -ForegroundColor Green
+    Write-Host ("  MISSION : {0}" -f $mission) -ForegroundColor Yellow
+    Write-Host ("  ELAPSED : {0}" -f $em) -ForegroundColor Gray
+    if ($GpuWin -and $GpuWin -ne "unknown" -and $GpuWin -ne "not visible") {
+        Write-Host ("  GPU     : {0}" -f $GpuWin) -ForegroundColor DarkCyan
+    }
     Show-OtaconRule -Color Cyan
-    Write-Host "  LIVE FEED / FALLING CODE:" -ForegroundColor DarkCyan
-    $shown = 0
-    foreach ($t in $RecentLines) {
-        if (-not $t) { continue }
-        $line = $t.Trim()
-        if ($line.Length -gt 58) { $line = $line.Substring(0, 58) }
-        Write-Host ("    > {0}" -f $line) -ForegroundColor DarkGreen
-        $shown++
-        if ($shown -ge 6) { break }
-    }
-    if ($shown -eq 0) {
-        Write-Host "    (awaiting Linux output...)" -ForegroundColor DarkGreen
-    }
+    Write-Host "  SIGNAL INTEGRITY" -ForegroundColor DarkCyan
+    Show-OtaconProgressBar -Percent $ProgressPct
+    Write-Host ""
+    Write-Host "  [OTACON] You don't need to read the stream." -ForegroundColor Cyan
+    Write-Host "  [OTACON] I'm building the Keep. Stay with me." -ForegroundColor DarkCyan
+    Write-Host ""
+    # Falling-code illusion only - never dump diary/apt/unittest log lines.
     $glyphs = Get-OtaconGlyphs
     $rnd = New-Object System.Random
-    for ($r = 0; $r -lt 3; $r++) {
+    for ($r = 0; $r -lt 5; $r++) {
         $strip = -join (0..61 | ForEach-Object { $glyphs[$rnd.Next(0, $glyphs.Count)] })
-        $c = if ($r -eq 0) { "Green" } elseif ($r -eq 1) { "DarkGreen" } else { "DarkCyan" }
+        $c = if (($r % 3) -eq 0) { "Green" } elseif (($r % 3) -eq 1) { "DarkGreen" } else { "DarkCyan" }
         Write-Host ("  {0}" -f $strip) -ForegroundColor $c
     }
     Show-OtaconRule -Color Cyan
+    # RecentLines retained for callers/logs but intentionally not rendered.
+    if ($RecentLines -and $RecentLines.Count -gt 0) {
+        Write-KeepLog ("stage6 pulse mission='{0}' pct={1} raw='{2}'" -f $mission, $ProgressPct, $Substep) -Stage "INSTALLING_OTACON"
+    }
 }
 
 function Get-WindowsNvidiaName {
@@ -2678,9 +2773,10 @@ function Invoke-WslInstallPhase {
             }
         }
         $recent = @($all | Select-Object -Last 6)
-
-        Show-Stage6Panel -Started $Started -Substep ("[{0}] {1}" -f $Phase, $currentSub) -RecentLines $recent `
-            -LastProgress $lastProgress -GpuWin $GpuWin -GpuWsl $GpuWsl
+        $pct = Get-Stage6ProgressPercent -Phase $Phase -Started $Started
+        Show-Stage6Panel -Started $Started -Substep $currentSub -RecentLines $recent `
+            -LastProgress $lastProgress -GpuWin $GpuWin -GpuWsl $GpuWsl `
+            -Phase $Phase -ProgressPct $pct
 
         $elapsedMin = ((Get-Date) - $phaseStarted).TotalMinutes
         $stallMin = ((Get-Date) - $lastProgress).TotalMinutes
@@ -2791,23 +2887,31 @@ function Step-InstallOtacon {
     }
     Write-KeepLog "WSL user=$targetUser account_valid=true default_ok=true (no NOPASSWD:ALL; using wsl -u root for privileged steps)" -Stage "INSTALLING_OTACON"
 
-    Show-Stage6Panel -Started $started -Substep "Preparing Linux installer (root bootstrap)" -GpuWin $gpuWin -GpuWsl $gpuWsl -LastProgress $started
+    Show-Stage6Panel -Started $started -Substep "Preparing Linux installer (root bootstrap)" -Phase "privileged" -GpuWin $gpuWin -GpuWsl $gpuWsl -LastProgress $started -ProgressPct 8
 
-    $envPass = @(
-        "OTACON_INSTALL_DEFAULT_MODEL=$($env:OTACON_INSTALL_DEFAULT_MODEL)",
-        "OTACON_INSTALL_VOICE_TRAINER=$($env:OTACON_INSTALL_VOICE_TRAINER)",
-        "OTACON_LLM_MODEL=$($env:OTACON_LLM_MODEL)",
-        "OTACON_BUILD_NATIVE=$($env:OTACON_BUILD_NATIVE)",
-        "OTACON_LAN_MODE=$($env:OTACON_LAN_MODE)",
-        "OTACON_INSTALL_STT=$($env:OTACON_INSTALL_STT)",
-        "OTACON_CHAT_HOST=$($env:OTACON_CHAT_HOST)",
-        "OTACON_CHAT_PORT=$($env:OTACON_CHAT_PORT)",
-        "OTACON_INSTALL_DIR=$($env:OTACON_INSTALL_DIR)",
-        "OTACON_INSTALL_DEB=$($env:OTACON_INSTALL_DEB)",
-        "OTACON_LAUNCH_WIZARD=$($env:OTACON_LAUNCH_WIZARD)",
-        "OTACON_RUN_TESTS=$($env:OTACON_RUN_TESTS)",
-        "OTACON_RELEASE=$($env:OTACON_RELEASE)"
-    ) -join " "
+    # Never inject blank env values - Python int('') crashes (OTACON_CHAT_PORT="").
+    $envPairs = [ordered]@{
+        OTACON_INSTALL_DEFAULT_MODEL = $env:OTACON_INSTALL_DEFAULT_MODEL
+        OTACON_INSTALL_VOICE_TRAINER = $env:OTACON_INSTALL_VOICE_TRAINER
+        OTACON_LLM_MODEL             = $env:OTACON_LLM_MODEL
+        OTACON_BUILD_NATIVE          = $env:OTACON_BUILD_NATIVE
+        OTACON_LAN_MODE              = $env:OTACON_LAN_MODE
+        OTACON_INSTALL_STT           = $env:OTACON_INSTALL_STT
+        OTACON_CHAT_HOST             = $env:OTACON_CHAT_HOST
+        OTACON_CHAT_PORT             = $(if ([string]::IsNullOrWhiteSpace($env:OTACON_CHAT_PORT)) { "$Port" } else { $env:OTACON_CHAT_PORT })
+        OTACON_INSTALL_DIR           = $env:OTACON_INSTALL_DIR
+        OTACON_INSTALL_DEB           = $env:OTACON_INSTALL_DEB
+        OTACON_LAUNCH_WIZARD         = $env:OTACON_LAUNCH_WIZARD
+        OTACON_RUN_TESTS             = $env:OTACON_RUN_TESTS
+        OTACON_RELEASE               = $env:OTACON_RELEASE
+    }
+    $envBits = New-Object System.Collections.Generic.List[string]
+    foreach ($k in $envPairs.Keys) {
+        $v = [string]$envPairs[$k]
+        if ([string]::IsNullOrWhiteSpace($v)) { continue }
+        [void]$envBits.Add(("{0}={1}" -f $k, $v))
+    }
+    $envPass = ($envBits -join " ")
 
     $logPipe = Join-Path $LogDir "linux-install-tail.log"
     $overallTimeoutMin = 120

@@ -1325,8 +1325,23 @@ VPIP="$VENV_DIR/bin/pip"
 
 "$VPY" -m pip install --upgrade pip setuptools wheel
 
-# psutil is optional in source but improves hardware reporting.
-"$VPIP" install --upgrade psutil pyinstaller
+# Source of truth: requirements-core.txt (psutil, pyinstaller, cryptography, …)
+REQ_CORE="$INSTALL_DIR/requirements-core.txt"
+if [[ -f "$REQ_CORE" ]]; then
+  log "Installing Core Python dependencies from requirements-core.txt"
+  "$VPIP" install --upgrade -r "$REQ_CORE"
+else
+  warn "requirements-core.txt missing — falling back to pinned Core packages"
+  "$VPIP" install --upgrade psutil pyinstaller cryptography argon2-cffi
+fi
+
+# Prove cryptography is importable in the same venv that runs self-tests.
+if ! "$VPY" -c "import cryptography; print(cryptography.__version__)"; then
+  die "cryptography failed to import in $VENV_DIR — self-tests would fail. Re-run Setup or install cryptography into the Otacon venv."
+fi
+if ! "$VPY" -c "import argon2; print('argon2-ok')"; then
+  die "argon2-cffi failed to import in $VENV_DIR — Expansion crypto self-tests would fail."
+fi
 
 # Python 3.13 removed stdlib audioop; the current public source imports it.
 if (( PY_MAJOR > 3 || (PY_MAJOR == 3 && PY_MINOR >= 13) )); then

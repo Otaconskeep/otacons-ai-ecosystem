@@ -101,6 +101,15 @@ class TestTopology(LayoutTestCase):
         path = save_topology(default_topology(), layout.user_preferences / 'topology.json')
         self.assertTrue(path.is_file())
 
+    def test_blank_chat_port_falls_back_to_5757(self):
+        with mock.patch.dict(os.environ, {'OTACON_CHAT_PORT': ''}, clear=False):
+            self.assertEqual(default_topology().chat_port, 5757)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('OTACON_CHAT_PORT', None)
+            self.assertEqual(default_topology().chat_port, 5757)
+        with mock.patch.dict(os.environ, {'OTACON_CHAT_PORT': '5758'}, clear=False):
+            self.assertEqual(default_topology().chat_port, 5758)
+
 
 class TestVersionsAndManifest(LayoutTestCase):
     def test_current_versions_include_expansion(self):
@@ -285,7 +294,8 @@ class TestRelationshipGraph(unittest.TestCase):
 
 class TestProbeFiles(unittest.TestCase):
     def test_windows_assistant_probe_has_no_opt_otacon(self):
-        text = Path('/root/otacons-ai-ecosystem/deploy/windows-setup-assistant.ps1').read_text(encoding='utf-8')
+        root = Path(__file__).resolve().parents[1]
+        text = (root / 'deploy' / 'windows-setup-assistant.ps1').read_text(encoding='utf-8')
         start = text.index('function Test-OtaconFiles')
         end = text.index('function Test-OtaconService')
         block = text[start:end]
@@ -297,12 +307,14 @@ class TestProbeFiles(unittest.TestCase):
         self.assertIn('otacon-ai-ecosystem', code)
 
     def test_wake_script_has_no_opt_otacon(self):
-        text = Path('/root/otacons-ai-ecosystem/deploy/wake-otacon.ps1').read_text(encoding='utf-8')
+        root = Path(__file__).resolve().parents[1]
+        text = (root / 'deploy' / 'wake-otacon.ps1').read_text(encoding='utf-8')
         code_lines = [ln for ln in text.splitlines() if not ln.strip().startswith('#')]
         code = '\n'.join(code_lines)
         self.assertNotIn('test -d /opt/otacon', code)
         self.assertNotIn('"$HOME/otacon"', code)
-        self.assertIn('otacon-ai-ecosystem}/core', code)
+        # Public Core lives under ~/otacon-ai-ecosystem (never /opt/otacon).
+        self.assertIn('otacon-ai-ecosystem', code)
 
 
 if __name__ == '__main__':

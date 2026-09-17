@@ -50,10 +50,8 @@ def run_windows_static_contracts() -> WindowsE2EResult:
         text = assistant.read_text(encoding='utf-8', errors='replace')
         for needle in ('Repair', 'Force', 'WSL', '5757', 'otacon'):
             checks.append(_check(f'assistant_mentions_{needle}', needle.lower() in text.lower(), needle))
-    # Existing release-gate module
+    # Existing release-gate module (unittest-compatible; do not require pytest)
     try:
-        import pytest
-        # Don't invoke pytest here — just ensure module imports
         from tests import test_windows_installer_release_gate as gate  # noqa: F401
         checks.append(_check('windows_release_gate_module', True))
     except Exception as exc:  # noqa: BLE001

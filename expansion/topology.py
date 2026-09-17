@@ -73,9 +73,10 @@ class TopologyConfig:
 
 
 def default_topology() -> TopologyConfig:
+    raw_port = (os.environ.get('OTACON_CHAT_PORT') or '').strip() or '5757'
     return TopologyConfig(
         ollama_url=os.environ.get('OLLAMA_URL', 'http://127.0.0.1:11434'),
-        chat_port=int(os.environ.get('OTACON_CHAT_PORT', '5757')),
+        chat_port=int(raw_port),
         chat_bind=os.environ.get('OTACON_CHAT_BIND', '127.0.0.1'),
     )
 

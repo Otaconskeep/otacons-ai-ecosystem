@@ -1,0 +1,6 @@
+# Core runtime packages installed into the Otacon venv by install_otacon.sh.
+# Keep this list as the source of truth for what self-tests and Core need.
+psutil>=5.9.0
+pyinstaller>=6.0.0
+cryptography>=41.0.0
+argon2-cffi>=23.1.0
