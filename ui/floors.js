@@ -174,6 +174,12 @@
     document.head.appendChild(s);
   }
 
+  function foundationShellBanner() {
+    return '<div class="fl-panel" style="margin-bottom:.75rem"><span class="fl-pill warn">FOUNDATION SHELL</span>' +
+      '<p class="fl-note">Expansion floors are coordination/metadata surfaces — not the full OtaconsKeep room packs ' +
+      '(LTX Studio widgets, music, optimal-prompt, Keep control decks). Missing Keep depth here is expected until those packs are wired.</p></div>';
+  }
+
   function floorShell(title, kicker, bodyHtml, extraMeta) {
     ensureFloorStyles();
     setBodyMode('home');
@@ -184,7 +190,7 @@
       '<div class="home fl">' +
       '<header class="fl-mast"><div><p class="kicker">' + esc(kicker || 'Keep Expansion') +
       '</p><h1>' + esc(title) + '</h1></div><div class="meta">' + meta + '</div></header>' +
-      '<div class="fl-body">' + (bodyHtml || '') + '</div>' +
+      '<div class="fl-body">' + foundationShellBanner() + (bodyHtml || '') + '</div>' +
       '<div id="fl-drawer" class="fl-drawer" hidden><div class="fl-drawer-panel" role="dialog" aria-modal="true">' +
       '<div style="display:flex;justify-content:space-between;gap:.5rem;align-items:center;margin-bottom:.5rem">' +
       '<h3 id="fl-drawer-title">WHY</h3>' + btn('Close', 'closeFloorDrawer()', true) +
@@ -778,6 +784,7 @@
         (j.error ? ' · err ' + esc(j.error) : '') + '</p>' + jobLink(j.job_id) + '</div>';
     }, 'No decision trace yet.');
     floorShell('War Room', 'Jobs / decisions — not infra telemetry',
+      '<div class="fl-panel"><p class="fl-note">Foundation War Room shell — job/decision boards, not the full Keep ops deck.</p></div>' +
       '<p class="fl-note">' + esc(d.note || '') + ' ' +
       esc(d.peer_review_note || rex.peer_review_note || '') + '</p>' + strip +
       '<div class="fl-rail" style="margin:.5rem 0">' +
@@ -1024,7 +1031,13 @@
         panel('Runtime context', kvPre(d.runtime_context || {}, 1200)) + '</div>';
     }
     floorShell('Muse Creative Studio', 'Creative / Video Studio',
-      '<p class="fl-note">' + esc(d.note || '') + '</p>' + studio +
+      '<p class="fl-note">' + esc(d.note || '') + '</p>' +
+      '<div class="fl-panel"><h3 class="fl-h">Honest scope</h3>' +
+      pill('FOUNDATION SHELL', 'warn') +
+      '<p class="fl-note">This is <b>not</b> the OtaconsKeep Video Studio. Expansion does not ship ' +
+      'LTX 2.3/2.5, music generation, optimal-prompt widgets, or Keep Studio control surfaces. ' +
+      'What you see here is readiness + creative job queue metadata until the Keep Studio pack is wired.</p></div>' +
+      studio +
       panel('Muse creative queue', listCards(d.creative_queue || d.recent_creative_jobs || [],
         jobCard, 'No Muse creative jobs yet.')));
   }

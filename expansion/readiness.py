@@ -75,6 +75,29 @@ class ReadinessReport:
     def overall_core_ready(self) -> bool:
         return all(self.components.get(c) == ReadinessState.READY for c in REQUIRED_COMPONENTS)
 
+    def ready_story(self) -> str:
+        """Human-readable READY story — foundation/entitled ≠ overall_core_ready."""
+        bits = []
+        if self.foundation_ready():
+            bits.append('foundation_ready')
+        if self.expansion_entitled():
+            bits.append('entitled')
+        if self.surfaces_ready():
+            bits.append('surfaces_ready')
+        if self.overall_core_ready():
+            bits.append('overall_core_ready')
+        else:
+            missing = [
+                c for c in REQUIRED_COMPONENTS
+                if self.components.get(c) != ReadinessState.READY
+            ]
+            if missing:
+                bits.append('core_gaps=' + ','.join(
+                    f'{c}:{self.components.get(c).value if isinstance(self.components.get(c), ReadinessState) else self.components.get(c)}'
+                    for c in missing
+                ))
+        return '; '.join(bits) or 'not_ready'
+
     def foundation_ready(self) -> bool:
         """Foundation installed: five agents load and validate.
 
@@ -125,6 +148,7 @@ class ReadinessReport:
             'expansion_entitled': self.expansion_entitled(),
             'surfaces_ready': self.surfaces_ready(),
             'expansion_ready': self.expansion_ready(),
+            'ready_story': self.ready_story(),
         })
         return out
 
@@ -214,9 +238,42 @@ def evaluate_foundation(layout: Optional[StateLayout] = None) -> ReadinessReport
     except Exception as exc:  # noqa: BLE001
         report.set_semantic('entitlement', ReadinessState.FAILED, str(exc))
 
-    # Voice — bound in schema; onnx verify deferred
-    if agents and all((a.get('voice') or {}).get('piper_voice') for a in agents):
+    # Voice — schema-bound + live Piper (LIMITED only when bound but TTS down)
+    voices_bound = bool(
+        agents and all((a.get('voice') or {}).get('piper_voice') for a in agents)
+    )
+    piper_ok = False
+    if voices_bound:
+        try:
+            from core.voice import PiperProvider
+            endpoint = os.getenv('OTACON_TTS_ENDPOINT', 'wyoming://127.0.0.1:10200')
+            health = PiperProvider(endpoint).health()
+            piper_ok = health in ('TTS_READY', 'ONLINE', 'READY')
+            # Socket reachability fallback when Wyoming health probe is flaky
+            if not piper_ok:
+                import socket
+                from urllib.parse import urlparse
+                raw = endpoint.replace('wyoming://', 'tcp://')
+                parsed = urlparse(raw if '://' in raw else f'tcp://{raw}')
+                host = parsed.hostname or '127.0.0.1'
+                port = parsed.port or 10200
+                with socket.create_connection((host, port), timeout=0.8):
+                    piper_ok = True
+        except Exception as exc:  # noqa: BLE001
+            report.details['voice'] = str(exc)
+            try:
+                import socket
+                with socket.create_connection(('127.0.0.1', int(os.getenv('OTACON_TTS_PORT', '10200'))), timeout=0.8):
+                    piper_ok = True
+                    report.details['voice'] = f'piper port open (health probe failed: {exc})'
+            except OSError:
+                piper_ok = False
+    if voices_bound and piper_ok:
+        report.set('VOICE', ReadinessState.READY)
+        report.details['voice'] = 'piper voices bound and TTS reachable'
+    elif voices_bound:
         report.set('VOICE', ReadinessState.LIMITED)
+        report.details['voice'] = report.details.get('voice') or 'voices bound; Piper TTS not reachable'
     else:
         report.set('VOICE', ReadinessState.NOT_CONFIGURED)
 
@@ -283,8 +340,16 @@ def evaluate_foundation(layout: Optional[StateLayout] = None) -> ReadinessReport
 
     if report.semantic.get('emotion_engine') == ReadinessState.READY:
         report.set('EMOTIONAL_ENGINE', ReadinessState.READY)
+    elif report.semantic.get('emotion_engine'):
+        report.set('EMOTIONAL_ENGINE', report.semantic['emotion_engine'])
+    else:
+        report.set('EMOTIONAL_ENGINE', ReadinessState.NOT_CONFIGURED)
     if report.semantic.get('relationship_store') == ReadinessState.READY:
         report.set('RELATIONSHIPS', ReadinessState.READY)
+    elif report.semantic.get('relationship_store'):
+        report.set('RELATIONSHIPS', report.semantic['relationship_store'])
+    else:
+        report.set('RELATIONSHIPS', ReadinessState.NOT_CONFIGURED)
 
     report.set_semantic('protected_bundle', ReadinessState.NOT_CONFIGURED,
                         'protected release pipeline available via expansion.release')

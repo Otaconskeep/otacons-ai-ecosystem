@@ -64,8 +64,15 @@ if (-not $Root -or -not $Owner -or $Owner -eq "root") {
 }
 
 Write-Host "Pulling latest Otacon Lite into WSL as $Owner..." -ForegroundColor Cyan
+& wsl.exe -d $Distro -u root -- runuser -u $Owner -- git -C $Root fetch --prune origin
 & wsl.exe -d $Distro -u root -- runuser -u $Owner -- git -C $Root pull --ff-only
-if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Fast-forward failed - hard-resetting to origin/main so repair can continue." -ForegroundColor Yellow
+    & wsl.exe -d $Distro -u root -- runuser -u $Owner -- git -C $Root reset --hard origin/main
+    if ($LASTEXITCODE -ne 0) { throw "git reset --hard origin/main failed" }
+} else {
+    & wsl.exe -d $Distro -u root -- runuser -u $Owner -- git -C $Root reset --hard origin/main
+}
 
 Write-Host "Pulling Ollama model qwen2.5:7b (this can take a few minutes)..." -ForegroundColor Cyan
 & wsl.exe -d $Distro -u $Owner -e ollama pull qwen2.5:7b

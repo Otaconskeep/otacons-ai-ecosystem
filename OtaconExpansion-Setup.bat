@@ -4,6 +4,7 @@ REM  OtaconExpansion-Setup.bat
 REM  Real Expansion installer: detects Core Keep, installs
 REM  foundation roster via WSL, verifies Expansion health.
 REM  Standalone Downloads\ path (not repo checkout) is the primary path.
+REM  Unattended: set OTACON_UNATTENDED=1 (no pause, no browser).
 REM ============================================================
 setlocal EnableExtensions EnableDelayedExpansion
 title Otacon Expansion Setup
@@ -25,6 +26,7 @@ echo.
 echo  This installer file is damaged or was saved with the wrong encoding.
 echo  Delete it, re-download from otaconskeep.com/premium/, and run again.
 echo.
+if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
 pause >nul
 exit /b 1
 :ENC_OK
@@ -39,15 +41,22 @@ set "FETCH_PS1=%INST%\deploy\bootstrap-fetch.ps1"
 set "EXP_PS1=%INST%\deploy\install-otacon-expansion.ps1"
 set "WSL_PS1=%INST%\deploy\wsl-bash-file.ps1"
 set "DOWNLOAD_ONE=%INST%\deploy\download-one.ps1"
+set "OPEN_BROWSER="
+set "UNATTENDED_SW="
+if /I "%OTACON_UNATTENDED%"=="1" (
+  set "UNATTENDED_SW=-Unattended"
+) else (
+  set "OPEN_BROWSER=-OpenBrowser"
+)
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%" >nul 2>&1
->>"%LOGFILE%" echo [%DATE% %TIME%] [BAT] Expansion Setup begin
+>>"%LOGFILE%" echo [%DATE% %TIME%] [BAT] Expansion Setup begin unattended=%OTACON_UNATTENDED%
 
 REM Dev tree: only when this bat lives next to deploy helpers AND foundation script
 if exist "%~dp0deploy\install-otacon-expansion.ps1" if exist "%~dp0deploy\wsl-bash-file.ps1" if exist "%~dp0install_otacon_expansion.sh" (
   echo.
   echo  [OTACON] Dev tree detected - running Expansion installer from this folder.
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0deploy\install-otacon-expansion.ps1" -RepoRoot "%~dp0" -OpenBrowser
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0deploy\install-otacon-expansion.ps1" -RepoRoot "%~dp0" %OPEN_BROWSER% %UNATTENDED_SW%
   set "RC=!ERRORLEVEL!"
   goto DONE
 )
@@ -77,6 +86,7 @@ del /f /q "%FETCH_TMP%" 2>nul
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12}catch{}; $ProgressPreference='SilentlyContinue'; $out=Join-Path $env:LOCALAPPDATA 'OtaconsKeep\installer\deploy\bootstrap-fetch.ps1'; New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null; $tmp=$out+'.otacon-new'; Invoke-WebRequest -UseBasicParsing -Uri '%RAW%/deploy/bootstrap-fetch.ps1' -OutFile $tmp -TimeoutSec 120; if (-not (Test-Path -LiteralPath $tmp)) { exit 1 }; if ((Get-Item -LiteralPath $tmp).Length -lt 40) { exit 1 }; Move-Item -LiteralPath $tmp -Destination $out -Force; exit 0"
 if errorlevel 1 (
   echo  Failed to download bootstrap-fetch.ps1
+  if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
   pause >nul
   exit /b 1
 )
@@ -84,14 +94,16 @@ if errorlevel 1 (
 :FETCH_READY
 if not exist "%FETCH_PS1%" (
   echo  bootstrap-fetch.ps1 missing after refresh.
+  if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
   pause >nul
   exit /b 1
 )
 
 REM Correct bootstrap-fetch contract: DestRoot + RawBase + LogFile + Manifest
-powershell -NoProfile -ExecutionPolicy Bypass -File "%FETCH_PS1%" -Manifest full -DestRoot "%INST%" -RawBase "%RAW%" -LogFile "%LOGFILE%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%FETCH_PS1%" -DestRoot "%INST%" -RawBase "%RAW%" -LogFile "%LOGFILE%" -Manifest full
 if errorlevel 1 (
   echo  Failed to refresh installer bundle.
+  if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
   pause >nul
   exit /b 1
 )
@@ -106,11 +118,13 @@ if not exist "%INST%\install_otacon_expansion.sh" (
 
 if not exist "%EXP_PS1%" (
   echo  Expansion installer helper missing after fetch.
+  if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
   pause >nul
   exit /b 1
 )
 if not exist "%WSL_PS1%" (
   echo  WSL transport helper missing after fetch.
+  if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
   pause >nul
   exit /b 1
 )
@@ -118,18 +132,20 @@ if not exist "%WSL_PS1%" (
 findstr /C:"Invoke-OtaconWslBashFile" "%EXP_PS1%" >nul
 if errorlevel 1 (
   echo  Expansion installer helper looks incomplete. Re-download from the website.
+  if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
   pause >nul
   exit /b 1
 )
 findstr /C:"DestRoot" "%FETCH_PS1%" >nul
 if errorlevel 1 (
   echo  bootstrap-fetch.ps1 looks incomplete. Re-download from the website.
+  if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
   pause >nul
   exit /b 1
 )
 
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%EXP_PS1%" -RepoRoot "%INST%" -OpenBrowser
+powershell -NoProfile -ExecutionPolicy Bypass -File "%EXP_PS1%" -RepoRoot "%INST%" %OPEN_BROWSER% %UNATTENDED_SW%
 set "RC=!ERRORLEVEL!"
 
 :DONE
@@ -142,6 +158,11 @@ if "!RC!"=="0" (
   echo  Log: %LOGFILE%
 )
 echo.
-echo  Press any key to close.
-pause >nul
+REM Interactive only: stay open on failure so friends can read the log path.
+REM Success and OTACON_UNATTENDED=1 exit immediately (friend / CI tests).
+if /I "%OTACON_UNATTENDED%"=="1" exit /b !RC!
+if not "!RC!"=="0" (
+  echo  Press any key to close.
+  pause >nul
+)
 exit /b !RC!

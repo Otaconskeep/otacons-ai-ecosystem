@@ -71,10 +71,11 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'runtime_context': studio_runtime_context('muse'),
             'foundation': evaluate_foundation().to_dict(),
             'honest_note': (
-                'READY = workflow integration available; LIMITED = supported subset; '
-                'UNAVAILABLE = no fake controls.'
+                'FOUNDATION SHELL — not OtaconsKeep Video Studio. No LTX 2.3/2.5, music, '
+                'optimal-prompt widgets, or Keep Studio control pack in Expansion. '
+                'READY/LIMITED here means probe/queue metadata only.'
             ),
-            'note': 'Heavy Studio deps optional; personality from Expansion runtime only.',
+            'note': 'Heavy Keep Studio deps are separate; Expansion shows Muse queue + readiness only.',
         })
         return True
     if path == '/api/expansion/ops':

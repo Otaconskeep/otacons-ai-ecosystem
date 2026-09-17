@@ -226,12 +226,16 @@ class ExpansionRuntime:
             f"{view.persona}\n\n"
             f"{who_section}"
             f"[Expansion runtime context — stay in character; do not invent owner history]\n"
+            f"Voice rules: never sound like a generic AI assistant. Never say "
+            f"\"happy to help\", \"as an AI\", \"certainly\", \"I'd be glad to\", "
+            f"or dump emotion percentages. Speak as this person. Prefer concrete "
+            f"specifics over stock helpfulness.\n"
             f"Archetype: {dossier.character.archetype}\n"
             f"Communication: {dossier.character.communication_style}\n"
             f"{self_section}"
             f"{affect_section}"
             f"{praise_section}"
-            f"Current emotional highlights: {emotion_summary}\n"
+            f"Current emotional highlights (internal — do not recite as telemetry): {emotion_summary}\n"
             f"Vulnerabilities (influence tone, not competence):\n" + '\n'.join(vuln_lines) + '\n'
             f"Active vulnerability pressure:\n" + '\n'.join(vuln_act_lines or ['- none elevated']) + '\n'
             f"Directional relationships:\n" + '\n'.join(rel_lines or ['- (none)']) + '\n'

@@ -206,3 +206,16 @@ a:hover{color:var(--mf-accent-bright)}
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.001ms!important;transition-duration:.001ms!important}
 }
+
+/* Keep-like mood strip under Codec mast */
+.codec-mood{margin-top:8px;max-width:640px}
+.codec-mood .mood-line{font-size:13px;color:var(--mf-text, #d8dde8);margin-bottom:6px}
+.codec-mood .mood-chips{display:flex;flex-wrap:wrap;gap:6px}
+.codec-mood .mood-chip{
+  font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  border:1px solid rgba(160,180,220,.35);padding:3px 8px;border-radius:999px;
+  color:var(--mf-text-dim, #9aa3b5);background:rgba(20,28,40,.45)
+}
+.codec-mood .mood-chip.mood-hot{
+  border-color:rgba(120,180,255,.7);color:var(--mf-accent-bright, #9ec7ff)
+}

@@ -33,6 +33,9 @@ def test_expansion_windows_installer_contracts():
     must(b"-InstallRoot" not in BAT, "Setup bat does not pass invalid InstallRoot", fails)
     must(b'-Branch "%BRANCH%"' not in BAT, "Setup bat does not pass invalid Branch to fetch", fails)
     must(b"pause >nul" in BAT and b"exit /b" in BAT, "Setup bat stays open on failure", fails)
+    must(b"OTACON_UNATTENDED" in BAT, "Setup bat supports unattended (no pause/browser)", fails)
+    must(b"-OpenBrowser" in BAT, "Setup bat can open browser when attended", fails)
+    must(b"%OPEN_BROWSER%" in BAT or b"OPEN_BROWSER" in BAT, "browser open is conditional", fails)
 
     must(PS1.startswith(b"\xef\xbb\xbf"), "Expansion PS1 has UTF-8 BOM", fails)
     ps1 = PS1[3:].decode("utf-8")
@@ -46,10 +49,12 @@ def test_expansion_windows_installer_contracts():
          "no bash -lc script invocation", fails)
     must("expansion-installer.log" in ps1, "logs under OtaconsKeep Logs", fails)
     must("/api/expansion/status" in ps1, "verifies Expansion status API", fails)
+    must("/api/health" in ps1 and "Test-CoreHealthAt" in ps1, "Core healthy requires semantic /api/health", fails)
     must("foundation_ready" in ps1 and "enabled" in ps1, "checks enabled+foundation_ready", fails)
     must("expansion_entitled" in ps1, "checks entitlement after install", fails)
     must("FOUNDATION INSTALLED" in ps1, "honest foundation banner (not EXPANSION READY)", fails)
     must("EXPANSION READY" not in ps1, "does not overclaim EXPANSION READY", fails)
+    must("overall_core_ready" in ps1 and "ready_story" in ps1, "prints honest READY story vs foundation", fails)
     must("Wait-ExpansionHealthy" in ps1, "post-install health wait helper present", fails)
     must("second wake" in ps1.lower() or "API cold" in ps1, "retry wake when API cold after foundation", fails)
     must("EXP_SERVICE_ACTIVE" in ps1, "surfaces Linux service marker on exit 8", fails)
@@ -57,6 +62,8 @@ def test_expansion_windows_installer_contracts():
     must("Muse" in ps1 and "Sentry" in ps1, "expects full five-agent roster", fails)
     must("I found your existing Keep" in ps1, "OtaconSay UX present", fails)
     must("Resolve-Distro" in ps1 and "Get-CandidateDistros" in ps1, "dynamic distro discovery", fails)
+    must('$runTests = "1"' in ps1 or "$runTests = \"1\"" in ps1 or 'runTests = "1"' in ps1,
+         "Windows default runs Expansion tests", fails)
 
     must("discover_core_root" in SH, "Linux installer discovers Core dynamically", fails)
     must("run_as_owner" in SH or "runuser" in SH, "Linux installer uses repo owner for git/python", fails)
@@ -67,6 +74,9 @@ def test_expansion_windows_installer_contracts():
     must("FOUNDATION INSTALLED" in SH, "honest foundation installed banner", fails)
     must("Aria" in SH and "Sentry" in SH, "Linux seeds public roster", fails)
     must("Albedo" not in SH and "Nazarick" not in SH, "no private IP personas in public installer", fails)
+    must("reset --hard origin/main" in SH, "diverged Core tip recovers via hard reset", fails)
+    must("pull --ff-only" in SH, "tries ff-only before reset", fails)
+    must("backup/pre-expansion-" in SH, "saves backup branch before hard reset", fails)
 
     must("OtaconExpansion-Setup.bat" in FETCH, "bootstrap-fetch includes Expansion Setup bat", fails)
     must("install-otacon-expansion.ps1" in FETCH, "bootstrap-fetch includes Expansion PS1", fails)

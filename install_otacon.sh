@@ -1244,7 +1244,8 @@ if command_exists nvidia-smi && nvidia-smi >/dev/null 2>&1; then
 else
   stage "6.2" "INFO" "nvidia-smi not usable in this Linux environment (Core continues; Voice Trainer may skip)"
   warn "nvidia-smi is missing or failed inside this Linux environment."
-  warn "If Windows nvidia-smi shows an RTX card but this does not, install/update the NVIDIA Windows driver and ensure WSL2 GPU support is enabled, then reopen Ubuntu."
+  warn "Piper TTS runs on CPU and does not need a GPU — spoken voice still works without nvidia-smi."
+  warn "Genome Voice Trainer (optional) needs WSL2 GPU. If Windows nvidia-smi shows an RTX card but this does not, update the NVIDIA Windows driver, enable WSL2 GPU, then reopen Ubuntu."
 fi
 
 SKIP_APT=0

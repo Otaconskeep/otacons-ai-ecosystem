@@ -3,7 +3,7 @@ let state={
   conversation:null,voiceId:'voice_aria',autoSpeak:false,voices:[],capabilities:null,
   currentAudio:null,speakingMsg:null,recorder:null,recordingState:'MIC_READY',
   testMode:window.__OTACON_TEST_MODE__===true,codecMode:'idle',codecBooted:false,lastModel:null,
-  view:'codec',agentId:'agent_001',roster:[],expansion:null
+  view:'codec',agentId:'aria',roster:[],expansion:null
 };
 const labels=['Welcome','System Scan','Hardware Recommendation','Storage','Agent Setup','Features','Review','Finish'];
 const CODEC_FALLBACK={idle:'/assets/aria/aria-idle.mp4',thinking:'/assets/aria/aria-thinking.mp4',talking:'/assets/aria/aria-talking.mp4'};
@@ -11,7 +11,8 @@ const CODEC_FALLBACK={idle:'/assets/aria/aria-idle.mp4',thinking:'/assets/aria/a
 function currentAgentId(){
   if(state.agentId && state.agentId!=='agent_001') return state.agentId;
   if(state.roster&&state.roster.length) return state.roster[0].id||state.roster[0].agent_id||'aria';
-  return state.agentId||'aria';
+  // Wizard / Lite default: Aria — never leave agent_001 on preview/setup paths.
+  return 'aria';
 }
 function currentAgentName(){
   const r=(state.roster||[]).find(a=>a.id===state.agentId||a.agent_id===state.agentId);
@@ -98,6 +99,91 @@ async function apiGet(path,timeoutMs){
     if(!r.ok) throw new Error('HTTP '+r.status);
     return await r.json();
   }finally{ if(timer) clearTimeout(timer); }
+}
+
+/** Honest hardware scan: never invent "no GPU" from a timed-out/failed request. */
+async function loadHardwareScan(timeoutMs){
+  const ms=timeoutMs==null?15000:timeoutMs;
+  try{
+    const data=await apiGet('/api/scan', ms);
+    const hw=((data&&data.hardware&&data.hardware.hardware)||{});
+    const det=hw.gpu_detection||(data&&data.hardware&&data.hardware.gpu_detection)||{};
+    const status=String(det.status||'');
+    const failed=status==='error'||status==='unavailable'||status==='skipped'||data.hardware&&data.hardware.scan_ok===false;
+    return {
+      ok:!failed,
+      data:data,
+      hardware:hw,
+      gpu_detection:det,
+      timed_out:false,
+      error: failed?(det.message||'GPU detection unavailable — retry'):''
+    };
+  }catch(err){
+    const timed=!!(err&&(err.name==='AbortError'||/aborted/i.test(String(err&&err.message||err))));
+    return {
+      ok:false,
+      data:null,
+      hardware:{},
+      gpu_detection:{status:'unavailable',message:timed
+        ?'GPU detection unavailable — scan timed out. Retry.'
+        :('GPU detection unavailable — retry ('+String(err&&err.message||err)+')')},
+      timed_out:timed,
+      error:String(err&&err.message||err)
+    };
+  }
+}
+
+function formatGpuLine(scan){
+  if(!scan||!scan.ok){
+    const msg=(scan&&scan.gpu_detection&&scan.gpu_detection.message)||'GPU detection unavailable — retry';
+    return msg;
+  }
+  const gpus=(scan.hardware&&scan.hardware.gpus)||[];
+  const det=scan.gpu_detection||{};
+  const st=String(det.status||'');
+  if(gpus.length){
+    return gpus.map(g=>{
+      const name=g.model||g.name||'GPU';
+      const vram=g.vram_gb?` · ${g.vram_gb} GB`:'';
+      return `${name}${vram}`;
+    }).join(' / ');
+  }
+  if(st==='none') return det.message||'No supported GPU detected';
+  return det.message||'GPU detection unavailable — retry';
+}
+
+function renderMoodStrip(mood){
+  const el=document.getElementById('codec-mood');
+  if(!el) return;
+  if(!mood||(!mood.line&&!(mood.elevated||[]).length)){
+    el.innerHTML='<span class="muted">Mood offline</span>';
+    return;
+  }
+  const chips=(mood.elevated||[]).slice(0,5).map(x=>{
+    const id=escapeHtml(String(x.id||''));
+    const hot=Number(x.value)>=0.6?' mood-hot':'';
+    return `<span class="mood-chip${hot}" title="${id}">${id}</span>`;
+  }).join('');
+  el.innerHTML=`<div class="mood-line">${escapeHtml(mood.line||'Present.')}</div><div class="mood-chips">${chips}</div>`;
+}
+
+async function refreshCodecMood(){
+  if(!state.roster||!state.roster.length) return;
+  const aid=currentAgentId();
+  try{
+    const ctx=await apiGet('/api/expansion/agent/'+encodeURIComponent(aid)+'/context', 8000);
+    if(ctx&&ctx.mood_summary) renderMoodStrip(ctx.mood_summary);
+    else if(ctx&&ctx.emotion){
+      renderMoodStrip({
+        line:'',
+        elevated:Object.keys(ctx.emotion.dimensions||{}).map(k=>({id:k,value:ctx.emotion.dimensions[k]}))
+          .sort((a,b)=>b.value-a.value).slice(0,5)
+      });
+    }
+  }catch(_e){
+    const el=document.getElementById('codec-mood');
+    if(el) el.innerHTML='<span class="muted">Mood unavailable</span>';
+  }
 }
 
 const LAN_TOKEN_KEY='otacon_lan_token';
@@ -191,18 +277,27 @@ function formatNow(){
   }catch(e){ return new Date().toISOString(); }
 }
 
-function resourceBarsHtml(scan){
-  const h=(scan&&scan.hardware&&scan.hardware.hardware)||{};
+function resourceBarsHtml(scanOrPack){
+  // Accept either raw /api/scan JSON or loadHardwareScan() pack.
+  const pack=scanOrPack&&scanOrPack.hardware&&!scanOrPack.hardware.hardware
+    ?scanOrPack
+    :null;
+  const data=pack?pack.data:scanOrPack;
+  const h=pack? (pack.hardware||{}) : ((data&&data.hardware&&data.hardware.hardware)||{});
+  const scanFailed=!!(pack&&!pack.ok);
   const ram=Number(h.ram_gb||0);
   const free=Number(h.free_storage_gb||0);
-  // Lite scan has no live CPU%, so show capacity markers honestly.
   const gpu=Array.isArray(h.gpus)&&h.gpus[0]?h.gpus[0]:null;
   const rows=[
-    ['CPU', h.cpu&&h.cpu.cores?`${h.cpu.cores} cores`:'—', h.cpu&&h.cpu.cores?Math.min(100,h.cpu.cores*8):0],
-    ['RAM', ram?`${ram} GB`:'—', ram?Math.min(100, Math.round((ram/64)*100)):0],
+    ['CPU', h.cpu&&h.cpu.cores?`${h.cpu.cores} cores`:(scanFailed?'scan failed':'—'), h.cpu&&h.cpu.cores?Math.min(100,h.cpu.cores*8):0],
+    ['RAM', ram?`${ram} GB`:(scanFailed?'—':'—'), ram?Math.min(100, Math.round((ram/64)*100)):0],
     ['DISK', free?`${Math.round(free)} GB free`:'—', free?Math.min(100, Math.round((free/1000)*100)):0],
   ];
-  if(gpu) rows.push(['GPU', `${gpu.vram_gb} GB`, Math.min(100, Math.round((gpu.vram_gb/24)*100))]);
+  if(gpu){
+    rows.push(['GPU', `${gpu.model||'GPU'}${gpu.vram_gb?` · ${gpu.vram_gb} GB`:''}`, Math.min(100, Math.round(((gpu.vram_gb||0)/24)*100))]);
+  }else if(scanFailed){
+    rows.push(['GPU', 'detection unavailable — retry', 0]);
+  }
   return rows.map(([k,v,pct])=>`<div class="home-res-item"><div class="lbl"><span>${k}</span><span>${escapeHtml(String(v))}</span></div><div class="home-res-bar"><i style="width:${pct}%"></i></div></div>`).join('');
 }
 
@@ -212,14 +307,14 @@ async function showHome(){
   await ensureLanAuthSession();
   await loadCapabilities();
   await loadExpansion();
-  let scan=null;
-  try{scan=await apiGet('/api/scan',8000)}catch(e){scan=null}
+  let scanPack=await loadHardwareScan(15000);
+  state.scan=scanPack.data;
+  state.scanStatus=scanPack;
   const chatOk=capReady('chat'), ttsOk=capReady('tts'), sttOk=capReady('stt');
-  const vtOk=capStatus('voice_trainer')==='ready';
   const model=(state.capabilities&&state.capabilities.llm_model)||'—';
-  const hwHome=((scan&&scan.hardware&&scan.hardware.hardware)||{});
-  const gpuDet=hwHome.gpu_detection||{};
-  const expOn=!!(state.expansion&&state.expansion.enabled);
+  const hwHome=scanPack.hardware||{};
+  const gpuDet=scanPack.gpu_detection||{};
+  const gpuHomeLine=formatGpuLine(scanPack);  const expOn=!!(state.expansion&&state.expansion.enabled);
   const expReady=!!(state.expansion&&state.expansion.foundation_ready);
   const expAgents=(state.roster||[]).map(a=>a.display_name).join(' · ')||'—';
   const sem=((state.expansion&&state.expansion.report&&state.expansion.report.semantic)||{});
@@ -245,6 +340,7 @@ async function showHome(){
         <p class="svc-desc">${escapeHtml(expAgents)}</p>
         <span class="svc-pill ${expReady?'ok':'warn'}">${expReady?'FOUNDATION READY':'PARTIAL'}</span>
       </button>
+      <p class="muted" style="grid-column:1/-1;font-size:11px;margin:0 0 8px">Public Expansion is the five-agent Lite roster (Aria / Vector / Ledger / Muse / Sentry). The private Keep runs a larger 16+ agent canon — that depth is not in this public build.</p>
       ${agentRoomTiles}
       <button type="button" class="svc" onclick="showExpansionSurface('command')">
         <div class="svc-top"><div class="svc-ico">CMD</div><div class="svc-name">Aria Command</div></div>
@@ -336,7 +432,7 @@ async function showHome(){
       <h1 class="home-greeting">Otacon Command Center</h1>
     </div>
     <div class="home-meta">
-      <div class="home-res">${resourceBarsHtml(scan)}</div>
+      <div class="home-res">${resourceBarsHtml(scanPack)}</div>
       <div class="home-datetime" id="homeClock">${escapeHtml(formatNow())}</div>
     </div>
   </header>
@@ -379,13 +475,13 @@ async function showHome(){
     <div class="home-grid">
       <button type="button" class="svc" onclick="showHome()">
         <div class="svc-top"><div class="svc-ico">SYS</div><div class="svc-name">Status</div></div>
-        <p class="svc-desc">Model ${escapeHtml(String(model))} · STT ${sttOk?'ready':'off'} · GPU ${escapeHtml(gpuDet.status||'unknown')}${expOn?' · Expansion on':''}</p>
+        <p class="svc-desc">Model ${escapeHtml(String(model))} · STT ${sttOk?'ready':'off'} · GPU ${escapeHtml(gpuHomeLine)}${expOn?' · Expansion on':''}</p>
         <span class="svc-pill ${chatOk&&ttsOk?'ok':'warn'}">${chatOk&&ttsOk?'HEALTHY':'CHECK SERVICES'}</span>
       </button>
-      <button type="button" class="svc ${vtOk?'':'svc-off'}" ${vtOk?'onclick="openVoiceTrainer()"':'disabled'}>
+      <button type="button" class="svc svc-off" disabled>
         <div class="svc-top"><div class="svc-ico">VT</div><div class="svc-name">Voice Trainer</div></div>
-        <p class="svc-desc">${vtOk?'Opens Genome Voice Trainer (http://127.0.0.1:8765/) for Piper cloning/training.':'Not installed — Setup adds it when NVIDIA is detected.'}</p>
-        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtOk?'OPEN GENOME':'NOT INSTALLED'}</span>
+        <p class="svc-desc">${escapeHtml((state.capabilities&&state.capabilities.voice_trainer_note)||'Genome Voice Trainer is Keep-only — not in public Expansion. Piper TTS does not need it.')}</p>
+        <span class="svc-pill warn">KEEP ONLY</span>
       </button>
       <button type="button" class="svc svc-off" disabled>
         <div class="svc-top"><div class="svc-ico">IMG</div><div class="svc-name">Images / Video</div></div>
@@ -489,37 +585,66 @@ function render(){
   let s=state.step;
   if(s===0) page.innerHTML='<p class=muted>This wizard configures your local AI system. No Docker or YAML knowledge is required.</p><button onclick="next()">Get Started</button><button onclick="showChat()">Open Codec</button>';
   if(s===1) page.innerHTML='<p class=muted>Detect your computer, GPUs, storage, and available capacity.</p><button onclick="scan()">Scan My System</button>';
-  if(s===2){let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles,det=h.gpu_detection||{}; page.innerHTML=`<div class=card>System: ${h.os}<br>CPU: ${h.cpu.model} (${h.cpu.cores} cores)<br>Memory: ${h.ram_gb} GB</div>`+(h.gpus.length?h.gpus.map(x=>`<div class=card>${escapeHtml(x.model)} — ${x.vram_gb?x.vram_gb+' GB VRAM':'VRAM n/a'} — ${escapeHtml(x.capability||'')}</div>`).join(''):`<div class=card>${escapeHtml(det.message||'No NVIDIA GPU found by scan')}</div>`)+`<p class=muted>Recommended primary: ${g.primary_gpu}</p><button onclick="next()">Use Recommended Setup</button>`;}
-  if(s===3){let v=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}; page.innerHTML=`<div class=card><b>Recommended storage</b><br>${v.path||'Unavailable'}<br>${v.free_gb||0} GB free</div><button onclick="next()">Use Recommended Storage</button>`;}
+  if(s===2){
+    const pack=state.scanStatus||{};
+    const scanOk=pack.ok!==false && state.scan && state.scan.hardware;
+    if(!scanOk||!state.scan||!state.scan.hardware||!state.scan.hardware.hardware){
+      const msg=(pack.gpu_detection&&pack.gpu_detection.message)||'GPU detection unavailable — retry';
+      page.innerHTML=`<div class=card>${escapeHtml(msg)}</div>
+        <p class=muted>Hardware scan did not complete. Do not treat this as “no NVIDIA GPU.”</p>
+        <button onclick="scan()">Retry Scan</button>
+        <button class=ghost onclick="next()">Continue without GPU proof</button>`;
+    }else{
+      let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles||{},det=h.gpu_detection||{};
+      const detStatus=String(det.status||'');
+      const gpuBlock=h.gpus&&h.gpus.length
+        ? h.gpus.map(x=>`<div class=card>${escapeHtml(x.model)} — ${x.vram_gb?x.vram_gb+' GB VRAM':'VRAM n/a'} — ${escapeHtml(x.capability||'')}</div>`).join('')
+        : (detStatus==='error'||detStatus==='unavailable'||detStatus==='skipped'
+          ? `<div class=card>${escapeHtml(det.message||'GPU detection unavailable — retry')}</div>`
+          : `<div class=card>${escapeHtml(det.message||'No supported GPU detected')}</div>`);
+      page.innerHTML=`<div class=card>System: ${escapeHtml(h.os||'')}<br>CPU: ${escapeHtml((h.cpu&&h.cpu.model)||'')} (${(h.cpu&&h.cpu.cores)||'?'} cores)<br>Memory: ${h.ram_gb||0} GB</div>`
+        +gpuBlock
+        +`<p class=muted>Recommended primary: ${escapeHtml(String(g.primary_gpu||'—'))}</p>
+         <button onclick="next()">Use Recommended Setup</button>
+         <button class=ghost onclick="scan()">Rescan</button>`;
+    }
+  }
+  if(s===3){
+    const vols=(state.scan&&state.scan.storage)||[];
+    let v=vols.find(x=>x.recommended)||vols[0]||{};
+    page.innerHTML=`<div class=card><b>Recommended storage</b><br>${escapeHtml(v.path||'Unavailable')}<br>${v.free_gb||0} GB free</div><button onclick="next()">Use Recommended Storage</button>`;
+  }
   if(s===4){ page.innerHTML=agentSetupHtml(); updateSetupAvatar(); }
   if(s===5) page.innerHTML=featuresHtml()+'<button onclick="setFeatures()">Continue</button>';
-  if(s===6) page.innerHTML=`<div class=card>Agent: ${state.name}<br>Voice: ${voiceLabel(state.voiceId)}<br>Features: ${state.features.join(', ')}<br>Storage: ${(state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}).path||'Unavailable'}</div><button onclick="build()">Create Configuration</button>`;
+  if(s===6) page.innerHTML=`<div class=card>Agent: ${escapeHtml(state.name)}<br>Voice: ${escapeHtml(voiceLabel(state.voiceId))}<br>Features: ${escapeHtml(state.features.join(', '))}<br>Storage: ${escapeHtml(((state.scan&&state.scan.storage||[]).find(x=>x.recommended)||(state.scan&&state.scan.storage||[])[0]||{}).path||'Unavailable')}</div><button onclick="build()">Create Configuration</button>`;
   if(s===7) page.innerHTML=`<p>${state.name} is configured.</p><p class=muted>Open Codec to talk — portrait stays in the right port, messages are text-only below.</p><div class=card>${state.config?.saved||''}</div><button onclick="showChat()">Open Codec</button>`;
 }
 
 function next(){state.step++;render()}
-function _fallbackScan(){
-  return {
-    hardware:{hardware:{os:'Linux',cpu:{model:'unknown',cores:1},ram_gb:0,free_storage_gb:0,gpus:[]},gpu_roles:{primary_gpu:'cpu'}},
-    storage:[{path:'.',free_gb:0,total_gb:0,recommended:true}]
-  };
-}
 async function scan(){
   const page=document.getElementById('page');
   if(page) page.innerHTML='<p class=muted>Scanning hardware…</p>';
-  try{
-    state.scan=await apiGet('/api/scan',8000);
-  }catch(e){
-    state.scan=_fallbackScan();
-    if(page) page.innerHTML='<p class=muted>GPU probe timed out — continuing with CPU defaults.</p>';
+  const pack=await loadHardwareScan(15000);
+  state.scanStatus=pack;
+  state.scan=pack.data;
+  if(!pack.ok||!pack.data){
+    // Preserve failure — do NOT substitute a fake CPU-only hardware profile.
+    state.scan=null;
+    if(page){
+      page.innerHTML=`<div class=card>${escapeHtml((pack.gpu_detection&&pack.gpu_detection.message)||'GPU detection unavailable — retry')}</div>
+        <p class=muted>Scan failed or timed out. This is not proof that no NVIDIA GPU exists.</p>
+        <button onclick="scan()">Retry Scan</button>
+        <button class=ghost onclick="state.step=2;render()">Continue (detection unproven)</button>`;
+    }
+    return;
   }
-  state.storage=(state.scan.storage||[]).find(x=>x.recommended)||(state.scan.storage||[])[0]||_fallbackScan().storage[0];
+  state.storage=(state.scan.storage||[]).find(x=>x.recommended)||(state.scan.storage||[])[0]||null;
   state.step=2; render();
 }
 async function setName(){
   state.name=document.getElementById('name').value.trim()||'Aria';
   let sel=document.getElementById('voiceSelect'); if(sel) state.voiceId=sel.value;
-  await api('/api/agent/voice',{agent_id:'agent_001',display_name:state.name,voice_id:state.voiceId});
+  await api('/api/agent/voice',{agent_id:currentAgentId(),display_name:state.name,voice_id:state.voiceId});
   next();
 }
 function setFeatures(){state.features=[...document.querySelectorAll('#page input[type=checkbox]:checked')].map(x=>x.value);next()}
@@ -544,7 +669,7 @@ async function runVoicePreview({statusEl}={}){
   const voiceId=state.voiceId;
   const text=`Hello, I am ${agentName}.`;
   try{
-    let r=await api('/api/preview_voice',{agent:{id:'agent_001',display_name:agentName,voice_id:voiceId},text});
+    let r=await api('/api/preview_voice',{agent:{id:currentAgentId(),display_name:agentName,voice_id:voiceId},text});
     if(!r.ok||r.data.status==='error'||!r.data.audio_base64){
       const reason=(r.data&&(r.data.reason||r.data.message))||'Voice preview unavailable';
       const msg='VOICE PREVIEW FAILED\n'+reason;
@@ -689,8 +814,9 @@ async function showChat(){
     loadCapabilities(),
     loadExpansion(),
   ]);
-  let scan=null;
-  try{ scan=await apiGet('/api/scan', 8000); }catch(_e){ scan=null; }
+  let scanPack=await loadHardwareScan(15000);
+  state.scan=scanPack.data;
+  state.scanStatus=scanPack;
   const aid=currentAgentId();
   let cs;
   try{
@@ -705,25 +831,7 @@ async function showChat(){
   const ttsOk=capReady('tts'), chatOk=capReady('chat'), sttOk=capReady('stt');
   const voiceOk=chatOk&&ttsOk;
   const model=(state.capabilities&&state.capabilities.llm_model)||state.lastModel||'—';
-  const hw=((scan&&scan.hardware&&scan.hardware.hardware)||{});
-  const gpus=hw.gpus||[];
-  const gpuDet=hw.gpu_detection||{};
-  let gpuLine='GPU status unavailable';
-  const st=(gpuDet&&gpuDet.status)?String(gpuDet.status):'';
-  if(gpus.length){
-    gpuLine=gpus.map(g=>{
-      const name=g.model||g.name||'GPU';
-      const vram=g.vram_gb?` · ${g.vram_gb} GB`:'';
-      return `${name}${vram}`;
-    }).join(' / ');
-  }else if(st==='none'){
-    gpuLine=(gpuDet&&gpuDet.message)?String(gpuDet.message):'No supported GPU detected';
-  }else if(st==='error'||st==='unavailable'||st==='skipped'){
-    gpuLine=(gpuDet&&gpuDet.message)?String(gpuDet.message):'GPU status unavailable';
-  }else if(gpuDet&&gpuDet.message){
-    gpuLine=String(gpuDet.message);
-  }
-  const vtOk=capStatus('voice_trainer')==='ready';
+  const gpuLine=formatGpuLine(scanPack);
   const voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
   const roster=state.roster&&state.roster.length?state.roster:[{id:aid,display_name:currentAgentName()}];
   const agentBtns=roster.map(a=>{
@@ -749,6 +857,7 @@ async function showChat(){
         <span>MODEL ${escapeHtml(String(model))}</span>
         <span>AGENT ${escapeHtml(String(agentName).toUpperCase())}</span>
       </div>
+      <div id="codec-mood" class="codec-mood"><span class="muted">Loading mood…</span></div>
     </div>
     <div class="cc-mast-actions">
       <button type=button class="cc-btn ghost" onclick="showHome()">Home</button>
@@ -836,8 +945,8 @@ async function showChat(){
       </div>
       <div class="cc-panel">
         <h2>Voice Trainer</h2>
-        <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Genome Piper trainer on this machine. Training happens in Genome — not inside Codec chat.':'Not installed. Setup installs it when NVIDIA is detected.'}</p>
-        ${vtOk?'<button type=button class="cc-btn" onclick="openVoiceTrainer()">Open Genome (8765)</button>':'<p class=muted style="font-size:10px;margin:0">Install Otacon with GPU to enable training.</p>'}
+        <p class=muted style="font-size:10px;margin:0 0 8px">Genome Voice Trainer is Keep-only — not part of public Expansion. Piper TTS on :10200 does not need it.</p>
+        <p class=muted style="font-size:10px;margin:0"><span class="svc-pill warn">KEEP ONLY</span></p>
       </div>
       <div class="cc-panel">
         <h2>How to run</h2>
@@ -856,6 +965,7 @@ async function showChat(){
   try{ await loadMemories(); }catch(e){}
   setCodecMode('idle');
   bootCodecOnce();
+  refreshCodecMood();
   if(window.__codecFreqTimer) clearInterval(window.__codecFreqTimer);
   window.__codecFreqTimer=setInterval(animateFreq,900);
   const inp=document.getElementById('chat-inp'); if(inp) inp.focus();
@@ -888,12 +998,7 @@ async function openCurrentAgentRoom(){
 }
 
 async function openVoiceTrainer(){
-  const url=(state.capabilities&&state.capabilities.voice_trainer_url)||'http://127.0.0.1:8765/';
-  try{
-    const probe=await fetch(url,{mode:'no-cors',cache:'no-store'});
-    void probe;
-  }catch(_e){}
-  window.open(url,'_blank','noopener');
+  alert('Genome Voice Trainer is Keep-only — not part of public Expansion/Lite. Piper TTS does not need it.');
 }
 
 async function assignVoice(vid){
@@ -998,6 +1103,11 @@ async function sendChat(){
   let mid=uid+1;
   box.insertAdjacentHTML('beforeend', messageHtml('assistant', d.text, mid));
   box.scrollTop=box.scrollHeight;
+  if(d.expansion&&d.expansion.mood_summary){
+    renderMoodStrip(d.expansion.mood_summary);
+  }else if(d.expansion&&d.expansion.emotion){
+    refreshCodecMood();
+  }
   if(d.voice && d.voice.status==='error'){
     let err=document.querySelector(`[data-speak-err="${mid}"]`);
     if(err) err.textContent='Voice playback unavailable';

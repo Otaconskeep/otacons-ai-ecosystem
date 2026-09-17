@@ -32,10 +32,20 @@ def main() -> int:
     must("I couldn't complete that request." in js, "friendly failure copy on chat error", fails)
     must("return false;" in js[js.find("function capReady"): js.find("function capReady") + 220],
          "capReady is false when capabilities missing", fails)
-    must("GPU status unavailable" in js and "gpu_detection" in js, "GPU line uses scan/detection states", fails)
+    must("GPU status unavailable" in js or "detection unavailable" in js, "GPU line uses scan/detection states", fails)
     must("No supported GPU detected" in js, "GPU none state has explicit copy", fails)
+    must("_fallbackScan" not in js, "no fake CPU-only scan fallback after timeout", fails)
+    must("GPU detection unavailable" in js, "failed scans say unavailable/retry", fails)
+    must("loadHardwareScan" in js, "shared honest hardware scan helper", fails)
+    must("codec-mood" in js and "refreshCodecMood" in js, "Codec mood strip wired", fails)
     must("let scan=null; // GPU sidebar line is cosmetic; skip scan" not in js,
          "Codec no longer skips /api/scan forever", fails)
+    must("agent:{id:'agent_001'" not in js and "agent_id:'agent_001'" not in js,
+         "wizard preview/setup no longer hardcodes agent_001", fails)
+    must("KEEP ONLY" in js and "Keep-only" in js,
+         "Voice Trainer marked Keep-only (no Open Genome on Expansion)", fails)
+    must("Open Genome" not in js and 'onclick="openVoiceTrainer()"' not in js,
+         "no Open Genome control offered on public Expansion UI", fails)
 
     must("_memory_usable" in srv and "chat_probe" in srv, "capabilities require memory + chat probe", fails)
     must("MEMORY.ping" in srv or "create_conversation('__health__'" in srv, "memory health create/list path", fails)

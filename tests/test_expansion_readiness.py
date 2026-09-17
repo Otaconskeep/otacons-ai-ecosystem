@@ -23,6 +23,24 @@ class TestReadiness(unittest.TestCase):
         r.set('CORE', ReadinessState.READY)
         self.assertEqual(r.to_dict()['CORE'], 'READY')
 
+    def test_ready_story_separates_foundation_from_core(self):
+        r = ReadinessReport()
+        r.set_semantic('agents_load', ReadinessState.READY)
+        r.set_semantic('registry_validates', ReadinessState.READY)
+        r.set_semantic('entitlement', ReadinessState.READY)
+        r.set('CORE', ReadinessState.READY)
+        r.set('AGENTS', ReadinessState.READY)
+        r.set('VOICE', ReadinessState.LIMITED)
+        r.set('EMOTIONAL_ENGINE', ReadinessState.READY)
+        r.set('RELATIONSHIPS', ReadinessState.READY)
+        self.assertTrue(r.foundation_ready())
+        self.assertTrue(r.expansion_entitled())
+        self.assertFalse(r.overall_core_ready())
+        story = r.ready_story()
+        self.assertIn('foundation_ready', story)
+        self.assertIn('entitled', story)
+        self.assertIn('VOICE:LIMITED', story)
+
 
 if __name__ == '__main__':
     unittest.main()

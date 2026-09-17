@@ -97,9 +97,18 @@ class OllamaProvider(LLMProvider):
    ready=self._model_ready(names, model)
    return Health('ONLINE' if ready else 'DEGRADED','model ready' if ready else 'runtime reachable; model missing')
   except Exception as e: return Health('OFFLINE',f'runtime unreachable: {type(e).__name__}')
- def generate(self, model, prompt):
+ def generate(self, model, prompt, *, options=None):
   try:
-   req=urllib.request.Request(self.endpoint+'/api/generate',data=json.dumps({'model':model,'prompt':prompt,'stream':False}).encode(),headers={'Content-Type':'application/json'})
+   payload={'model':model,'prompt':prompt,'stream':False}
+   # Character / Expansion turns: slightly warmer sampling, less "assistant FAQ"
+   opts=dict(options or {})
+   if 'temperature' not in opts and 'Expansion runtime context' in (prompt or ''):
+    opts['temperature']=0.85
+    opts['top_p']=0.92
+    opts['repeat_penalty']=1.15
+   if opts:
+    payload['options']=opts
+   req=urllib.request.Request(self.endpoint+'/api/generate',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})
    with urllib.request.urlopen(req,timeout=self.timeout) as r: data=json.loads(r.read())
    if not isinstance(data.get('response'),str) or not data['response'].strip(): raise ProviderError('malformed Ollama response')
    return data['response'].strip()

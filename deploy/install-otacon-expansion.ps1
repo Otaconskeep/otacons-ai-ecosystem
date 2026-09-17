@@ -15,6 +15,7 @@ param(
     [string]$RawBase = "",
     [switch]$SkipTests,
     [switch]$OpenBrowser,
+    [switch]$Unattended,
     [int]$TimeoutSeconds = 180
 )
 
@@ -87,11 +88,32 @@ function Test-BrandAt([string]$Base) {
     } catch { return $false }
 }
 
-function Find-WorkingBase([string]$Name, [int]$PortNum) {
+function Test-CoreHealthAt([string]$Base) {
+    # Branding alone is not Core-healthy - installer.server also brands.
+    # Require semantic /api/health (memory usable) so Expansion doesn't install on a hollow listener.
+    try {
+        if (-not (Test-BrandAt $Base)) { return $false }
+        $r = Invoke-WebRequest -Uri "$Base/api/health" -UseBasicParsing -TimeoutSec 6 -ErrorAction Stop
+        if ($r.StatusCode -lt 200 -or $r.StatusCode -ge 300) { return $false }
+        $j = $r.Content | ConvertFrom-Json
+        if ($j.ok -ne $true) { return $false }
+        if ([string]$j.product_name -and [string]$j.product_name -ne "Otacon") { return $false }
+        return $true
+    } catch { return $false }
+}
+
+function Find-WorkingBase([string]$Name, [int]$PortNum, [switch]$RequireHealth) {
     $bases = @("http://127.0.0.1:$PortNum")
     $ip = Get-WslIp $Name
     if ($ip -match '^\d{1,3}(\.\d{1,3}){3}$') { $bases += "http://${ip}:$PortNum" }
-    foreach ($b in $bases) { if (Test-BrandAt $b) { return $b } }
+    foreach ($b in $bases) {
+        if (Test-CoreHealthAt $b) { return $b }
+        if (-not $RequireHealth -and (Test-BrandAt $b)) {
+            # Older tips may lack /api/health until Expansion sync refreshes Core.
+            Write-ExpLog ("branding-only base={0} (semantic /api/health not ready yet)" -f $b)
+            return $b
+        }
+    }
     return $null
 }
 
@@ -112,7 +134,7 @@ function Wait-ExpansionHealthy([string]$Name, [int]$PortNum, [int]$Seconds) {
     $attempt = 0
     do {
         $attempt++
-        $base = Find-WorkingBase -Name $Name -PortNum $PortNum
+        $base = Find-WorkingBase -Name $Name -PortNum $PortNum -RequireHealth
         if (-not $base) {
             Write-ExpLog ("health wait attempt={0} brand=unreachable" -f $attempt)
             Start-Sleep -Seconds 2
@@ -202,7 +224,17 @@ if (-not $base) {
     exit 4
 }
 Write-ExpLog "core_base=$base"
-Write-OtaconSay "Core is healthy. I'm adding the Expansion systems now..." "work"
+try {
+    $hr = Invoke-WebRequest -Uri "$base/api/health" -UseBasicParsing -TimeoutSec 4 -ErrorAction Stop
+    $hj = $hr.Content | ConvertFrom-Json
+    if ($hj.ok -eq $true) {
+        Write-OtaconSay "Core is healthy (branding + /api/health). I'm adding the Expansion systems now..." "work"
+    } else {
+        Write-OtaconSay "Core is answering, but /api/health is not ok yet. Continuing - Expansion sync refreshes Core." "warn"
+    }
+} catch {
+    Write-OtaconSay "Core branding is up. Semantic /api/health not on this tip yet - Expansion sync will refresh Core." "work"
+}
 
 $root = Resolve-RepoRoot
 if (-not $root) {
@@ -238,12 +270,15 @@ if (-not (Test-Path -LiteralPath $expShWin)) {
 }
 
 $linuxSh = ConvertTo-OtaconLinuxPath -Distro $distro -WindowsPath $expShWin -User "root"
-# Honor -SkipTests. Default (omitted): skip full suite; Windows verifies foundation+API.
-# Pass -SkipTests:$false to run the Expansion unittest suite inside WSL.
+# Honor -SkipTests. Default: run Expansion suite inside WSL (same as Linux).
+# Pass -SkipTests to skip when iterating; foundation+API still verified below.
 if ($PSBoundParameters.ContainsKey('SkipTests')) {
     $runTests = if ($SkipTests) { "0" } else { "1" }
 } else {
-    $runTests = "0"
+    $runTests = "1"
+}
+if ($Unattended -or $env:OTACON_UNATTENDED -eq "1") {
+    $OpenBrowser = $false
 }
 
 Write-OtaconSay "Setting up dossiers..." "work"
@@ -377,6 +412,12 @@ if (-not $entitled) {
 }
 Write-Host ("   agents: {0}" -f ($names -join ', '))
 Write-Host "   Core remains healthy at $base"
+$story = $null
+if ($status -and $status.report) { $story = $status.report.ready_story }
+if ($story) { Write-Host ("   ready_story={0}" -f $story) }
+$ocr = $false
+if ($status -and $status.report) { $ocr = [bool]$status.report.overall_core_ready }
+Write-Host ("   overall_core_ready={0} (foundation/entitled can be true while VOICE/etc. still LIMITED)" -f $ocr)
 Write-Host " ============================================================"
 Write-Host ""
 if ($entitled) {
@@ -384,9 +425,9 @@ if ($entitled) {
 } else {
     Write-OtaconSay "Foundation installed. Entitlement is false - open entitlement API for the reason." "warn"
 }
-Write-ExpLog "SUCCESS foundation_ready=1 entitled=$entitled"
+Write-ExpLog "SUCCESS foundation_ready=1 entitled=$entitled overall_core_ready=$ocr"
 
-if ($OpenBrowser) {
+if ($OpenBrowser -and -not $Unattended -and $env:OTACON_UNATTENDED -ne "1") {
     try { Start-Process "$base/" } catch {}
 }
 exit 0

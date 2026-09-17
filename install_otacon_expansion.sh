@@ -210,14 +210,24 @@ log "Synchronizing the public repository"
 
 run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" fetch --prune origin
 CURRENT_BRANCH="$(run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" branch --show-current || true)"
-if [[ "$CURRENT_BRANCH" == "main" ]]; then
-  run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" pull --ff-only
+# Match Core installer: diverged trees (ahead/behind) must not die on exit 128.
+# Friends' local edits / older tips need a recovery path to origin/main.
+if [[ "$CURRENT_BRANCH" == "main" || -z "$CURRENT_BRANCH" ]]; then
+  if ! run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" pull --ff-only; then
+    BACKUP_REF="backup/pre-expansion-$(date +%Y%m%d-%H%M%S)"
+    warn "Fast-forward pull failed (local tip diverged from origin/main)."
+    warn "Saving local tip as ${BACKUP_REF}, then hard-resetting to origin/main so Expansion can install."
+    run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" branch "$BACKUP_REF" HEAD || true
+    run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" reset --hard origin/main
+    ok "Local tip preserved as ${BACKUP_REF}; working tree now matches origin/main."
+  fi
+  run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" reset --hard origin/main
 else
   warn "Repository is on branch '${CURRENT_BRANCH:-detached}'. Fetched origin only; leaving your branch untouched."
 fi
 
 if [[ ! -d "$INSTALL_DIR/expansion" ]]; then
-  die "expansion/ was not found in $INSTALL_DIR after syncing. Your Core checkout may predate Expansion; try: git -C \"$INSTALL_DIR\" pull --ff-only, then rerun this script."
+  die "expansion/ was not found in $INSTALL_DIR after syncing. Your Core checkout may predate Expansion; try: git -C \"$INSTALL_DIR\" fetch --prune origin && git -C \"$INSTALL_DIR\" reset --hard origin/main, then rerun this script."
 fi
 ok "expansion/ present: $INSTALL_DIR/expansion"
 

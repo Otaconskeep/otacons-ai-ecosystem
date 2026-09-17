@@ -173,6 +173,31 @@ def _expansion_runtime():
         return None
 
 
+def _mood_summary_for(ctx) -> dict:
+    """Keep-like mood strip payload: spoken line + top elevated dims."""
+    emo = (getattr(ctx, 'emotion', None) or {})
+    dims = emo.get('dimensions') or {}
+    line = ''
+    try:
+        from expansion.humanization import spoken_self_state
+        line = spoken_self_state(dims, agent_id=getattr(ctx, 'agent_id', 'aria') or 'aria')
+    except Exception:
+        line = ''
+    ranked = sorted(
+        ((k, float(v)) for k, v in dims.items() if isinstance(v, (int, float))),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    elevated = [{'id': k, 'value': round(v, 3)} for k, v in ranked if v >= 0.45][:6]
+    if not elevated:
+        elevated = [{'id': k, 'value': round(v, 3)} for k, v in ranked[:4]]
+    return {
+        'line': line,
+        'elevated': elevated,
+        'updated_at': emo.get('updated_at'),
+    }
+
+
 def _load_agents() -> list[dict]:
     cfg_path = CONFIG_ROOT / 'config.json'
     if cfg_path.is_file():
@@ -385,13 +410,26 @@ def _capability_snapshot() -> dict:
     caps['image'] = 'not_configured'
     caps['video'] = 'not_configured'
 
-    # Genome Voice Trainer is an optional GPU install — report honestly, no fake UI.
+    # Genome Voice Trainer is Keep-only (Hal product split). Public Expansion/Lite
+    # must never advertise Open Genome — leftover dirs or accidental :8765 listeners
+    # are not part of this build's offered surface.
     vt_home = Path.home() / 'otacon-voice-trainer'
-    vt_ok = vt_home.is_dir() and any(vt_home.iterdir()) if vt_home.is_dir() else False
-    caps['voice_trainer'] = 'ready' if vt_ok else 'not_configured'
-    caps['voice_trainer_path'] = str(vt_home) if vt_ok else ''
-    # Genome UI listens on 8765 locally (same host as Otacon / WSL loopback).
-    caps['voice_trainer_url'] = 'http://127.0.0.1:8765/' if vt_ok else ''
+    vt_dir = vt_home.is_dir() and any(vt_home.iterdir()) if vt_home.is_dir() else False
+    vt_live = False
+    try:
+        import socket
+        with socket.create_connection(('127.0.0.1', 8765), timeout=0.4):
+            vt_live = True
+    except OSError:
+        vt_live = False
+    caps['voice_trainer'] = 'keep_only'
+    caps['voice_trainer_path'] = str(vt_home) if vt_dir else ''
+    caps['voice_trainer_listening'] = vt_live
+    caps['voice_trainer_url'] = ''
+    caps['voice_trainer_note'] = (
+        'Genome Voice Trainer is Keep-only — not part of public Expansion/Lite. '
+        'Piper TTS on :10200 does not need it.'
+    )
     caps['llm_model'] = ''
     try:
         caps['llm_model'] = _llm_settings()[2]
@@ -446,6 +484,24 @@ class Handler(BaseHTTPRequestHandler):
                 'bind_host': BIND_HOST,
                 'lan_auth_required': BIND_MODE == 'lan',
             })
+        elif path == '/api/health':
+            # Semantic health — branding alone is not enough (installer also brands).
+            mem_ok, mem_detail = _memory_usable()
+            tts_state = 'unknown'
+            try:
+                snap = _capability_snapshot()
+                tts_state = snap.get('tts') or 'unknown'
+            except Exception as exc:  # noqa: BLE001
+                tts_state = f'error:{exc}'
+            ok = bool(mem_ok)
+            self.send_json({
+                'ok': ok,
+                'service': 'otacon',
+                'product_name': 'Otacon',
+                'memory': 'ready' if mem_ok else 'error',
+                'memory_detail': mem_detail,
+                'tts': tts_state,
+            }, 200 if ok else 503)
         elif path == '/api/auth/status':
             authed = True
             if BIND_MODE == 'lan':
@@ -546,6 +602,7 @@ class Handler(BaseHTTPRequestHandler):
                     'display_name': ctx.display_name,
                     'archetype': ctx.archetype,
                     'emotion': ctx.emotion,
+                    'mood_summary': _mood_summary_for(ctx),
                     'relationships': ctx.relationships,
                     'memories': ctx.memories,
                     'vulnerabilities': ctx.vulnerabilities,
@@ -753,6 +810,7 @@ class Handler(BaseHTTPRequestHandler):
                                     },
                                     'expansion': {
                                         'emotion': ctx.emotion,
+                                        'mood_summary': _mood_summary_for(ctx),
                                         'relationships': ctx.relationships[:5],
                                         'memories': ctx.memories,
                                     },
@@ -764,6 +822,7 @@ class Handler(BaseHTTPRequestHandler):
                             agent['system_prompt'] = ctx.system_prompt
                             agent['_expansion_context'] = {
                                 'emotion': ctx.emotion,
+                                'mood_summary': _mood_summary_for(ctx),
                                 'relationships': ctx.relationships[:5],
                                 'memories': ctx.memories,
                             }
@@ -802,6 +861,7 @@ class Handler(BaseHTTPRequestHandler):
                             )
                             result['expansion'] = {
                                 'emotion': ctx.emotion,
+                                'mood_summary': _mood_summary_for(ctx),
                                 'relationships': ctx.relationships[:5],
                                 'memories': ctx.memories,
                             }
