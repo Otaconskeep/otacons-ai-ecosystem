@@ -6,7 +6,7 @@ Lifecycle (no routine human-approval stage):
        → VERIFYING → (REWORK | DONE) → optional FOLLOW-UP job
 
 JobStore status remains the durable engine state; REX stage is the agile
-projection agents move. WAITING means peer/autonomous verify — not "await Xof".
+projection agents move. WAITING means peer/autonomous verify — not human approval.
 """
 from __future__ import annotations
 
