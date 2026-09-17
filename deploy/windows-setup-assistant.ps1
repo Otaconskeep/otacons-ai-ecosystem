@@ -1147,6 +1147,8 @@ function Show-ComponentStoreCorruptHelp {
         "If Otacon was already installed on this PC:",
         "press F to wake Codec only (skip Windows repair)",
         "",
+        "STOP pressing I — that only repeats 14098.",
+        "",
         "Otherwise fix Windows first (Admin Command Prompt):",
         "",
         "  DISM /Online /Cleanup-Image /StartComponentCleanup",
@@ -1397,9 +1399,8 @@ function Step-EnableWsl {
     Write-WslListVerbose
     Save-InstallerState @{ stage = "waiting_for_windows"; step = 3; target_distro = $DistroName }
     $started = Get-Date
-    Show-WorkingPanel -Step 3 -StepName "PREPARING WINDOWS" -Detail "Windows is currently enabling Linux support" -Started $started -Typical "2 to 10 minutes"
+    Show-WorkingPanel -Step 3 -StepName "PREPARING WINDOWS" -Detail "Preparing Linux for Otacon" -Started $started -Typical "2 to 10 minutes"
 
-    # Prefer dedicated name. Store Ubuntu may only offer "Ubuntu" - import path for side-by-side.
     $family = Get-WslUbuntuFamilyNames
     $already = $family | Where-Object { $_.Equals($DistroName, [System.StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
     if ($already) {
@@ -1407,14 +1408,26 @@ function Step-EnableWsl {
         return 0
     }
 
+    # If WSL is already enabled, NEVER call `wsl --install` again — that re-touches
+    # Windows optional features and hits error 14098 (corrupt component store) in a loop.
+    # Import a rootfs instead (no DISM feature enable).
+    if (Test-WslPresent) {
+        Write-KeepLog "WSL already present - importing $PreferredDistro rootfs (skip wsl --install / 14098)" -Stage "WAITING_FOR_WINDOWS"
+        Write-Host "  Linux support is already on this PC." -ForegroundColor Green
+        Write-Host "  Adding Ubuntu by download/import (avoids Windows error 14098)..." -ForegroundColor Cyan
+        $rc = Install-DedicatedUbuntuOtacon
+        Write-KeepLog "import-while-wsl-present exit=$rc" -Stage "WAITING_FOR_WINDOWS"
+        if ($rc -eq 0) { return 0 }
+        Write-Host "  Import failed - will try Microsoft catalog next." -ForegroundColor DarkYellow
+    }
+
     if ($DistroName -eq $PreferredDistro -and $family.Count -gt 0) {
-        # Side-by-side dedicated create via Ubuntu WSL rootfs import
         $rc = Install-DedicatedUbuntuOtacon
         Write-KeepLog "dedicated import exit=$rc" -Stage "WAITING_FOR_WINDOWS"
         return $rc
     }
 
-    # Virgin path: pick from `wsl --list --online` (prefer Ubuntu-22.04 over bare Ubuntu).
+    # Last resort: catalog install via wsl --list --online
     $installName = Select-BestOnlineUbuntuInstallName
     Write-KeepLog "wsl --list --online chose install -d $installName (requested=$DistroName)" -Stage "WAITING_FOR_WINDOWS"
     Write-Host "  Installing Linux distro from Microsoft catalog: $installName" -ForegroundColor Cyan
@@ -1426,23 +1439,26 @@ function Step-EnableWsl {
     }
     Write-KeepLog "wsl --install -d $installName exit=$($p.ExitCode)" -Stage "WAITING_FOR_WINDOWS"
     if ($p.ExitCode -eq 14098 -or $p.ExitCode -eq -2146498798) {
-        $act = Show-ComponentStoreCorruptHelp -Detail "wsl --install -d $installName exit=$($p.ExitCode)"
+        Write-KeepLog "14098 from wsl --install - falling back to rootfs import" -Level "WARN" -Stage "WAITING_FOR_WINDOWS"
+        if (Test-WslPresent) {
+            $rc2 = Install-DedicatedUbuntuOtacon
+            if ($rc2 -eq 0) { return 0 }
+        }
+        $act = Show-ComponentStoreCorruptHelp -Detail "wsl --install exit=14098 — do NOT press I again; Windows must be repaired OR use import"
         if ($act -eq "fixed") { return 0 }
-        if ($act -eq "retry") { return (Step-EnableWsl -DistroName $DistroName) }
+        if ($act -eq "retry") { return (Install-DedicatedUbuntuOtacon) }
         return 14098
     }
     Start-Sleep -Seconds 2
     $familyAfter = Get-WslUbuntuFamilyNames
-    # Prefer the exact name we asked for; then any Ubuntu*.
     $created = $familyAfter | Where-Object { $_.Equals($installName, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
     if (-not $created) {
         $created = $familyAfter | Where-Object { $_ -match '(?i)Ubuntu' } | Select-Object -First 1
     }
     if ($created) {
         Save-InstallerState @{ ubuntu_name = $created; ubuntu_mode = "reuse"; target_distro = $created }
-        Write-KeepLog "post-install: distro=$created present - will reuse after first-run setup" -Stage "WAITING_FOR_WINDOWS"
+        Write-KeepLog "post-install: distro=$created present" -Stage "WAITING_FOR_WINDOWS"
         [void](Ensure-WslDistroRunning -Name $created)
-        if (Test-UbuntuReady $created) { return 0 }
         return 0
     }
     if ($DistroName -eq $PreferredDistro) {
