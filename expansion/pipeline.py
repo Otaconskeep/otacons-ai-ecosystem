@@ -293,7 +293,8 @@ class LivingPipeline:
                 or ''
             )
             if event.event_type in (
-                'agent.message', 'user.message', 'user.praised_agent', 'user.feedback',
+                'agent.message', 'user.message', 'user.praised_agent',
+                'user.corrected_agent', 'user.feedback',
             ) and text:
                 obs = ingest_owner_message(
                     engine, text=str(text), event_id=event.event_id, actor='ledger',

@@ -667,6 +667,7 @@ def learn_from_autonomy_outcome(
 
 _CONCISE = re.compile(r'\b(concise|brief|short|tl;?dr|bullet)\b', re.I)
 _VERBOSE = re.compile(r'\b(detailed|thorough|long.?form|elaborate)\b', re.I)
+_CALL_ME = re.compile(r'\bcall me\s+([A-Za-z][\w\'-]{1,40})\b', re.I)
 
 
 def ingest_owner_message(
@@ -691,6 +692,17 @@ def ingest_owner_message(
         return engine.observe(
             'ledger',
             'owner prefers detailed thorough explanations',
+            learning_type='owner_preference',
+            evidence_ids=[event_id],
+            scope='shared',
+            actor=actor,
+        )
+    m = _CALL_ME.search(text)
+    if m:
+        name = m.group(1).strip()
+        return engine.observe(
+            'ledger',
+            f'owner prefers to be called {name}',
             learning_type='owner_preference',
             evidence_ids=[event_id],
             scope='shared',

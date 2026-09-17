@@ -210,9 +210,15 @@ class TestProvisionFilled(P1LayoutCase):
 
 
 class TestCoreOnlyUntouched(unittest.TestCase):
-    def test_system_prompt_core_path(self):
+    def test_system_prompt_core_path_generic(self):
         from core.agent_service import system_prompt
-        self.assertIn('local AI assistant', system_prompt({'display_name': 'Aria'}))
+        self.assertIn('local AI assistant', system_prompt({'display_name': 'Billy'}))
+
+    def test_system_prompt_aria_is_humanized(self):
+        from core.agent_service import system_prompt
+        p = system_prompt({'display_name': 'Aria'})
+        self.assertNotIn('local AI assistant', p)
+        self.assertIn('Never mention being an AI', p)
 
     def test_expansion_system_prompt_override(self):
         from core.agent_service import system_prompt

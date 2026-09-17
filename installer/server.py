@@ -597,7 +597,7 @@ class Handler(BaseHTTPRequestHandler):
                         'voice_id': data.get('voice_id') or 'voice_aria',
                         'avatar': '/assets/aria/aria.webp',
                         'role': 'primary',
-                        'personality': 'friendly',
+                        'personality': 'composed_devoted',
                     }],
                 ),
                 'storage': st,
@@ -676,7 +676,53 @@ class Handler(BaseHTTPRequestHandler):
                     rt = _expansion_runtime()
                     if rt is not None:
                         try:
-                            ctx = rt.assemble_context(agent['id'], user_message=data.get('message', ''))
+                            from expansion.chat_learning import before_reply, after_reply
+                            human_id = agent['id']
+                            pre = before_reply(human_id, data.get('message', ''), layout=rt.layout)
+                            agent['_chat_learning'] = pre
+                            if pre.get('intercept') and pre.get('reply'):
+                                # Remember-command short-circuit — still persist transcript
+                                cid = cid  # already created
+                                try:
+                                    MEMORY.append(
+                                        cid, data.get('user_id', 'local_user'), agent['id'],
+                                        'user', data.get('message', ''),
+                                    )
+                                    MEMORY.append(
+                                        cid, data.get('user_id', 'local_user'), agent['id'],
+                                        'assistant', pre['reply'],
+                                    )
+                                except Exception:
+                                    pass
+                                after_reply(
+                                    human_id, data.get('message', ''), pre['reply'],
+                                    layout=rt.layout,
+                                    event_id=pre.get('event_id') or '',
+                                    intent=pre.get('intent') or 'remember',
+                                )
+                                ctx = rt.assemble_context(
+                                    human_id, user_message=data.get('message', ''),
+                                )
+                                self.send_json({
+                                    'conversation_id': cid,
+                                    'agent_id': agent['id'],
+                                    'text': pre['reply'],
+                                    'learning': {
+                                        'intent': pre.get('intent'),
+                                        'event_id': pre.get('event_id'),
+                                        'memory_id': pre.get('memory_id'),
+                                        'intercept': True,
+                                    },
+                                    'expansion': {
+                                        'emotion': ctx.emotion,
+                                        'relationships': ctx.relationships[:5],
+                                        'memories': ctx.memories,
+                                    },
+                                })
+                                return
+                            ctx = rt.assemble_context(
+                                agent['id'], user_message=data.get('message', ''),
+                            )
                             agent['system_prompt'] = ctx.system_prompt
                             agent['_expansion_context'] = {
                                 'emotion': ctx.emotion,
@@ -691,7 +737,40 @@ class Handler(BaseHTTPRequestHandler):
                     user_id=data.get('user_id', 'local_user'),
                     auto_speak=bool(auto_speak),
                 )
-                if agent.get('_expansion_context'):
+                if agent.get('expansion') and agent.get('_chat_learning') is not None:
+                    try:
+                        from expansion.chat_learning import after_reply
+                        rt = _expansion_runtime()
+                        if rt is not None:
+                            pre = agent.get('_chat_learning') or {}
+                            post = after_reply(
+                                agent['id'],
+                                data.get('message', ''),
+                                result.get('text', ''),
+                                layout=rt.layout,
+                                event_id=pre.get('event_id') or '',
+                                intent=pre.get('intent') or 'chat',
+                            )
+                            result['learning'] = {
+                                'intent': pre.get('intent'),
+                                'event_id': pre.get('event_id'),
+                                'learning_observation_id': pre.get('learning_observation_id'),
+                                'turn_memory_id': post.get('memory_id'),
+                                'reinforced': post.get('reinforced'),
+                            }
+                            # Refresh expansion snapshot after mutations
+                            ctx = rt.assemble_context(
+                                agent['id'], user_message=data.get('message', ''),
+                            )
+                            result['expansion'] = {
+                                'emotion': ctx.emotion,
+                                'relationships': ctx.relationships[:5],
+                                'memories': ctx.memories,
+                            }
+                    except Exception:
+                        if agent.get('_expansion_context'):
+                            result['expansion'] = agent['_expansion_context']
+                elif agent.get('_expansion_context'):
                     result['expansion'] = agent['_expansion_context']
                 self.send_json(result)
             except Exception as e:

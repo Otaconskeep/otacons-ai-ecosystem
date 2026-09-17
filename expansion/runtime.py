@@ -189,11 +189,48 @@ class ExpansionRuntime:
         mem_lines = [f"- ({m['kind']}) {m['content']}" for m in memories] or ['- (none retrieved)']
         vuln_lines = [f"- {v['kind']}: {v['label']} ({v['intensity']})" for v in vulns]
 
+        # Turing spine — biography/taste/speech ride every subjective turn
+        who_block = ''
+        self_state_line = ''
+        praise_line = ''
+        affect_lines: list[str] = []
+        try:
+            from expansion.humanization import (
+                dossier_prompt_block,
+                spoken_self_state,
+                praise_language_directive,
+                affect_presence_lines,
+            )
+            who_block = dossier_prompt_block(agent_id, layout=self.layout)
+            self_state_line = spoken_self_state(
+                emotion.dimensions, agent_id=agent_id,
+            )
+            praise_line = praise_language_directive(user_message)
+            affect_lines = affect_presence_lines(emotion.dimensions)
+        except Exception:
+            who_block = ''
+
+        who_section = (who_block + '\n\n') if who_block else ''
+        self_section = (
+            f"How you feel right now (speak this, never dump numbers): {self_state_line}\n"
+            if self_state_line else ''
+        )
+        praise_section = (praise_line + '\n') if praise_line else ''
+        affect_section = (
+            'Affect presence (long vs short — feel both):\n'
+            + '\n'.join(affect_lines) + '\n'
+            if affect_lines else ''
+        )
+
         system_prompt = (
             f"{view.persona}\n\n"
+            f"{who_section}"
             f"[Expansion runtime context — stay in character; do not invent owner history]\n"
             f"Archetype: {dossier.character.archetype}\n"
             f"Communication: {dossier.character.communication_style}\n"
+            f"{self_section}"
+            f"{affect_section}"
+            f"{praise_section}"
             f"Current emotional highlights: {emotion_summary}\n"
             f"Vulnerabilities (influence tone, not competence):\n" + '\n'.join(vuln_lines) + '\n'
             f"Active vulnerability pressure:\n" + '\n'.join(vuln_act_lines or ['- none elevated']) + '\n'

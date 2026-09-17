@@ -3,10 +3,31 @@ from core.providers import OllamaProvider, ProviderError
 from core.voice import synthesize_voice, TTSError, public_result
 
 
+def _human_agent_id(agent) -> str:
+    """Map Core wizard ids (agent_001 + display Aria) onto Expansion human sheets."""
+    aid = (agent.get('id') or '').strip().lower()
+    if aid in ('aria', 'vector', 'ledger', 'muse', 'sentry'):
+        return aid
+    name = (agent.get('display_name') or '').strip().lower()
+    if name in ('aria', 'vector', 'ledger', 'muse', 'sentry'):
+        return name
+    return aid
+
+
 def system_prompt(agent):
     # Expansion runtime may supply a full context-assembled prompt.
     if agent.get('system_prompt'):
         return agent['system_prompt']
+    try:
+        from expansion.humanization import core_fallback_persona
+        human = core_fallback_persona(
+            _human_agent_id(agent),
+            agent.get('display_name') or '',
+        )
+        if human:
+            return human
+    except Exception:
+        pass
     return f"You are {agent['display_name']}, a local AI assistant. Be friendly, clear, and helpful."
 
 
@@ -33,10 +54,70 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
         facts = memory.retrieve(user_id, agent['id'], message)
         context = '\n'.join(f"{x['role']}: {x['content']}" for x in prior[-10:])
         context += '\nRelevant memory: ' + '; '.join(x['content'] for x in facts)
+
+    human_id = _human_agent_id(agent)
+
+    # Chat-turn learning when Expansion is on and the HTTP layer hasn't already run it
+    learning_owned_here = bool(agent.get('expansion')) and agent.get('_chat_learning') is None
+    pre = agent.get('_chat_learning')
+    if learning_owned_here:
+        try:
+            from expansion.chat_learning import before_reply
+            from expansion.state_layout import resolve_layout
+            pre = before_reply(human_id, message, layout=resolve_layout())
+            agent['_chat_learning'] = pre
+        except Exception:
+            pre = None
+            learning_owned_here = False
+
+    # Deterministic dossier answers for past/taste/self — never a list dump
+    text = None
+    if pre and pre.get('intercept') and pre.get('reply'):
+        text = pre['reply']
+    else:
+        try:
+            from expansion.humanization import (
+                render_dossier_self_reply,
+                is_self_state_query,
+                spoken_self_state,
+            )
+            text = render_dossier_self_reply(human_id, message)
+            if text is None and is_self_state_query(message):
+                dims = {}
+                exp = agent.get('_expansion_context') or {}
+                emo = exp.get('emotion') or {}
+                dims = emo.get('dimensions') or {}
+                if dims:
+                    text = spoken_self_state(dims, agent_id=human_id)
+        except Exception:
+            text = None
+
+        if text is None:
+            try:
+                text = provider.generate(model, system_prompt(agent) + '\n' + context + '\nUser: ' + message)
+            except ProviderError as e:
+                raise RuntimeError(str(e)) from e
+
+    # Idiolect post-pass — scrub embodiment / corporate closers
     try:
-        text = provider.generate(model, system_prompt(agent) + '\n' + context + '\nUser: ' + message)
-    except ProviderError as e:
-        raise RuntimeError(str(e)) from e
+        from expansion.idiolect import apply_idiolect
+        text = apply_idiolect(text, human_id)
+    except Exception:
+        pass
+
+    if learning_owned_here and pre is not None:
+        try:
+            from expansion.chat_learning import after_reply
+            from expansion.state_layout import resolve_layout
+            after_reply(
+                human_id, message, text,
+                layout=resolve_layout(),
+                event_id=(pre or {}).get('event_id') or '',
+                intent=(pre or {}).get('intent') or 'chat',
+            )
+        except Exception:
+            pass
+
     if memory:
         memory.append(conversation_id, user_id, agent['id'], 'user', message)
         memory.append(conversation_id, user_id, agent['id'], 'assistant', text)
@@ -50,6 +131,13 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
     }
     if model_note:
         out['model_note'] = model_note
+    if pre:
+        out['learning'] = {
+            'intent': pre.get('intent'),
+            'event_id': pre.get('event_id'),
+            'learning_observation_id': pre.get('learning_observation_id'),
+            'intercept': bool(pre.get('intercept')),
+        }
     return out
 
 
