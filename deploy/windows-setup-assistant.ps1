@@ -1608,7 +1608,11 @@ function Step-InstallOtacon {
                 $hint997 = ""
                 if ($code -eq 997) {
                     $st = Get-WslDistroState -Name $Name
-                    $hint997 = " Windows could not map installer paths into WSL distro '$Name' (state=$st). Pick a RUNNING Ubuntu (e.g. Ubuntu-22.04), or run: wsl -d $Name -u root -- echo ok — then retry. Do not reuse a Stopped/broken Ubuntu."
+                    $hint997 = " Windows could not map installer paths into WSL distro '$Name' (state=$st). Exit setup, then in PowerShell run: Remove-Item `"$env:LOCALAPPDATA\OtaconsKeep\installer-state.json`" -Force; then re-run OtaconsKeep-Setup.bat --update and choose Create dedicated Ubuntu-Otacon (or a RUNNING Ubuntu)."
+                    # Forget the stuck reuse choice so the next launch re-asks.
+                    try {
+                        Save-InstallerState @{ ubuntu_name = ""; ubuntu_mode = ""; stage = "failed"; last_error = "wslpath/997" }
+                    } catch {}
                 }
                 $act = Show-SetupNeedsHelp -Step "installing otacon (privileged bootstrap)" -PlainError (
                     "Root bootstrap failed (exit $code). No sudo password was required; this uses wsl -u root.$hint997 Log: $logPipe"

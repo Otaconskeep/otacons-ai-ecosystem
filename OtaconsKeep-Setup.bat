@@ -122,11 +122,21 @@ if not "!RC!"=="0" call :STAY_OPEN_AFTER_CHILD !RC!
 exit /b !RC!
 
 :NEED_FETCH
-REM Pin local AppData installer across retries unless --update/--refresh.
-REM Floating main between clicks was making Josh test a different build every run.
+REM Pin local AppData installer across retries unless --update/--refresh,
+REM or unless GitHub's installer-revision.txt moved (so fixes reach Josh).
 if defined FORCE_UPDATE goto NEED_FETCH_FORCE
-if exist "%ASSISTANT%" if exist "%INST%\deploy\installer-revision.txt" goto USE_PINNED_LOCAL
-goto NEED_FETCH_FORCE
+if not exist "%ASSISTANT%" goto NEED_FETCH_FORCE
+if not exist "%INST%\deploy\installer-revision.txt" goto NEED_FETCH_FORCE
+set "LOCAL_REV="
+set "REMOTE_REV="
+for /f "usebackq delims=" %%R in ("%INST%\deploy\installer-revision.txt") do set "LOCAL_REV=%%R"
+curl.exe -fsSL --connect-timeout 8 --max-time 15 "%RAW%/deploy/installer-revision.txt" > "%TEMP%\otacon-installer-rev-remote.txt" 2>nul
+if exist "%TEMP%\otacon-installer-rev-remote.txt" for /f "usebackq delims=" %%R in ("%TEMP%\otacon-installer-rev-remote.txt") do set "REMOTE_REV=%%R"
+if defined REMOTE_REV if /I not "!LOCAL_REV!"=="!REMOTE_REV!" (
+  call :LOG "pinned revision stale local=!LOCAL_REV! remote=!REMOTE_REV! - refetching"
+  goto NEED_FETCH_FORCE
+)
+goto USE_PINNED_LOCAL
 :USE_PINNED_LOCAL
 call :LOG "pinned local installer present; skipping refetch - pass --update to refresh from GitHub"
 for /f "usebackq delims=" %%R in ("%INST%\deploy\installer-revision.txt") do call :LOG "pinned revision=%%R"
