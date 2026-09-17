@@ -1506,11 +1506,11 @@ function Install-DedicatedUbuntuOtacon {
         Save-InstallerState @{ ubuntu_name = $PreferredDistro; ubuntu_mode = "dedicated" }
         # Imported rootfs has only root — provision the expected non-root user now.
         [void](Ensure-WslDistroRunning -Name $PreferredDistro)
-        $provisioned = Ensure-WslTargetUser -Name $PreferredDistro
-        if (-not $provisioned) {
-            Write-KeepLog "dedicated import succeeded but user auto-provision failed" -Level "WARN" -Stage "WAITING_FOR_WINDOWS"
+        $prov = Ensure-WslTargetUser -Name $PreferredDistro
+        if (-not $prov.AccountValid -or -not $prov.DefaultOk) {
+            Write-KeepLog "dedicated import user provision incomplete account=$($prov.AccountValid) default=$($prov.DefaultOk) err=$($prov.Error)" -Level "WARN" -Stage "WAITING_FOR_WINDOWS"
         } else {
-            Write-KeepLog "dedicated import user provisioned=$provisioned" -Stage "WAITING_FOR_WINDOWS"
+            Write-KeepLog "dedicated import user provisioned=$($prov.User)" -Stage "WAITING_FOR_WINDOWS"
         }
     }
     return $code
@@ -1651,33 +1651,24 @@ function Get-OtaconExpectedWslUsername {
     return (ConvertTo-OtaconLinuxUsername -Raw $raw)
 }
 
-function Get-WslDefaultUser {
-    param([string]$Name)
-    if (-not $Name) { return "" }
-    try {
-        $u = (& wsl.exe -d $Name -- bash -lc "whoami" 2>$null | Select-Object -Last 1)
-        $who = if ($u) { ("{0}" -f $u).Trim() } else { "" }
-        if ($who -and $who -ne "root") { return $who }
-    } catch {}
-    try {
-        $conf = (& wsl.exe -d $Name -u root -- bash -lc "awk -F= '/^[[:space:]]*default=/ {gsub(/[[:space:]]/,\"\",`$2); print `$2; exit}' /etc/wsl.conf 2>/dev/null" 2>$null | Select-Object -Last 1)
-        $cu = if ($conf) { ("{0}" -f $conf).Trim() } else { "" }
-        if ($cu -and $cu -ne "root") {
-            $ok = & wsl.exe -d $Name -u root -- bash -lc "id '$cu' >/dev/null 2>&1 && echo ok" 2>$null
-            if (("$ok" | Out-String) -match 'ok') { return $cu }
-        }
-    } catch {}
-    try {
-        $cand = (& wsl.exe -d $Name -u root -- bash -lc "getent passwd | awk -F: '`$3>=1000 && `$3<65534 && `$6 ~ /^\/home\// {print `$1; exit}'" 2>$null | Select-Object -Last 1)
-        $c = if ($cand) { ("{0}" -f $cand).Trim() } else { "" }
-        if ($c -and $c -ne "root") { return $c }
-    } catch {}
-    return ""
+function Test-WslUserExists {
+    param([string]$Name, [string]$User)
+    if (-not $Name -or -not $User) { return $false }
+    $esc = $User.Replace("'", "'\''")
+    $out = & wsl.exe -d $Name -u root --exec id -u $User 2>$null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    return $true
 }
 
 function Test-WslLinuxUserValid {
+    <#
+      State A — account validity only:
+        user exists, is not root, home directory and login shell are usable.
+      Does NOT check whether this account is the distro's effective default.
+    #>
     param([string]$Name, [string]$User)
-    if (-not $Name -or -not $User -or $User -eq "root") { return $false }
+    if (-not $Name -or -not $User) { return $false }
+    if ($User -eq "root") { return $false }
     $esc = $User.Replace("'", "'\''")
     $check = @"
 u='$esc'
@@ -1688,10 +1679,57 @@ shell=`$(getent passwd "`$u" | cut -d: -f7)
 [ -n "`$uid" ] && [ "`$uid" -ge 1000 ] && [ "`$uid" -lt 65534 ] || exit 2
 [ -n "`$home" ] && [ -d "`$home" ] || exit 3
 case "`$shell" in */bash|*/sh|*/zsh|*/fish) ;; *) exit 4 ;; esac
-echo VALID
+echo ACCOUNT_VALID
 "@
     $out = & wsl.exe -d $Name -u root -- bash -lc $check 2>$null
-    return (("$out" | Out-String) -match 'VALID')
+    return (("$out" | Out-String) -match 'ACCOUNT_VALID')
+}
+
+function Get-WslEffectiveDefaultUser {
+    <#
+      State B — effective default-user verification.
+      Uses: wsl -d <distro> --exec id -un
+    #>
+    param([string]$Name)
+    if (-not $Name) { return "" }
+    try {
+        $raw = & wsl.exe -d $Name --exec id -un 2>$null
+        $u = (("{0}" -f ($raw | Select-Object -First 1))).Trim()
+        if ($u) { return $u }
+    } catch {}
+    return ""
+}
+
+function Test-WslEffectiveDefaultUser {
+    param([string]$Name, [string]$User)
+    if (-not $Name -or -not $User -or $User -eq "root") { return $false }
+    $eff = Get-WslEffectiveDefaultUser -Name $Name
+    return ($eff -eq $User)
+}
+
+function Get-WslDefaultUser {
+    <#
+      Resolve a candidate non-root account for install targeting.
+      Prefers effective default (B), then wsl.conf, then first uid>=1000 home user.
+      Account validity (A) is checked separately by callers.
+    #>
+    param([string]$Name)
+    if (-not $Name) { return "" }
+    $eff = Get-WslEffectiveDefaultUser -Name $Name
+    if ($eff -and $eff -ne "root") { return $eff }
+    try {
+        $conf = (& wsl.exe -d $Name -u root -- bash -lc "awk -F= '/^[[:space:]]*default=/ {gsub(/[[:space:]]/,\"\",`$2); print `$2; exit}' /etc/wsl.conf 2>/dev/null" 2>$null | Select-Object -Last 1)
+        $cu = if ($conf) { ("{0}" -f $conf).Trim() } else { "" }
+        if ($cu -and $cu -ne "root") {
+            if (Test-WslUserExists -Name $Name -User $cu) { return $cu }
+        }
+    } catch {}
+    try {
+        $cand = (& wsl.exe -d $Name -u root -- bash -lc "getent passwd | awk -F: '`$3>=1000 && `$3<65534 && `$6 ~ /^\/home\// {print `$1; exit}'" 2>$null | Select-Object -Last 1)
+        $c = if ($cand) { ("{0}" -f $cand).Trim() } else { "" }
+        if ($c -and $c -ne "root") { return $c }
+    } catch {}
+    return ""
 }
 
 function Invoke-WslRootBashFile {
@@ -1704,6 +1742,10 @@ function Invoke-WslRootBashFile {
 }
 
 function Set-WslDefaultUser {
+    <#
+      Write /etc/wsl.conf [user] default= only. Does not touch passwords.
+      -EnsureGroups is for newly created accounts; skip for already-valid users.
+    #>
     param(
         [string]$Name,
         [string]$User,
@@ -1745,12 +1787,75 @@ function Set-WslDefaultUser {
     return ($result.Ok -and ($result.Output -match 'OTACON_DEFAULT_SET'))
 }
 
+function Ensure-WslEffectiveDefaultUser {
+    param([string]$Name, [string]$User)
+    if (Test-WslEffectiveDefaultUser -Name $Name -User $User) { return $true }
+    Write-KeepLog "Ensure-WslEffectiveDefaultUser: setting default=$User (account already valid)" -Stage "WSL_USER"
+    if (-not (Set-WslDefaultUser -Name $Name -User $User)) { return $false }
+    try { & wsl.exe --terminate $Name 2>$null | Out-Null } catch {}
+    Start-Sleep -Seconds 2
+    [void](Ensure-WslDistroRunning -Name $Name)
+    return (Test-WslEffectiveDefaultUser -Name $Name -User $User)
+}
+
+function New-WslLinuxUser {
+    <#
+      Create a missing account only. Never runs against an existing user.
+      New accounts may be passwordless (adduser --disabled-password / passwd -d
+      only inside the create branch) because privileged install uses wsl -u root.
+      Never clears an existing user's password.
+    #>
+    param([string]$Name, [string]$User)
+    if (-not $Name -or -not $User -or $User -eq "root") { return $false }
+    if (Test-WslUserExists -Name $Name -User $User) {
+        Write-KeepLog "New-WslLinuxUser: refuse create; user already exists user=$User" -Stage "WSL_USER"
+        return $false
+    }
+    $escUser = $User.Replace("'", "'\''")
+    $bashLines = @(
+        '#!/bin/bash',
+        'set -euo pipefail',
+        ("USER_NAME='{0}'" -f $escUser),
+        'if id "$USER_NAME" >/dev/null 2>&1; then',
+        '  echo "OTACON_USER_EXISTS=$USER_NAME"',
+        '  exit 0',
+        'fi',
+        'if command -v adduser >/dev/null 2>&1; then',
+        '  adduser --disabled-password --gecos "OtaconsKeep" "$USER_NAME"',
+        'else',
+        '  useradd -m -s /bin/bash -c "OtaconsKeep" "$USER_NAME"',
+        '  # Passwordless only for brand-new accounts (no existing shadow entry).',
+        '  passwd -d "$USER_NAME" >/dev/null 2>&1 || true',
+        'fi',
+        'HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"',
+        'if [ -z "$HOME_DIR" ]; then echo "OTACON_USER_FAIL=no-home"; exit 1; fi',
+        'if [ ! -d "$HOME_DIR" ]; then mkdir -p "$HOME_DIR"; chown "$USER_NAME":"$USER_NAME" "$HOME_DIR"; fi',
+        'chsh -s /bin/bash "$USER_NAME" >/dev/null 2>&1 || usermod -s /bin/bash "$USER_NAME"',
+        'for g in sudo adm video render plugdev users audio cdrom dip docker; do',
+        '  if getent group "$g" >/dev/null 2>&1; then usermod -aG "$g" "$USER_NAME" || true; fi',
+        'done',
+        'uid="$(id -u "$USER_NAME")"',
+        'shell="$(getent passwd "$USER_NAME" | cut -d: -f7)"',
+        'groups="$(id -nG "$USER_NAME" | tr " " ",")"',
+        'echo "OTACON_USER_CREATED=$USER_NAME uid=$uid home=$HOME_DIR shell=$shell groups=$groups"',
+        'exit 0'
+    )
+    $scriptWin = Join-Path $LogDir "wsl-create-user.sh"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($scriptWin, (($bashLines -join "`n") + "`n"), $utf8NoBom)
+    $result = Invoke-WslRootBashFile -Name $Name -ScriptWin $scriptWin
+    Write-KeepLog "New-WslLinuxUser output: $($result.Output.Trim())" -Stage "WSL_USER"
+    if ($result.Output -match 'OTACON_USER_EXISTS') { return (Test-WslLinuxUserValid -Name $Name -User $User) }
+    return ($result.Ok -and ($result.Output -match 'OTACON_USER_CREATED') -and (Test-WslLinuxUserValid -Name $Name -User $User))
+}
+
 function Ensure-WslTargetUser {
     <#
-      Auto-provision the expected non-root WSL user for dedicated Ubuntu-Otacon
-      (wsl --import leaves only root). Creates home + shell + groups, sets
-      /etc/wsl.conf [user] default=, verifies identity, never requires a
-      password. Existing valid users are left intact (not deleted/recreated).
+      Resolve install target user with separate A/B states:
+        A) account validity (exists, not root, home/shell)
+        B) effective default (`wsl -d Distro --exec id -un` == target)
+      Creates the account only when missing. Never clears an existing password.
+      Does not recreate or group-modify an already-valid account.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -1758,7 +1863,7 @@ function Ensure-WslTargetUser {
     )
     if (-not (Ensure-WslDistroRunning -Name $Name)) {
         Write-KeepLog "Ensure-WslTargetUser: distro not running name=$Name" -Level "ERROR" -Stage "WSL_USER"
-        return ""
+        return @{ User = ""; AccountValid = $false; DefaultOk = $false; Error = "distro_not_running" }
     }
 
     $preferred = if ($PreferredUser) {
@@ -1767,96 +1872,57 @@ function Ensure-WslTargetUser {
         Get-OtaconExpectedWslUsername
     }
 
-    $existing = Get-WslDefaultUser -Name $Name
-    if ($existing -and (Test-WslLinuxUserValid -Name $Name -User $existing)) {
-        Write-KeepLog "Ensure-WslTargetUser: reusing valid existing user=$existing (preferred=$preferred)" -Stage "WSL_USER"
-        [void](Set-WslDefaultUser -Name $Name -User $existing -EnsureGroups)
-        if (Test-WslLinuxUserValid -Name $Name -User $existing) { return $existing }
+    $candidate = $preferred
+    if (-not (Test-WslUserExists -Name $Name -User $preferred)) {
+        $alt = Get-WslDefaultUser -Name $Name
+        if ($alt -and $alt -ne "root" -and (Test-WslLinuxUserValid -Name $Name -User $alt)) {
+            Write-KeepLog "Ensure-WslTargetUser: preferred missing; reusing valid existing user=$alt" -Stage "WSL_USER"
+            $candidate = $alt
+        }
     }
 
-    if (Test-WslLinuxUserValid -Name $Name -User $preferred) {
-        Write-KeepLog "Ensure-WslTargetUser: preferred user already valid user=$preferred (not recreated)" -Stage "WSL_USER"
-        [void](Set-WslDefaultUser -Name $Name -User $preferred -EnsureGroups)
-        return $preferred
+    # --- State A: account validity ---
+    if (-not (Test-WslLinuxUserValid -Name $Name -User $candidate)) {
+        if (Test-WslUserExists -Name $Name -User $candidate) {
+            Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_INVALID user=$candidate (exists but home/shell/uid failed)" -Level "ERROR" -Stage "WSL_USER"
+            return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid" }
+        }
+        Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_MISSING user=$candidate — creating" -Stage "WSL_USER"
+        Write-Host "  Creating Linux user '$candidate' in $Name..." -ForegroundColor Cyan
+        if (-not (New-WslLinuxUser -Name $Name -User $candidate)) {
+            Write-KeepLog "Ensure-WslTargetUser: create failed user=$candidate" -Level "ERROR" -Stage "WSL_USER"
+            return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_create_failed" }
+        }
+        # Groups + default for brand-new accounts only
+        [void](Set-WslDefaultUser -Name $Name -User $candidate -EnsureGroups)
+        try { & wsl.exe --terminate $Name 2>$null | Out-Null } catch {}
+        Start-Sleep -Seconds 2
+        [void](Ensure-WslDistroRunning -Name $Name)
+    } else {
+        Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_VALID user=$candidate (not recreated; password untouched)" -Stage "WSL_USER"
     }
 
-    Write-KeepLog "Ensure-WslTargetUser: creating user=$preferred in distro=$Name (no password)" -Stage "WSL_USER"
-    Write-Host "  Creating Linux user '$preferred' in $Name (no password required)..." -ForegroundColor Cyan
-
-    $escUser = $preferred.Replace("'", "'\''")
-    $bashLines = @(
-        '#!/bin/bash',
-        'set -euo pipefail',
-        ("USER_NAME='{0}'" -f $escUser),
-        'if id "$USER_NAME" >/dev/null 2>&1; then',
-        '  echo "OTACON_USER_EXISTS=$USER_NAME"',
-        'else',
-        '  if command -v adduser >/dev/null 2>&1; then',
-        '    adduser --disabled-password --gecos "OtaconsKeep" "$USER_NAME"',
-        '  else',
-        '    useradd -m -s /bin/bash -c "OtaconsKeep" "$USER_NAME"',
-        '    passwd -d "$USER_NAME" >/dev/null 2>&1 || true',
-        '  fi',
-        '  echo "OTACON_USER_CREATED=$USER_NAME"',
-        'fi',
-        'HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"',
-        'if [ -z "$HOME_DIR" ]; then echo "OTACON_USER_FAIL=no-home"; exit 1; fi',
-        'if [ ! -d "$HOME_DIR" ]; then mkdir -p "$HOME_DIR"; chown "$USER_NAME":"$USER_NAME" "$HOME_DIR"; fi',
-        'chsh -s /bin/bash "$USER_NAME" >/dev/null 2>&1 || usermod -s /bin/bash "$USER_NAME"',
-        'passwd -d "$USER_NAME" >/dev/null 2>&1 || true',
-        'for g in sudo adm video render plugdev users audio cdrom dip docker; do',
-        '  if getent group "$g" >/dev/null 2>&1; then usermod -aG "$g" "$USER_NAME" || true; fi',
-        'done',
-        'WSL_CONF=/etc/wsl.conf',
-        'touch "$WSL_CONF"',
-        'if grep -qE "^[[:space:]]*\[user\]" "$WSL_CONF"; then',
-        '  if grep -qE "^[[:space:]]*default[[:space:]]*=" "$WSL_CONF"; then',
-        '    sed -i -E "s/^[[:space:]]*default[[:space:]]*=.*/default=${USER_NAME}/" "$WSL_CONF"',
-        '  else',
-        '    sed -i -E "/^[[:space:]]*\[user\]/a default=${USER_NAME}" "$WSL_CONF"',
-        '  fi',
-        'else',
-        '  printf "\n[user]\ndefault=%s\n" "$USER_NAME" >>"$WSL_CONF"',
-        'fi',
-        'uid="$(id -u "$USER_NAME")"',
-        'shell="$(getent passwd "$USER_NAME" | cut -d: -f7)"',
-        'groups="$(id -nG "$USER_NAME" | tr " " ",")"',
-        'echo "OTACON_USER_OK user=$USER_NAME uid=$uid home=$HOME_DIR shell=$shell groups=$groups"',
-        'id -un "$USER_NAME"',
-        'exit 0'
-    )
-    $scriptWin = Join-Path $LogDir "wsl-provision-user.sh"
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($scriptWin, (($bashLines -join "`n") + "`n"), $utf8NoBom)
-    $result = Invoke-WslRootBashFile -Name $Name -ScriptWin $scriptWin
-    Write-KeepLog "Ensure-WslTargetUser provision output: $($result.Output.Trim())" -Stage "WSL_USER"
-    if (-not $result.Ok -or $result.Output -notmatch 'OTACON_USER_OK') {
-        Write-KeepLog "Ensure-WslTargetUser: provision failed for user=$preferred" -Level "ERROR" -Stage "WSL_USER"
-        return ""
+    if (-not (Test-WslLinuxUserValid -Name $Name -User $candidate)) {
+        return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid" }
     }
 
-    # Default user in wsl.conf applies after distro restart.
-    try { & wsl.exe --terminate $Name 2>$null | Out-Null } catch {}
-    Start-Sleep -Seconds 2
-    [void](Ensure-WslDistroRunning -Name $Name)
+    # --- State B: effective default-user ---
+    $defaultOk = Test-WslEffectiveDefaultUser -Name $Name -User $candidate
+    if (-not $defaultOk) {
+        Write-KeepLog "Ensure-WslTargetUser: DEFAULT_MISMATCH want=$candidate effective=$(Get-WslEffectiveDefaultUser -Name $Name)" -Stage "WSL_USER"
+        $defaultOk = Ensure-WslEffectiveDefaultUser -Name $Name -User $candidate
+    } else {
+        Write-KeepLog "Ensure-WslTargetUser: DEFAULT_OK user=$candidate (wsl --exec id -un)" -Stage "WSL_USER"
+    }
 
-    $verified = ""
-    try {
-        $v = (& wsl.exe -d $Name -u $preferred -- bash -lc "whoami; id -u; test -d `"`$HOME`" && echo HOME_OK" 2>$null | Out-String)
-        if ($v -match [regex]::Escape($preferred) -and $v -match 'HOME_OK') { $verified = $preferred }
-    } catch {}
-    if (-not $verified) {
-        $fallback = Get-WslDefaultUser -Name $Name
-        if ($fallback -and (Test-WslLinuxUserValid -Name $Name -User $fallback)) { $verified = $fallback }
+    if (-not $defaultOk) {
+        Write-KeepLog "Ensure-WslTargetUser: effective default still not $candidate" -Level "ERROR" -Stage "WSL_USER"
+        return @{ User = $candidate; AccountValid = $true; DefaultOk = $false; Error = "default_mismatch" }
     }
-    if ($verified) {
-        Write-KeepLog "Ensure-WslTargetUser: verified user=$verified" -Stage "WSL_USER"
-        Write-Host "  [ok] Linux user ready: $verified" -ForegroundColor Green
-        Save-InstallerState @{ wsl_user = $verified }
-        return $verified
-    }
-    Write-KeepLog "Ensure-WslTargetUser: identity verification failed for preferred=$preferred" -Level "ERROR" -Stage "WSL_USER"
-    return ""
+
+    Write-Host "  [ok] Linux user ready: $candidate (account valid, effective default verified)" -ForegroundColor Green
+    Save-InstallerState @{ wsl_user = $candidate }
+    return @{ User = $candidate; AccountValid = $true; DefaultOk = $true; Error = "" }
 }
 
 function Format-StartProcessArgumentList {
@@ -2297,19 +2363,31 @@ function Step-InstallOtacon {
     # Elevation architecture: never configure NOPASSWD:ALL.
     # privileged + finalize run as WSL root via wsl.exe -u root; user phase runs as the normal account.
     # Dedicated Ubuntu-Otacon imports start with only root — auto-provision the expected user.
-    $targetUser = Get-WslDefaultUser -Name $Name
-    if (-not $targetUser -or $targetUser -eq "root" -or -not (Test-WslLinuxUserValid -Name $Name -User $targetUser)) {
-        Write-KeepLog "WSL user missing/invalid (got='$targetUser') — auto-provisioning" -Stage "INSTALLING_OTACON"
-        $targetUser = Ensure-WslTargetUser -Name $Name
-    }
-    if (-not $targetUser -or $targetUser -eq "root" -or -not (Test-WslLinuxUserValid -Name $Name -User $targetUser)) {
-        Write-KeepLog "could not resolve non-root WSL default user (got='$targetUser')" -Level "ERROR" -Stage "INSTALLING_OTACON"
-        Show-SetupNeedsHelp -Step "installing otacon (no default user)" -PlainError (
-            "Could not create or verify the Linux username for OtaconsKeep. Check Logs under %LOCALAPPDATA%\OtaconsKeep\Logs, then rerun Setup."
+    # Keep account validity (A) and effective default-user (B) as separate failure states.
+    $prov = Ensure-WslTargetUser -Name $Name
+    $targetUser = [string]$prov.User
+    if (-not $prov.AccountValid) {
+        $acctErr = switch ($prov.Error) {
+            "account_invalid" { "Linux user '$targetUser' exists but is not a valid install account (home/shell/uid). The password was not changed." }
+            "account_create_failed" { "Could not create Linux user '$targetUser' in $Name." }
+            "distro_not_running" { "WSL distro '$Name' is not running, so the Linux account could not be checked." }
+            default { "Linux account for OtaconsKeep is missing or invalid in '$Name' (got='$targetUser')." }
+        }
+        Write-KeepLog "WSL ACCOUNT_VALID=false user='$targetUser' err=$($prov.Error)" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        Show-SetupNeedsHelp -Step "installing otacon (linux account invalid)" -PlainError (
+            "$acctErr Check Logs under %LOCALAPPDATA%\OtaconsKeep\Logs, then rerun Setup."
         ) | Out-Null
         return 1
     }
-    Write-KeepLog "WSL default user=$targetUser (no NOPASSWD:ALL; using wsl -u root for privileged steps)" -Stage "INSTALLING_OTACON"
+    if (-not $prov.DefaultOk) {
+        $eff = Get-WslEffectiveDefaultUser -Name $Name
+        Write-KeepLog "WSL DEFAULT_OK=false want='$targetUser' effective='$eff' (account is valid)" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        Show-SetupNeedsHelp -Step "installing otacon (WSL default user mismatch)" -PlainError (
+            "Linux account '$targetUser' is valid, but the effective WSL default user is '$eff' (expected '$targetUser' from: wsl -d $Name --exec id -un). Account validity passed; only the distro default-user setting failed. Check /etc/wsl.conf [user] default= and rerun Setup."
+        ) | Out-Null
+        return 1
+    }
+    Write-KeepLog "WSL user=$targetUser account_valid=true default_ok=true (no NOPASSWD:ALL; using wsl -u root for privileged steps)" -Stage "INSTALLING_OTACON"
 
     Show-Stage6Panel -Started $started -Substep "Preparing Linux installer (root bootstrap)" -GpuWin $gpuWin -GpuWsl $gpuWsl -LastProgress $started
 
