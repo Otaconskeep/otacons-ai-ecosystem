@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "35c707ad2d3c52b75eab5acaf0c92a4538e10f48",
+  "commit": "6133c657fcddb68db03940c1e4cbb49a3adebbea",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -44,8 +44,8 @@
     },
     {
       "path": "install_otacon_expansion.sh",
-      "sha256": "68433f8a8d3525f183c7f4d247f9a15107c5a4a23cb196621e34213df21b0304",
-      "bytes": 19209
+      "sha256": "050d39bad28c02eef75c023fcd655078ad9dd4b101edb799af30699d508a9280",
+      "bytes": 21805
     },
     {
       "path": "deploy/bootstrap-fetch.ps1",
