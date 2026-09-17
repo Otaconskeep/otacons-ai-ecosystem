@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "b39051e1d0c1460433d78595b3e82dad4940ac41",
+  "commit": "71ae284e48cd612f76d2f6e2127ae9234b3d82ba",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -49,8 +49,8 @@
     },
     {
       "path": "deploy/repair-otacon-core.ps1",
-      "sha256": "b2119449ce00faecb4953a7289c2ecf58fe8237290239523fa84951528fb9802",
-      "bytes": 18059
+      "sha256": "5991232f6b586026febac935c002ace7a1ee6c0696f764a240e06c9b785cc24d",
+      "bytes": 19072
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
@@ -59,8 +59,8 @@
     },
     {
       "path": "deploy/fix-otacon-gpu.ps1",
-      "sha256": "d8a5ca79761eef87b54e3bc40550f04384cba05bc775dabc413b0910008c0af0",
-      "bytes": 8059
+      "sha256": "76c5c2eae8cda53bb9a825da1d47551e9a8cfe531e223820c07d14afb9005267",
+      "bytes": 8600
     },
     {
       "path": "deploy/get-fix-codec.cmd",
@@ -79,8 +79,8 @@
     },
     {
       "path": "deploy/wake-otacon.ps1",
-      "sha256": "0a7bd7a414720dde6f632a46fb108f8aae18256568ba5441cfc68c467e5c82c1",
-      "bytes": 4653
+      "sha256": "caa509521c16070c4fe93a54183e1db37d88291d141890df21cae12ecb895086",
+      "bytes": 4872
     },
     {
       "path": "deploy/download-one.ps1",

@@ -140,6 +140,13 @@ pkill -9 -f "installer.server" 2>/dev/null || true
 sleep 1
 
 if [ -f "$UNIT" ]; then
+  # Preserve user's network mode. Never silently enable LAN auth.
+  EXISTING_LAN="$(sed -n 's/^Environment=OTACON_LAN_MODE=//p' "$UNIT" 2>/dev/null | tail -n1)"
+  case "$(echo "${EXISTING_LAN:-0}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|lan) PRESERVE_LAN=1 ;;
+    *) PRESERVE_LAN=0 ;;
+  esac
+  echo "NETWORK_MODE_PRESERVED=$PRESERVE_LAN"
   # Wipe every SKIP line, then pin 0 (never leave this ambiguous).
   sed -i '/OTACON_SKIP_NVIDIA_SMI=/d' "$UNIT"
   sed -i "/\[Service\]/a Environment=OTACON_SKIP_NVIDIA_SMI=0" "$UNIT"
@@ -148,8 +155,11 @@ if [ -f "$UNIT" ]; then
   else
     sed -i "/\[Service\]/a Environment=OTACON_HOST=0.0.0.0" "$UNIT"
   fi
+  sed -i '/OTACON_LAN_MODE=/d' "$UNIT"
+  sed -i "/\[Service\]/a Environment=OTACON_LAN_MODE=${PRESERVE_LAN}" "$UNIT"
   systemctl daemon-reload 2>/dev/null || true
   echo "unit_skip_line=$(grep OTACON_SKIP_NVIDIA_SMI= "$UNIT" || echo missing)"
+  echo "unit_lan=$(grep OTACON_LAN_MODE= "$UNIT" || echo missing)"
 fi
 
 systemctl restart otacon.service 2>/dev/null || systemctl start otacon.service 2>/dev/null || true

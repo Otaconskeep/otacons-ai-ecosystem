@@ -22,19 +22,19 @@ def is_loopback_host(host: str) -> bool:
 def resolve_bind_host() -> tuple[str, str]:
     """Return (host, mode) where mode is 'local' or 'lan'.
 
-    Default is localhost-only. LAN requires OTACON_LAN_MODE=1 (or an explicit
-    non-loopback OTACON_HOST with OTACON_LAN_MODE not set to 0).
+    Auth/LAN mode is controlled ONLY by OTACON_LAN_MODE:
+      - OTACON_LAN_MODE=1 → lan (bearer auth required on protected APIs)
+      - OTACON_LAN_MODE=0 / unset → local (no bearer auth)
+
+    Bind address is independent: WSL may bind 0.0.0.0 while staying in local
+    auth mode so Windows can reach the UI without enabling LAN auth.
     """
     lan_mode = os.getenv('OTACON_LAN_MODE', '').strip().lower()
     host = os.getenv('OTACON_HOST', '').strip()
 
     if lan_mode in ('1', 'true', 'yes', 'lan'):
         return (host or '0.0.0.0'), 'lan'
-    if lan_mode in ('0', 'false', 'no', 'local'):
-        return '127.0.0.1', 'local'
-    if host and not is_loopback_host(host):
-        # Explicit non-local host without OTACON_LAN_MODE=0 → treat as LAN opt-in.
-        return host, 'lan'
+    # Explicit local, or default: never treat bind-all / non-loopback host alone as LAN.
     return (host or '127.0.0.1'), 'local'
 
 
@@ -58,6 +58,16 @@ def load_lan_token() -> str | None:
         return None
     token = TOKEN_PATH.read_text(encoding='utf-8').strip()
     return token or None
+
+
+def is_loopback_client(handler) -> bool:
+    addr = ''
+    try:
+        addr = str((handler.client_address or ('',))[0] or '')
+    except Exception:
+        addr = ''
+    a = addr.strip().lower()
+    return a in ('127.0.0.1', '::1', 'localhost') or a.startswith('127.')
 
 
 def extract_bearer(handler) -> str | None:

@@ -35,6 +35,7 @@ from installer.security import (
     CONFIG_ROOT,
     check_lan_auth,
     ensure_lan_token,
+    is_loopback_client,
     load_lan_token,
     path_is_protected,
     resolve_bind_host,
@@ -441,7 +442,41 @@ class Handler(BaseHTTPRequestHandler):
                 'show_creator_credit': True,
                 'bind_mode': BIND_MODE,
                 'bind_host': BIND_HOST,
+                'lan_auth_required': BIND_MODE == 'lan',
             })
+        elif path == '/api/auth/status':
+            authed = True
+            if BIND_MODE == 'lan':
+                authed = check_lan_auth(self, BIND_MODE, LAN_TOKEN)
+            self.send_json({
+                'bind_mode': BIND_MODE,
+                'lan_auth_required': BIND_MODE == 'lan',
+                'authenticated': bool(authed),
+            })
+        elif path == '/api/auth/bootstrap':
+            # Same-machine bootstrap only: never expose the token to LAN peers.
+            if BIND_MODE != 'lan':
+                self.send_json({
+                    'bind_mode': 'local',
+                    'lan_auth_required': False,
+                    'token': None,
+                    'message': 'Local mode — no bearer token required.',
+                })
+            elif not is_loopback_client(self):
+                self.send_json({
+                    'error': {
+                        'code': 'LAN_BOOTSTRAP_DENIED',
+                        'message': 'Token bootstrap is only available from the Otacon host (loopback). Paste the token from ~/.config/otacon/lan_token.',
+                    }
+                }, 403)
+            else:
+                token = ensure_lan_token()
+                self.send_json({
+                    'bind_mode': 'lan',
+                    'lan_auth_required': True,
+                    'token': token,
+                    'message': 'Store this token in the UI session (not in source).',
+                })
         elif path == '/api/capabilities':
             self.send_json(_capability_snapshot())
         elif path == '/api/voices':

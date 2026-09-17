@@ -42,6 +42,10 @@ if [ -f "$UNIT" ]; then
     sed -i '/OTACON_SKIP_NVIDIA_SMI=/d' "$UNIT"
   fi
   grep -q "OTACON_HOST=0.0.0.0" "$UNIT" || sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=0.0.0.0|" "$UNIT"
+  # Preserve LAN auth mode; default local (0) if unset. Bind-all != LAN auth.
+  if ! grep -q "OTACON_LAN_MODE=" "$UNIT"; then
+    sed -i "/\[Service\]/a Environment=OTACON_LAN_MODE=0" "$UNIT"
+  fi
   systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 if systemctl list-unit-files otacon-tts.service >/dev/null 2>&1; then
@@ -57,7 +61,7 @@ if ! curl -fsS --max-time 2 http://127.0.0.1:5757/api/branding >/dev/null 2>&1; 
     OWNER="$(stat -c %U "$ROOT" 2>/dev/null || echo root)"
     mkdir -p "/home/${OWNER}/.config/otacon" 2>/dev/null || true
     if command -v runuser >/dev/null 2>&1 && [ "$OWNER" != "root" ]; then
-      runuser -u "$OWNER" -- env OTACON_HOST=0.0.0.0 OTACON_PORT=5757 PYTHONPATH="$ROOT" \
+      runuser -u "$OWNER" -- env OTACON_HOST=0.0.0.0 OTACON_LAN_MODE=0 OTACON_PORT=5757 PYTHONPATH="$ROOT" \
         bash -lc "cd \"$ROOT\" && unset OTACON_SKIP_NVIDIA_SMI && nohup \"$ROOT/.venv/bin/python\" -m installer.server >\$HOME/.config/otacon/wizard.log 2>&1 &"
     fi
   fi

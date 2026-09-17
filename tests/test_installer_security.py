@@ -34,7 +34,14 @@ class SecurityTests(unittest.TestCase):
         os.environ['OTACON_HOST'] = '0.0.0.0'
         host, mode = resolve_bind_host()
         self.assertEqual(mode, 'local')
-        self.assertEqual(host, '127.0.0.1')
+        # Bind-all is allowed in local auth mode (WSL reachability).
+        self.assertEqual(host, '0.0.0.0')
+
+    def test_bind_all_without_lan_flag_is_local(self):
+        os.environ['OTACON_HOST'] = '0.0.0.0'
+        host, mode = resolve_bind_host()
+        self.assertEqual(mode, 'local')
+        self.assertEqual(host, '0.0.0.0')
 
     def test_ui_path_traversal_rejected(self):
         ui = Path(__file__).resolve().parent.parent / 'ui'

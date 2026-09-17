@@ -282,30 +282,45 @@ PROOF_THINK=0
 if [ -f "$MEM" ] && grep -q "def connection(self)" "$MEM" && ! grep -q "check_same_thread=False" "$MEM"; then PROOF_MEMORY=1; fi
 if [ -f "$WIZ" ] && ! grep -q "repair: never block Codec on GPU scan" "$WIZ"; then PROOF_SCAN=1; fi
 if [ -f "$WIZ" ] && grep -q "setCodecMode('thinking')" "$WIZ" && grep -q "}finally{" "$WIZ"; then PROOF_THINK=1; fi
+PROOF_LAN_UI=0
+if [ -f "$WIZ" ] && grep -q "LAN_AUTH_REQUIRED" "$WIZ" && grep -q "Authorization" "$WIZ" && grep -q "otacon_lan_token" "$WIZ"; then PROOF_LAN_UI=1; fi
 echo "PROOF_MEMORY_CONNECTION=$PROOF_MEMORY"
 echo "PROOF_NO_SCAN_NULL_PATCH=$PROOF_SCAN"
 echo "PROOF_THINKING_FINALLY=$PROOF_THINK"
-if [ "$PROOF_MEMORY" -ne 1 ] || [ "$PROOF_SCAN" -ne 1 ] || [ "$PROOF_THINK" -ne 1 ]; then
-  echo "APP_REV_FAIL=content_proofs memory=$PROOF_MEMORY scan=$PROOF_SCAN think=$PROOF_THINK"
+echo "PROOF_LAN_AUTH_UI=$PROOF_LAN_UI"
+if [ "$PROOF_MEMORY" -ne 1 ] || [ "$PROOF_SCAN" -ne 1 ] || [ "$PROOF_THINK" -ne 1 ] || [ "$PROOF_LAN_UI" -ne 1 ]; then
+  echo "APP_REV_FAIL=content_proofs memory=$PROOF_MEMORY scan=$PROOF_SCAN think=$PROOF_THINK lan_ui=$PROOF_LAN_UI"
   exit 5
 fi
 echo "CONTENT_PROOFS_OK=1"
 
 echo "stage=systemd"
 UNIT=/etc/systemd/system/otacon.service
+PRESERVE_LAN=0
 systemctl stop otacon.service 2>/dev/null || true
 pkill -9 -f "python -m installer.server" 2>/dev/null || true
 pkill -9 -f "installer.server" 2>/dev/null || true
 sleep 1
 
 if [ -f "$UNIT" ]; then
+  # Preserve user's network mode. Never silently enable LAN auth.
+  EXISTING_LAN="$(sed -n 's/^Environment=OTACON_LAN_MODE=//p' "$UNIT" 2>/dev/null | tail -n1)"
+  case "$(echo "${EXISTING_LAN:-0}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|lan) PRESERVE_LAN=1 ;;
+    *) PRESERVE_LAN=0 ;;
+  esac
+  echo "NETWORK_MODE_BEFORE=${EXISTING_LAN:-unset}"
+  echo "NETWORK_MODE_PRESERVED=$PRESERVE_LAN"
   sed -i '/OTACON_SKIP_NVIDIA_SMI=/d' "$UNIT"
   sed -i "/\[Service\]/a Environment=OTACON_SKIP_NVIDIA_SMI=0" "$UNIT"
+  # Bind-all for WSL reachability; auth mode is OTACON_LAN_MODE only.
   if grep -q "OTACON_HOST=" "$UNIT"; then
     sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=0.0.0.0|" "$UNIT"
   else
     sed -i "/\[Service\]/a Environment=OTACON_HOST=0.0.0.0" "$UNIT"
   fi
+  sed -i '/OTACON_LAN_MODE=/d' "$UNIT"
+  sed -i "/\[Service\]/a Environment=OTACON_LAN_MODE=${PRESERVE_LAN}" "$UNIT"
   if grep -q "OTACON_PORT=" "$UNIT"; then
     sed -i "s|^Environment=OTACON_PORT=.*|Environment=OTACON_PORT=${PORT}|" "$UNIT"
   else
@@ -313,6 +328,7 @@ if [ -f "$UNIT" ]; then
   fi
   systemctl daemon-reload 2>/dev/null || true
   echo "unit_skip=$(grep OTACON_SKIP_NVIDIA_SMI= "$UNIT" || echo missing)"
+  echo "unit_lan=$(grep OTACON_LAN_MODE= "$UNIT" || echo missing)"
 fi
 
 systemctl enable otacon.service 2>/dev/null || true
@@ -331,14 +347,14 @@ if [ "$alive" -ne 1 ] && [ -x "$ROOT/.venv/bin/python" ]; then
   if [ "$OWNER" = "root" ]; then LOGF=/root/.config/otacon/wizard.log; fi
   if command -v runuser >/dev/null 2>&1 && [ "$OWNER" != "root" ]; then
     runuser -u "$OWNER" -- env \
-      OTACON_HOST=0.0.0.0 OTACON_PORT="$PORT" PYTHONPATH="$ROOT" \
+      OTACON_HOST=0.0.0.0 OTACON_LAN_MODE="${PRESERVE_LAN:-0}" OTACON_PORT="$PORT" PYTHONPATH="$ROOT" \
       PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wsl/lib" \
       LD_LIBRARY_PATH="/usr/lib/wsl/lib" \
       bash -lc "cd \"$ROOT\" && unset OTACON_SKIP_NVIDIA_SMI && nohup \"$ROOT/.venv/bin/python\" -m installer.server >\"$LOGF\" 2>&1 & echo \$! >\"\$HOME/.config/otacon/wizard.pid\""
   else
     cd "$ROOT" || exit 3
     unset OTACON_SKIP_NVIDIA_SMI
-    export OTACON_HOST=0.0.0.0 OTACON_PORT="$PORT" PYTHONPATH="$ROOT"
+    export OTACON_HOST=0.0.0.0 OTACON_LAN_MODE="${PRESERVE_LAN:-0}" OTACON_PORT="$PORT" PYTHONPATH="$ROOT"
     export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wsl/lib:$PATH"
     export LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     nohup "$ROOT/.venv/bin/python" -m installer.server >/tmp/otacon-wizard.log 2>&1 &

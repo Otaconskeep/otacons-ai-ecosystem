@@ -38,9 +38,12 @@ async function api(path,body,timeoutMs){
   const ms=timeoutMs||45000;
   const timer=ctrl?setTimeout(()=>ctrl.abort(),ms):null;
   try{
-    let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{}),signal:ctrl?ctrl.signal:undefined});
+    let r=await fetch(path,{method:'POST',headers:authHeaders(),body:JSON.stringify(body||{}),signal:ctrl?ctrl.signal:undefined});
     let data=null;
     try{ data=await r.json(); }catch(_e){ data={error:{code:'BAD_JSON',message:'Server returned a non-JSON response.'}}; }
+    if(r.status===401&&data&&data.error&&data.error.code==='LAN_AUTH_REQUIRED'){
+      state.lanAuthRequired=true;
+    }
     return {ok:r.ok,status:r.status,data:data};
   }catch(err){
     const aborted=err&&(err.name==='AbortError'||/abort/i.test(String(err&&err.message||err)));
@@ -63,10 +66,65 @@ async function apiGet(path,timeoutMs){
   const ms=timeoutMs==null?12000:timeoutMs;
   const timer=ctrl?setTimeout(()=>ctrl.abort(),ms):null;
   try{
-    const r=await fetch(path,{signal:ctrl?ctrl.signal:undefined});
+    const headers={};
+    const tok=getLanToken();
+    if(tok) headers['Authorization']='Bearer '+tok;
+    const r=await fetch(path,{headers:headers,signal:ctrl?ctrl.signal:undefined});
     if(!r.ok) throw new Error('HTTP '+r.status);
     return await r.json();
   }finally{ if(timer) clearTimeout(timer); }
+}
+
+const LAN_TOKEN_KEY='otacon_lan_token';
+function getLanToken(){
+  try{ return (sessionStorage.getItem(LAN_TOKEN_KEY)||'').trim(); }catch(_e){ return ''; }
+}
+function setLanToken(token){
+  try{
+    if(token) sessionStorage.setItem(LAN_TOKEN_KEY, String(token).trim());
+    else sessionStorage.removeItem(LAN_TOKEN_KEY);
+  }catch(_e){}
+}
+function authHeaders(extra){
+  const h=Object.assign({'Content-Type':'application/json'}, extra||{});
+  const tok=getLanToken();
+  if(tok) h['Authorization']='Bearer '+tok;
+  return h;
+}
+async function ensureLanAuthSession(){
+  try{
+    const st=await apiGet('/api/auth/status', 4000);
+    state.bindMode=st&&st.bind_mode;
+    state.lanAuthRequired=!!(st&&st.lan_auth_required);
+    if(!state.lanAuthRequired) return true;
+    if(st&&st.authenticated) return true;
+    if(getLanToken()) return true;
+    try{
+      const boot=await apiGet('/api/auth/bootstrap', 4000);
+      if(boot&&boot.token){ setLanToken(boot.token); return true; }
+    }catch(_e){}
+    return false;
+  }catch(_e){
+    return true;
+  }
+}
+function showLanAuthMessage(box, detail){
+  const msg=detail||'LAN mode requires a bearer token. Open Otacon on the host to bootstrap, or paste the token from ~/.config/otacon/lan_token.';
+  if(box){
+    box.insertAdjacentHTML('beforeend',
+      `<div class="msg-row-bot"><div class="msg-bot"><div class="msg-bot-name">Network</div><div>${escapeHtml(msg)}</div>`+
+      `<p class=muted style="margin-top:8px">Authentication / network mode — not a chat model failure.</p>`+
+      `<button type=button id=lan-token-btn>Enter LAN token</button></div></div>`);
+    const btn=document.getElementById('lan-token-btn');
+    if(btn){
+      btn.onclick=()=>{
+        const t=window.prompt('Paste Otacon LAN token (from ~/.config/otacon/lan_token on the host):','');
+        if(t&&t.trim()){ setLanToken(t.trim()); btn.textContent='Token saved — try again'; }
+      };
+    }
+  }else{
+    try{ window.alert(msg); }catch(_e){}
+  }
 }
 
 async function loadPrefs(){
@@ -126,6 +184,7 @@ function resourceBarsHtml(scan){
 async function showHome(){
   state.view='home';
   setBodyMode('home');
+  await ensureLanAuthSession();
   await loadCapabilities();
   await loadExpansion();
   let scan=null;
@@ -814,6 +873,7 @@ async function delMemory(id){await api('/api/memory/delete',{agent_id:currentAge
 async function sendChat(){
   let el=document.getElementById('chat-inp'), box=document.getElementById('chat-msgs'), m=el&&el.value.trim();
   if(!m||!box) return;
+  await ensureLanAuthSession();
   let uid=box.querySelectorAll('.msg-row-user,.msg-row-bot').length;
   box.insertAdjacentHTML('beforeend', `<div class="msg-row-user"><div class="msg-user">${escapeHtml(m)}</div></div><div class="msg-row-bot" id=wait><div class="msg-bot"><div class="typing-dots"><span></span><span></span><span></span></div></div></div>`);
   el.value='';
@@ -836,9 +896,16 @@ async function sendChat(){
   }
   if(!r||!r.ok){
     const err=r&&r.data&&r.data.error;
+    const code=(err&&err.code)||'';
+    if(code==='LAN_AUTH_REQUIRED'||r.status===401){
+      showLanAuthMessage(box, (err&&err.message)||'');
+      try{ console.warn('[CODEC] LAN_AUTH_REQUIRED'); }catch(_e){}
+      box.scrollTop=box.scrollHeight;
+      return;
+    }
     const tech=(err&&(err.technical||err.message))||'';
     box.insertAdjacentHTML('beforeend', `<div class="msg-row-bot"><div class="msg-bot"><div class="msg-bot-name">${escapeHtml(currentAgentName())}</div><div>I couldn't complete that request.</div></div></div>`);
-    try{ console.warn('[CODEC]', (err&&err.code)||'CHAT_FAIL', (err&&err.exception)||'', tech); }catch(_e){}
+    try{ console.warn('[CODEC]', code||'CHAT_FAIL', (err&&err.exception)||'', tech); }catch(_e){}
     box.scrollTop=box.scrollHeight;
     return;
   }
@@ -1275,6 +1342,7 @@ async function showRexBoard(opts){
 }
 
 (async()=>{
+  await ensureLanAuthSession();
   await loadCapabilities(); await loadPrefs(); await loadVoices(); await loadExpansion();
   if(location.search.includes('setup=1')) render();
   else if(location.search.includes('codec=1') || location.hash==='#codec') showChat();
