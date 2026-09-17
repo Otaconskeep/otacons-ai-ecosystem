@@ -6,13 +6,37 @@ let state={
   view:'codec',agentId:'agent_001',roster:[],expansion:null
 };
 const labels=['Welcome','System Scan','Hardware Recommendation','Storage','Agent Setup','Features','Review','Finish'];
-const CODEC_VIDEOS={idle:'/assets/aria/aria-idle.mp4',thinking:'/assets/aria/aria-thinking.mp4',talking:'/assets/aria/aria-talking.mp4'};
+const CODEC_FALLBACK={idle:'/assets/aria/aria-idle.mp4',thinking:'/assets/aria/aria-thinking.mp4',talking:'/assets/aria/aria-talking.mp4'};
 
-function currentAgentId(){ return state.agentId || 'agent_001'; }
+function currentAgentId(){
+  if(state.agentId && state.agentId!=='agent_001') return state.agentId;
+  if(state.roster&&state.roster.length) return state.roster[0].id||state.roster[0].agent_id||'aria';
+  return state.agentId||'aria';
+}
 function currentAgentName(){
   const r=(state.roster||[]).find(a=>a.id===state.agentId||a.agent_id===state.agentId);
   if(r) return r.display_name||r.id;
   return state.name||'Aria';
+}
+function currentPortraitId(){
+  const aid=currentAgentId();
+  if(aid==='agent_001') return 'aria';
+  return aid||'aria';
+}
+function codecVideoFor(mode){
+  const id=currentPortraitId();
+  const m=mode||'idle';
+  return `/assets/${id}/${id}-${m}.mp4`;
+}
+function roomKindFromRoute(route){
+  const p=String(route||'').replace(/\/+$/,'')||'/';
+  const map={
+    '/dashboard':'dashboard','/war-room':'war-room','/intel':'intel',
+    '/video-studio':'creative','/ha':'ops','/codec':'codec',
+    '/emotion':'emotion','/emotions':'emotion','/page-builder':'page-builder',
+    '/pages/builder':'page-builder','/ops':'ops','/creative':'creative'
+  };
+  return map[p]||'';
 }
 async function loadExpansion(){
   try{
@@ -20,9 +44,10 @@ async function loadExpansion(){
     if(state.expansion&&state.expansion.enabled&&(state.expansion.agents||[]).length){
       state.roster=state.expansion.agents.map(a=>({
         id:a.id||a.agent_id, display_name:a.display_name, role:a.role,
-        voice_id:a.voice_id, room:a.room||a.room_route
+        voice_id:a.voice_id, room:a.room||a.room_route, room_title:a.room_title,
+        avatar:a.avatar||`/assets/${a.id||a.agent_id}/${a.id||a.agent_id}.webp`
       }));
-      if(!state.roster.find(a=>a.id===state.agentId)){
+      if(!state.roster.find(a=>a.id===state.agentId) || state.agentId==='agent_001'){
         state.agentId=state.roster[0].id;
         state.name=state.roster[0].display_name;
         if(state.roster[0].voice_id) state.voiceId=state.roster[0].voice_id;
@@ -201,6 +226,16 @@ async function showHome(){
   const emotionOk=sem.emotion_engine==='READY';
   const relOk=sem.relationship_store==='READY';
 
+  const agentRoomTiles=(state.roster||[]).map(a=>{
+    const id=a.id||a.agent_id;
+    const room=a.room_title||a.room||'Codec';
+    return `<button type="button" class="svc" onclick="selectExpansionAgent('${escapeHtml(id)}')">
+        <div class="svc-top"><div class="svc-ico">${escapeHtml(String(id).slice(0,3).toUpperCase())}</div><div class="svc-name">${escapeHtml(a.display_name||id)}</div></div>
+        <p class="svc-desc">${escapeHtml(a.role||'')} · room ${escapeHtml(room)}</p>
+        <span class="svc-pill ok">OPEN CODEC</span>
+      </button>`;
+  }).join('');
+
   const expansionSection=expOn?`
   <section class="home-group">
     <h2 class="home-group-title">Keep Expansion</h2>
@@ -210,6 +245,7 @@ async function showHome(){
         <p class="svc-desc">${escapeHtml(expAgents)}</p>
         <span class="svc-pill ${expReady?'ok':'warn'}">${expReady?'FOUNDATION READY':'PARTIAL'}</span>
       </button>
+      ${agentRoomTiles}
       <button type="button" class="svc" onclick="showExpansionSurface('command')">
         <div class="svc-top"><div class="svc-ico">CMD</div><div class="svc-name">Aria Command</div></div>
         <p class="svc-desc">Roster, delegations, readiness, relationship shifts — coordination floor.</p>
@@ -346,10 +382,10 @@ async function showHome(){
         <p class="svc-desc">Model ${escapeHtml(String(model))} · STT ${sttOk?'ready':'off'} · GPU ${escapeHtml(gpuDet.status||'unknown')}${expOn?' · Expansion on':''}</p>
         <span class="svc-pill ${chatOk&&ttsOk?'ok':'warn'}">${chatOk&&ttsOk?'HEALTHY':'CHECK SERVICES'}</span>
       </button>
-      <button type="button" class="svc ${vtOk?'':'svc-off'}" ${vtOk?'onclick="showHome()"':'disabled'}>
+      <button type="button" class="svc ${vtOk?'':'svc-off'}" ${vtOk?'onclick="openVoiceTrainer()"':'disabled'}>
         <div class="svc-top"><div class="svc-ico">VT</div><div class="svc-name">Voice Trainer</div></div>
-        <p class="svc-desc">${vtOk?'Genome Voice Trainer is installed under ~/otacon-voice-trainer (GPU Piper).':'Not installed — Setup adds it when NVIDIA is detected.'}</p>
-        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtOk?'INSTALLED':'NOT INSTALLED'}</span>
+        <p class="svc-desc">${vtOk?'Opens Genome Voice Trainer (http://127.0.0.1:8765/) for Piper cloning/training.':'Not installed — Setup adds it when NVIDIA is detected.'}</p>
+        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtOk?'OPEN GENOME':'NOT INSTALLED'}</span>
       </button>
       <button type="button" class="svc svc-off" disabled>
         <div class="svc-top"><div class="svc-ico">IMG</div><div class="svc-name">Images / Video</div></div>
@@ -539,13 +575,24 @@ function setCodecMode(mode){
   state.codecMode=mode;
   if(port) port.classList.toggle('codec-talking', mode==='talking');
   if(!v) return;
-  const src=CODEC_VIDEOS[mode]||CODEC_VIDEOS.idle;
-  if(!v.currentSrc||!v.currentSrc.endsWith(src)){ v.src=src; }
+  const src=codecVideoFor(mode);
+  const fallback=CODEC_FALLBACK[mode]||CODEC_FALLBACK.idle;
+  if(!v.dataset.boundFallback){
+    v.dataset.boundFallback='1';
+    v.addEventListener('error', ()=>{
+      if(v.src && !v.src.endsWith(fallback) && !String(v.src).includes('/assets/aria/')){
+        v.src=fallback;
+        v.play().catch(()=>{});
+      }
+    });
+  }
+  const cur=v.getAttribute('src')||'';
+  if(cur!==src){ v.src=src; }
   v.play().catch(()=>{});
   const badge=document.getElementById('codecStatus');
   if(badge) badge.textContent=mode.toUpperCase();
   const lbl=document.getElementById('active-ai-label');
-  if(lbl) lbl.textContent=mode==='idle'?'STANDBY':(state.name||'ARIA').toUpperCase();
+  if(lbl) lbl.textContent=mode==='idle'?'STANDBY':(currentAgentName()||'ARIA').toUpperCase();
 }
 
 function playAudioAsync(b64, msgId){
@@ -586,7 +633,10 @@ async function toggleSpeak(msgId, text){
   if(b.dataset.state==='waiting') return;
   b.dataset.state='waiting'; b.textContent='…';
   let err=document.querySelector(`[data-speak-err="${msgId}"]`); if(err) err.textContent='';
-  let r=await api('/api/synthesize_agent_speech',{agent:{id:'agent_001',display_name:state.name,voice_id:state.voiceId},text});
+  let r=await api('/api/synthesize_agent_speech',{
+    agent:{id:currentAgentId(),display_name:currentAgentName(),voice_id:state.voiceId},
+    text
+  });
   if(!r.ok||r.data.status==='error'||!r.data.audio_base64){
     b.dataset.state='idle'; b.textContent='▶';
     if(err) err.textContent='Voice playback unavailable';
@@ -682,8 +732,10 @@ async function showChat(){
     return `<button type=button class="codec-ai-btn${active}" title="${escapeHtml(a.display_name||id)}" onclick="selectExpansionAgent('${escapeHtml(id)}')">${escapeHtml(String(a.display_name||id).toUpperCase())}</button>`;
   }).join('');
   const agentName=currentAgentName();
-  const portraitAgent=(roster.find(a=>(a.id||a.agent_id)===aid)||{}).id||'aria';
+  const portraitAgent=currentPortraitId();
   const idleSrc=`/assets/${portraitAgent}/${portraitAgent}-idle.mp4`;
+  const agentRoom=(roster.find(a=>(a.id||a.agent_id)===aid)||{});
+  const roomLabel=agentRoom.room_title||agentRoom.room||'Agent room';
 
   appRoot().innerHTML=`<div class="codec-cockpit">
   <header class="cc-mast">
@@ -700,6 +752,7 @@ async function showChat(){
     </div>
     <div class="cc-mast-actions">
       <button type=button class="cc-btn ghost" onclick="showHome()">Home</button>
+      ${state.roster.length?`<button type=button class="cc-btn ghost" id="codec-open-room" onclick="openCurrentAgentRoom()">Open ${escapeHtml(roomLabel)}</button>`:''}
       <button type=button class="cc-btn ghost" onclick="render()">Setup</button>
       <button type=button class="cc-btn" onclick="newConversation()">New Thread</button>
     </div>
@@ -783,7 +836,8 @@ async function showChat(){
       </div>
       <div class="cc-panel">
         <h2>Voice Trainer</h2>
-        <p class=muted style="font-size:10px;margin:0">${vtOk?'Installed on this machine (GPU Piper). Open ~/otacon-voice-trainer in WSL — not a Codec chat feature.':'Not installed. Setup installs it when NVIDIA is detected.'}</p>
+        <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Genome Piper trainer on this machine. Training happens in Genome — not inside Codec chat.':'Not installed. Setup installs it when NVIDIA is detected.'}</p>
+        ${vtOk?'<button type=button class="cc-btn" onclick="openVoiceTrainer()">Open Genome (8765)</button>':'<p class=muted style="font-size:10px;margin:0">Install Otacon with GPU to enable training.</p>'}
       </div>
       <div class="cc-panel">
         <h2>How to run</h2>
@@ -808,7 +862,8 @@ async function showChat(){
 }
 
 async function selectExpansionAgent(id){
-  if(!id||id===state.agentId) return;
+  if(!id) return;
+  const same=id===state.agentId;
   state.agentId=id;
   const r=(state.roster||[]).find(a=>(a.id||a.agent_id)===id);
   if(r){
@@ -817,6 +872,28 @@ async function selectExpansionAgent(id){
   }
   state.codecBooted=false;
   await showChat();
+  // Keep-like: switching agents stays in Codec with that agent's room ready via Open Room.
+  if(!same){
+    const roomBtn=document.getElementById('codec-open-room');
+    if(roomBtn && r && r.room) roomBtn.textContent='Open '+(r.room_title||r.room);
+  }
+}
+
+async function openCurrentAgentRoom(){
+  const r=(state.roster||[]).find(a=>(a.id||a.agent_id)===currentAgentId());
+  const route=(r&&r.room)||'';
+  const kind=roomKindFromRoute(route);
+  if(kind==='codec'||!kind){ await showChat(); return; }
+  await showExpansionSurface(kind);
+}
+
+async function openVoiceTrainer(){
+  const url=(state.capabilities&&state.capabilities.voice_trainer_url)||'http://127.0.0.1:8765/';
+  try{
+    const probe=await fetch(url,{mode:'no-cors',cache:'no-store'});
+    void probe;
+  }catch(_e){}
+  window.open(url,'_blank','noopener');
 }
 
 async function assignVoice(vid){

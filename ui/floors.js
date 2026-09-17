@@ -1115,14 +1115,20 @@
     catch (e) { floorShell('Page Builder', 'Registry', empty('Failed: ' + e)); return; }
     var rooms = d.rooms || [];
     var list = listCards(rooms, function (r) {
+      var route = r.route || '';
+      var kind = (typeof roomKindFromRoute === 'function') ? roomKindFromRoute(route) : '';
+      var openBtn = kind
+        ? '<button type="button" class="cc-btn" onclick="showExpansionSurface(\'' + esc(kind) + '\')">Open</button>'
+        : '<span class="muted">no SPA route</span>';
       return '<div class="fl-card"><b>' + esc(r.name || r.page_id) + '</b> ' +
         pill(r.enabled ? 'enabled' : 'disabled', r.enabled ? 'ok' : 'warn') +
-        '<p class="muted">' + esc(r.route) + ' · owner ' + esc(r.owner_agent) + ' · ' +
+        '<p class="muted">' + esc(route) + ' · owner ' + esc(r.owner_agent) + ' · ' +
         esc(r.icon || '') + ' · ' + esc(r.kind || '') + '</p>' +
         '<p class="muted">' + esc(r.description || '') + '</p>' +
         '<p class="muted">caps: ' + esc((r.required_capabilities || []).join(', ') || '—') +
         ' · perms: ' + esc((r.permissions || []).join(', ') || '—') + '</p>' +
-        '<p class="muted">health: ' + esc(r.health_source || '—') + '</p></div>';
+        '<p class="muted">health: ' + esc(r.health_source || '—') + '</p>' +
+        '<div style="margin-top:8px">' + openBtn + '</div></div>';
     }, 'Registry empty.');
     var form =
       '<form class="fl-form" id="fl-page-form" onsubmit="return floorRegisterPage(event)">' +

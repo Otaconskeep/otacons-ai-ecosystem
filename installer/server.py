@@ -390,6 +390,8 @@ def _capability_snapshot() -> dict:
     vt_ok = vt_home.is_dir() and any(vt_home.iterdir()) if vt_home.is_dir() else False
     caps['voice_trainer'] = 'ready' if vt_ok else 'not_configured'
     caps['voice_trainer_path'] = str(vt_home) if vt_ok else ''
+    # Genome UI listens on 8765 locally (same host as Otacon / WSL loopback).
+    caps['voice_trainer_url'] = 'http://127.0.0.1:8765/' if vt_ok else ''
     caps['llm_model'] = ''
     try:
         caps['llm_model'] = _llm_settings()[2]
@@ -483,6 +485,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({'voices': catalog_entries()})
         elif path == '/api/expansion/status':
             try:
+                from core.voice import catalog_id_for_piper
                 from expansion.entitlement import EntitlementGate
                 from expansion.readiness import evaluate_foundation
                 from expansion.runtime import ExpansionRuntime
@@ -510,7 +513,9 @@ class Handler(BaseHTTPRequestHandler):
                             'display_name': a.display_name,
                             'role': a.role,
                             'room': a.room_route,
-                            'voice_id': a.voice_id,
+                            'room_title': a.room_title,
+                            'voice_id': catalog_id_for_piper(a.voice_id),
+                            'avatar': f'/assets/{a.agent_id}/{a.agent_id}.webp',
                         }
                         for a in (rt.load_roster() if enabled else [])
                     ],

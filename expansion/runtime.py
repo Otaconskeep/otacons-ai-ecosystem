@@ -274,17 +274,22 @@ class ExpansionRuntime:
 
     def agent_dict_for_core(self, agent_id: str) -> dict:
         """Shape expected by core.agent_service chat path."""
+        from core.voice import catalog_id_for_piper
+
         view = self.get_agent(agent_id)
         if view is None:
             raise KeyError(agent_id)
         ctx = self.assemble_context(agent_id)
+        voice_id = catalog_id_for_piper(view.voice_id)
         return {
             'id': view.agent_id,
             'display_name': view.display_name,
-            'voice_id': view.voice_id,
+            'voice_id': voice_id,
             'role': view.role,
             'persona': view.persona,
             'expansion': True,
             'system_prompt': ctx.system_prompt,
             'avatar': f'/assets/{view.agent_id}/{view.agent_id}.webp',
+            'room': view.room_route,
+            'room_title': view.room_title,
         }

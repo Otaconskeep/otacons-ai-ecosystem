@@ -112,6 +112,54 @@ CATALOG: tuple[VoiceProfile, ...] = (
         status_hint=CATALOG_AVAILABLE,
     ),
     VoiceProfile(
+        'voice_vector',
+        'Vector',
+        'piper',
+        'en_US-bryce-medium',
+        language='en-US',
+        synthesis={'length_scale': 1.0, 'noise_scale': 0.667, 'noise_w': 0.8},
+        license='MIT (Piper / rhasspy voice models — see upstream voice LICENSE)',
+        source='https://github.com/rhasspy/piper',
+        fixture=False,
+        status_hint=CATALOG_AVAILABLE,
+    ),
+    VoiceProfile(
+        'voice_ledger',
+        'Ledger',
+        'piper',
+        'en_US-joe-medium',
+        language='en-US',
+        synthesis={'length_scale': 1.05, 'noise_scale': 0.7, 'noise_w': 0.85},
+        license='MIT (Piper / rhasspy voice models — see upstream voice LICENSE)',
+        source='https://github.com/rhasspy/piper',
+        fixture=False,
+        status_hint=CATALOG_AVAILABLE,
+    ),
+    VoiceProfile(
+        'voice_muse',
+        'Muse',
+        'piper',
+        'en_US-hfc_female-medium',
+        language='en-US',
+        synthesis={'length_scale': 1.15, 'noise_scale': 0.85, 'noise_w': 0.9},
+        license='MIT (Piper / rhasspy voice models — see upstream voice LICENSE)',
+        source='https://github.com/rhasspy/piper',
+        fixture=False,
+        status_hint=CATALOG_AVAILABLE,
+    ),
+    VoiceProfile(
+        'voice_sentry',
+        'Sentry',
+        'piper',
+        'en_US-hfc_male-medium',
+        language='en-US',
+        synthesis={'length_scale': 0.95, 'noise_scale': 0.65, 'noise_w': 0.75},
+        license='MIT (Piper / rhasspy voice models — see upstream voice LICENSE)',
+        source='https://github.com/rhasspy/piper',
+        fixture=False,
+        status_hint=CATALOG_AVAILABLE,
+    ),
+    VoiceProfile(
         'en_US-lessac-medium',
         'Lessac (US English, medium)',
         'piper',
@@ -170,7 +218,11 @@ def catalog_entries() -> list[dict[str, Any]]:
 
 
 def profile_for(i: str) -> VoiceProfile:
-    p = next((x for x in CATALOG if x.id == i), None)
+    """Resolve by catalog id or Piper model name (Expansion seeds store piper_voice)."""
+    key = (i or '').strip()
+    p = next((x for x in CATALOG if x.id == key), None)
+    if not p:
+        p = next((x for x in CATALOG if x.model == key), None)
     if not p:
         raise LookupError(VOICE_NOT_INSTALLED)
     try:
@@ -178,6 +230,30 @@ def profile_for(i: str) -> VoiceProfile:
     except ValueError as e:
         raise TTSError(VOICE_PROFILE_INVALID, str(e)) from e
     return p
+
+
+def catalog_id_for_piper(model: str) -> str:
+    """Map a Piper model id to the preferred public catalog voice id."""
+    key = (model or '').strip()
+    if not key:
+        return 'voice_aria'
+    if any(p.id == key for p in CATALOG):
+        return key
+    # Prefer named Expansion voices (voice_aria/vector/…) over generic voice_001/002.
+    named = [
+        p for p in CATALOG
+        if (not p.fixture) and p.model == key
+        and p.id.startswith('voice_')
+        and p.id not in ('voice_001', 'voice_002')
+    ]
+    if named:
+        return named[0].id
+    for p in CATALOG:
+        if p.fixture:
+            continue
+        if p.model == key:
+            return p.id
+    return key
 
 
 def profile_hash(profile: VoiceProfile) -> str:
