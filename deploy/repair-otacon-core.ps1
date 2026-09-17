@@ -123,13 +123,11 @@ UNIT=/etc/systemd/system/otacon.service
 
 # Pull the pushed fix (memory/THINKING/GPU) — restart alone is not enough.
 if [ -d "$ROOT/.git" ]; then
-  echo "=== git pull ==="
+  echo "=== git hard sync ==="
   echo "before=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo none)"
   git -C "$ROOT" fetch --prune origin 2>&1 | tail -n 5
-  if ! git -C "$ROOT" pull --ff-only origin main 2>&1; then
-    echo "ff-only failed; hard reset to origin/main"
-    git -C "$ROOT" reset --hard origin/main 2>&1 | tail -n 5
-  fi
+  git -C "$ROOT" checkout -B main origin/main 2>&1 | tail -n 3
+  git -C "$ROOT" reset --hard origin/main 2>&1 | tail -n 5
   echo "after=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo none)"
   echo "revision_file=$(cat "$ROOT/deploy/installer-revision.txt" 2>/dev/null | head -n1)"
 fi

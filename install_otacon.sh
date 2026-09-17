@@ -1279,8 +1279,15 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
   run_watched 300 "git fetch" -- git -C "$INSTALL_DIR" fetch --prune origin
   CURRENT_BRANCH="$(git -C "$INSTALL_DIR" branch --show-current || true)"
 
-  if [[ "$CURRENT_BRANCH" == "main" ]]; then
-    run_watched 300 "git pull" -- git -C "$INSTALL_DIR" pull --ff-only
+  # Always hard-sync public installs to origin/main so GPU/Codec fixes land.
+  # ff-only alone left friends stuck on stale trees after local edits/patches.
+  if [[ "$CURRENT_BRANCH" == "main" || -z "$CURRENT_BRANCH" ]]; then
+    if ! run_watched 300 "git pull ff-only" -- git -C "$INSTALL_DIR" pull --ff-only; then
+      warn "Fast-forward pull failed — hard-resetting to origin/main so fixes apply."
+      run_watched 300 "git reset hard" -- git -C "$INSTALL_DIR" reset --hard origin/main
+    fi
+    # Guarantee tip matches GitHub even when ff-only "succeeded" on an old remote.
+    run_watched 120 "git reset hard tip" -- git -C "$INSTALL_DIR" reset --hard origin/main
   else
     warn "Repository is on branch '${CURRENT_BRANCH:-detached}'."
     warn "Leaving local branch selection untouched; fetched origin only."
