@@ -296,6 +296,7 @@ function Convert-WindowsPathToWsl {
       Map a Windows path into the distro. wslpath often returns empty when the
       target file does not exist yet (we delete exit markers before convert),
       so touch the path when needed and fall back to /mnt/<drive>/... mapping.
+      # Josh-997-fallback-v2
     #>
     param(
         [string]$Distro,
