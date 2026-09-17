@@ -77,7 +77,9 @@ def main() -> int:
     must("LIVE FEED" not in PS1, "Stage 6 does not dump live apt/test feed to user", fails)
     must("building the Keep" not in PS1, "Stage 6 HUD is cinematic not chatty", fails)
     must("OTACON_CHAT_PORT" in PS1 and "IsNullOrWhiteSpace" in PS1, "blank OTACON_CHAT_PORT not injected", fails)
-    must("check_same_thread" not in (ROOT / "core" / "memory.py").read_text(encoding="utf-8"), "memory does not disable SQLite thread check", fails)
+    mem = (ROOT / "core" / "memory.py").read_text(encoding="utf-8")
+    must("check_same_thread=False" not in mem.replace(" ", ""), "memory does not disable SQLite thread check", fails)
+    must("connection()" in mem and "PRAGMA journal_mode=WAL" in mem, "memory uses per-op connections + WAL", fails)
 
     print("=" * 60)
     if fails:
