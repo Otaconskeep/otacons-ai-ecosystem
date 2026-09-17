@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "7070a1834cb310bb6e844c90de961762641f9d1e",
+  "commit": "b39051e1d0c1460433d78595b3e82dad4940ac41",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -10,7 +10,7 @@
   "python_preferred": "3.12",
   "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on 'main').",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
-  "installer_revision": "97826815d742b1ebae466dbc8c071cfb502b74af",
+  "installer_revision": "b39051e1d0c1460433d78595b3e82dad4940ac41",
   "files": [
     {
       "path": "install_otacon.bat",
