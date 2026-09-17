@@ -322,7 +322,7 @@ Write-Host ""
 if ($entitled) {
     Write-OtaconSay "Foundation is online and entitled. Talk to Aria - she learns on chat turns." "ok"
 } else {
-    Write-OtaconSay "Foundation installed. Entitlement is false — open entitlement API for the reason." "warn"
+    Write-OtaconSay "Foundation installed. Entitlement is false - open entitlement API for the reason." "warn"
 }
 Write-ExpLog "SUCCESS foundation_ready=1 entitled=$entitled"
 
