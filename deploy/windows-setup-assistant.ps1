@@ -661,6 +661,41 @@ function Get-OtaconOpenUrl {
     return "$base/"
 }
 
+function ConvertTo-OtaconPs51SafeFile {
+    <# Rewrite a .ps1 as UTF-8 BOM + CRLF + ASCII punctuation for Windows PowerShell 5.1. #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    $text = if ($hasBom) {
+        [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+    } else {
+        [System.Text.Encoding]::UTF8.GetString($bytes)
+    }
+    $map = @{
+        [char]0x2014 = '-'
+        [char]0x2013 = '-'
+        [char]0x2260 = '!='
+        [char]0x2018 = "'"
+        [char]0x2019 = "'"
+        [char]0x201C = '"'
+        [char]0x201D = '"'
+        [char]0x2026 = '...'
+        [char]0x00A0 = ' '
+    }
+    foreach ($k in @($map.Keys)) { $text = $text.Replace([string]$k, [string]$map[$k]) }
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in $text.ToCharArray()) {
+        if ([int][char]$ch -gt 127) { [void]$sb.Append('?') } else { [void]$sb.Append($ch) }
+    }
+    $text = $sb.ToString()
+    $text = $text -replace "`r`n", "`n" -replace "`r", "`n"
+    $text = $text -replace "`n", "`r`n"
+    $utf8Bom = New-Object System.Text.UTF8Encoding $true
+    [System.IO.File]::WriteAllText($Path, $text, $utf8Bom)
+    return $true
+}
+
 function Test-OtaconPs1Parses {
     <# PowerShell 5.1 preflight: catch UTF-8/BOM misparse before running a helper. #>
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -721,6 +756,9 @@ function Invoke-OtaconCoreRepair {
         Write-OtaconSay "Update helper missing - cannot update the Linux Otacon app. Re-download Setup from the website." -Mood "alert"
         return $false
     }
+
+    # Always rewrite helper for PS 5.1 (CDN/raw may strip BOM briefly).
+    [void](ConvertTo-OtaconPs51SafeFile -Path $ps1)
 
     $parse = Test-OtaconPs1Parses -Path $ps1
     if (-not $parse.Ok) {
