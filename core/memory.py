@@ -48,7 +48,7 @@ class MemoryStore:
 
     def _connect(self) -> sqlite3.Connection:
         # Fresh connection per call — never reuse across threads.
-        # Do NOT use check_same_thread=False.
+        # Prefer per-operation connections over disabling SQLite's thread guard.
         db = sqlite3.connect(
             str(self.path),
             timeout=self.timeout,
