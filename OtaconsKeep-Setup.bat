@@ -123,8 +123,15 @@ if defined DEBUG echo [DEBUG] INST=%INST%
 if defined DEBUG echo [DEBUG] RAW=%RAW%
 
 set "LOCAL_ASSISTANT=%~dp0deploy\windows-setup-assistant.ps1"
-if not exist "%LOCAL_ASSISTANT%" goto NEED_FETCH
-call :LOG "local tree detected; skipping bootstrap fetch"
+set "LOCAL_SH=%~dp0install_otacon.sh"
+REM Only skip fetch for a full repo/dev tree (has install_otacon.sh).
+REM AppData\OtaconsKeep\installer ALSO has deploy\*.ps1 after first fetch — skipping
+REM there pinned crist on stale assistants and reboot-looped forever.
+if exist "%LOCAL_ASSISTANT%" if exist "%LOCAL_SH%" goto USE_LOCAL_TREE
+goto NEED_FETCH
+
+:USE_LOCAL_TREE
+call :LOG "full local tree detected (install_otacon.sh present); skipping bootstrap fetch"
 if defined DEBUG echo [DEBUG] command=call "%~dp0install_otacon.bat" %ARGS%
 call "%~dp0install_otacon.bat" %ARGS%
 set "RC=!ERRORLEVEL!"

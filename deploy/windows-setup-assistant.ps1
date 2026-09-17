@@ -384,14 +384,18 @@ function Get-WslUbuntuFamilyNames {
 }
 
 function Get-UbuntuDistroName {
-    # Prefer dedicated OtaconsKeep distro. Never silently return first Ubuntu*.
-    # Never trust a saved bare "Ubuntu" (Store default) — that name is what
-    # kept Josh pinned to a broken distro through exit 997.
+    # Prefer dedicated OtaconsKeep / versioned distros.
+    # Stock "Ubuntu" is OK when it is the only available distro and it actually boots
+    # (virgin wsl --install -d Ubuntu creates that name — ignoring it caused reboot loops).
     $st = Get-InstallerState
     $stated = [string]$st["ubuntu_name"]
     $mode = [string]$st["ubuntu_mode"]
     if ($stated -and $stated.Equals("Ubuntu", [System.StringComparison]::OrdinalIgnoreCase)) {
-        Write-KeepLog "ignoring saved stock distro name=Ubuntu mode=$mode (often broken)" -Level "WARN" -Stage "WSL"
+        if (Test-UbuntuReady $stated) {
+            Write-KeepLog "using stock Ubuntu (ready) mode=$mode" -Stage "WSL"
+            return $stated
+        }
+        Write-KeepLog "ignoring saved stock Ubuntu (not ready) mode=$mode" -Level "WARN" -Stage "WSL"
         Save-InstallerState @{ ubuntu_name = $null; ubuntu_mode = $null }
         $stated = ""
         $mode = ""
@@ -408,14 +412,25 @@ function Get-UbuntuDistroName {
         if ($name) {
             $n = ($name | Select-Object -First 1).ToString().Trim()
             if ($n -and -not $n.Equals("Ubuntu", [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $n
+                if (Test-UbuntuReady $n) { return $n }
             }
         }
     }
-    foreach ($want in ($PreferredDistroAliases + @("Ubuntu-22.04"))) {
+    foreach ($want in ($PreferredDistroAliases + @("Ubuntu-22.04", "Ubuntu-24.04"))) {
         $family = Get-WslUbuntuFamilyNames
         $hit = $family | Where-Object { $_.Equals($want, [System.StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
         if ($hit -and (Test-UbuntuReady $hit)) { return $hit }
+    }
+    # Last resort: stock Store "Ubuntu" if it boots (post wsl --install -d Ubuntu).
+    $family = Get-WslUbuntuFamilyNames
+    $stock = $family | Where-Object { $_.Equals("Ubuntu", [System.StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+    if ($stock) {
+        [void](Ensure-WslDistroRunning -Name $stock)
+        if (Test-UbuntuReady $stock) {
+            Save-InstallerState @{ ubuntu_name = $stock; ubuntu_mode = "reuse" }
+            Write-KeepLog "accepting stock Ubuntu as reuse (only available ready distro)" -Stage "WSL"
+            return $stock
+        }
     }
     return $null
 }
@@ -433,16 +448,27 @@ function Resolve-OtaconDistroInteractive {
     }
 
     $family = Get-WslUbuntuFamilyNames
+    # Prefer non-stock versioned distros for the picker, but do not pretend
+    # the machine is virgin when only stock "Ubuntu" exists (that caused reboot loops).
     $others = @($family | Where-Object {
             $n = $_
-            -not ($PreferredDistroAliases | Where-Object { $n.Equals($_, [System.StringComparison]::OrdinalIgnoreCase) }) -and
-            -not $n.Equals("Ubuntu", [System.StringComparison]::OrdinalIgnoreCase)
+            -not ($PreferredDistroAliases | Where-Object { $n.Equals($_, [System.StringComparison]::OrdinalIgnoreCase) })
         })
 
     if ($others.Count -eq 0) {
-        # Virgin machine - create dedicated Ubuntu-Otacon
+        # Truly virgin — create dedicated Ubuntu-Otacon
         $script:ChosenDistroMode = "dedicated"
         return $PreferredDistro
+    }
+
+    # Stock Ubuntu alone: reuse it (wsl --install -d Ubuntu creates this name).
+    $onlyStock = @($others | Where-Object { $_.Equals("Ubuntu", [System.StringComparison]::OrdinalIgnoreCase) })
+    $nonStock = @($others | Where-Object { -not $_.Equals("Ubuntu", [System.StringComparison]::OrdinalIgnoreCase) })
+    if ($nonStock.Count -eq 0 -and $onlyStock.Count -ge 1) {
+        $script:ChosenDistroMode = "reuse"
+        Save-InstallerState @{ ubuntu_name = "Ubuntu"; ubuntu_mode = "reuse" }
+        Write-KeepLog "only stock Ubuntu present - reusing" -Stage "WSL"
+        return "Ubuntu"
     }
 
     # Power-user PC with other Ubuntu* - require explicit choice
@@ -451,11 +477,15 @@ function Resolve-OtaconDistroInteractive {
         ""
     )
     $idx = 1
-    foreach ($d in $others) {
+    foreach ($d in $nonStock) {
         $st = Get-WslDistroState -Name $d
         $mark = if ($st -eq "Running") { "RUNNING - prefer this" } else { $st.ToUpperInvariant() }
         $lines += ("  [{0}] {1}  ({2})" -f $idx, $d, $mark)
         $idx++
+    }
+    if ($onlyStock.Count -gt 0) {
+        $stU = Get-WslDistroState -Name "Ubuntu"
+        $lines += ("  [U] Ubuntu  ({0}) - Store default" -f $stU.ToUpperInvariant())
     }
     $lines += ""
     $lines += "Tip: pick a RUNNING Ubuntu if you have one (Stopped distros often fail)."
@@ -478,19 +508,26 @@ function Resolve-OtaconDistroInteractive {
         return $PreferredDistro
     }
 
-    # Reuse - pick which
-    if ($others.Count -eq 1) {
+    # Reuse - pick which (numbered non-stock list, or U for stock Ubuntu)
+    $pickList = @($nonStock)
+    if ($pickList.Count -eq 1 -and $onlyStock.Count -eq 0) {
         $script:ChosenDistroMode = "reuse"
-        Save-InstallerState @{ ubuntu_name = $others[0]; ubuntu_mode = "reuse" }
-        Write-KeepLog "user reused sole distro=$($others[0])" -Stage "WSL"
-        return $others[0]
+        Save-InstallerState @{ ubuntu_name = $pickList[0]; ubuntu_mode = "reuse" }
+        Write-KeepLog "user reused sole distro=$($pickList[0])" -Stage "WSL"
+        return $pickList[0]
     }
-    Write-Host "  Enter the number of the distro to reuse:" -ForegroundColor Cyan
+    Write-Host "  Enter the number of the distro to reuse (or U for stock Ubuntu):" -ForegroundColor Cyan
     while ($true) {
         $raw = Read-Host "  Number"
+        if ($onlyStock.Count -gt 0 -and $raw -and $raw.Trim().Equals("U", [StringComparison]::OrdinalIgnoreCase)) {
+            $script:ChosenDistroMode = "reuse"
+            Save-InstallerState @{ ubuntu_name = "Ubuntu"; ubuntu_mode = "reuse" }
+            Write-KeepLog "user reused stock Ubuntu" -Stage "WSL"
+            return "Ubuntu"
+        }
         $n = 0
-        if ([int]::TryParse($raw, [ref]$n) -and $n -ge 1 -and $n -le $others.Count) {
-            $pick = $others[$n - 1]
+        if ([int]::TryParse($raw, [ref]$n) -and $n -ge 1 -and $n -le $pickList.Count) {
+            $pick = $pickList[$n - 1]
             $script:ChosenDistroMode = "reuse"
             Save-InstallerState @{ ubuntu_name = $pick; ubuntu_mode = "reuse" }
             Write-KeepLog "user reused distro=$pick" -Stage "WSL"
@@ -1346,17 +1383,27 @@ function Step-EnableWsl {
     }
     Write-KeepLog "wsl --install exit=$($p.ExitCode)" -Stage "WAITING_FOR_WINDOWS"
     if ($p.ExitCode -eq 14098 -or $p.ExitCode -eq -2146498798) {
-        # -2146498798 = unchecked 0x80073712
         $act = Show-ComponentStoreCorruptHelp -Detail "wsl --install exit=$($p.ExitCode)"
         if ($act -eq "fixed") { return 0 }
         if ($act -eq "retry") { return (Step-EnableWsl -DistroName $DistroName) }
         return 14098
     }
-    # On virgin machines the store distro is named Ubuntu - record intent for dedicated rename/import next run.
+    # Store install creates distro name "Ubuntu" — accept it so we do not reboot-loop.
+    Start-Sleep -Seconds 2
+    $familyAfter = Get-WslUbuntuFamilyNames
+    $stock = $familyAfter | Where-Object { $_.Equals("Ubuntu", [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+    if ($stock) {
+        Save-InstallerState @{ ubuntu_name = "Ubuntu"; ubuntu_mode = "reuse"; target_distro = "Ubuntu" }
+        Write-KeepLog "post-install: stock Ubuntu present - will reuse after first-run setup" -Stage "WAITING_FOR_WINDOWS"
+        [void](Ensure-WslDistroRunning -Name "Ubuntu")
+        if (Test-UbuntuReady "Ubuntu") { return 0 }
+        # Distro exists but first-boot user setup not done — do NOT force another feature reboot loop.
+        return 0
+    }
     if ($DistroName -eq $PreferredDistro) {
         Save-InstallerState @{ ubuntu_name = $null; ubuntu_mode = "virgin_ubuntu_pending_dedicated"; target_distro = $PreferredDistro }
     }
-    return $p.ExitCode
+    return $(if ($null -eq $p.ExitCode) { 0 } else { $p.ExitCode })
 }
 
 function Install-DedicatedUbuntuOtacon {
@@ -2176,12 +2223,25 @@ function Start-GuidedSetup {
         Write-Host "  [ OTACON ] preparing linux environment ($ubuntu)" -ForegroundColor Cyan
         $code = Step-EnableWsl -DistroName $ubuntu
         $ubuntu = Get-UbuntuDistroName
-        if (-not $ubuntu) { $ubuntu = $PreferredDistro }
+        if (-not $ubuntu) {
+            # Prefer stock Ubuntu if wsl --install created it but first-boot not finished.
+            $fam = Get-WslUbuntuFamilyNames
+            $stock = $fam | Where-Object { $_.Equals("Ubuntu", [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+            if ($stock) { $ubuntu = $stock; Save-InstallerState @{ ubuntu_name = $stock; ubuntu_mode = "reuse" } }
+            else { $ubuntu = $PreferredDistro }
+        }
         if (-not (Test-UbuntuReady $ubuntu)) {
-            $s2 = Get-WhereYouAre
-            if (-not $s2.ubuntu_ready) {
-                Request-RestartConfirmation
-                return 0
+            $fam2 = Get-WslUbuntuFamilyNames
+            if ($fam2.Count -gt 0) {
+                # Distro listed but not ready — finish first-time Ubuntu setup (no more reboot loop).
+                Write-KeepLog "distro present but not ready - waiting for Ubuntu init ($ubuntu)" -Stage "WAITING_FOR_UBUNTU_SETUP"
+                [void](Step-WaitUbuntuInit -Name $ubuntu)
+            } else {
+                $s2 = Get-WhereYouAre
+                if (-not $s2.ubuntu_ready) {
+                    Request-RestartConfirmation
+                    return 0
+                }
             }
         }
     } else {
