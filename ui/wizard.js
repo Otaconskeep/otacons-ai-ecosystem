@@ -394,7 +394,7 @@ function render(){
   let s=state.step;
   if(s===0) page.innerHTML='<p class=muted>This wizard configures your local AI system. No Docker or YAML knowledge is required.</p><button onclick="next()">Get Started</button><button onclick="showChat()">Open Codec</button>';
   if(s===1) page.innerHTML='<p class=muted>Detect your computer, GPUs, storage, and available capacity.</p><button onclick="scan()">Scan My System</button>';
-  if(s===2){let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles; page.innerHTML=`<div class=card>System: ${h.os}<br>CPU: ${h.cpu.model} (${h.cpu.cores} cores)<br>Memory: ${h.ram_gb} GB</div>`+(h.gpus.length?h.gpus.map(x=>`<div class=card>${x.model} — ${x.vram_gb} GB VRAM — ${x.capability}</div>`).join(''):'<div class=card>CPU fallback (no GPU detected)</div>')+`<p class=muted>Recommended primary: ${g.primary_gpu}</p><button onclick="next()">Use Recommended Setup</button>`;}
+  if(s===2){let h=state.scan.hardware.hardware,g=state.scan.hardware.gpu_roles,det=h.gpu_detection||{}; page.innerHTML=`<div class=card>System: ${h.os}<br>CPU: ${h.cpu.model} (${h.cpu.cores} cores)<br>Memory: ${h.ram_gb} GB</div>`+(h.gpus.length?h.gpus.map(x=>`<div class=card>${escapeHtml(x.model)} — ${x.vram_gb?x.vram_gb+' GB VRAM':'VRAM n/a'} — ${escapeHtml(x.capability||'')}</div>`).join(''):`<div class=card>${escapeHtml(det.message||'No NVIDIA GPU found by scan')}</div>`)+`<p class=muted>Recommended primary: ${g.primary_gpu}</p><button onclick="next()">Use Recommended Setup</button>`;}
   if(s===3){let v=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0]||{}; page.innerHTML=`<div class=card><b>Recommended storage</b><br>${v.path||'Unavailable'}<br>${v.free_gb||0} GB free</div><button onclick="next()">Use Recommended Storage</button>`;}
   if(s===4){ page.innerHTML=agentSetupHtml(); updateSetupAvatar(); }
   if(s===5) page.innerHTML=featuresHtml()+'<button onclick="setFeatures()">Continue</button>';
@@ -601,9 +601,15 @@ async function showChat(){
   const gpuDet=hw.gpu_detection||{};
   let gpuLine='No GPU reported';
   if(gpus.length){
-    gpuLine=gpus.map(g=>`${g.model||g.name||'GPU'} · ${g.vram_gb||'?'} GB`).join(' / ');
+    gpuLine=gpus.map(g=>{
+      const name=g.model||g.name||'GPU';
+      const vram=g.vram_gb?` · ${g.vram_gb} GB`:'';
+      return `${name}${vram}`;
+    }).join(' / ');
+  }else if(gpuDet&&gpuDet.message){
+    gpuLine=String(gpuDet.message);
   }else if(gpuDet&&(gpuDet.status==='detected'||gpuDet.nvidia_smi)){
-    gpuLine=String(gpuDet.message||'NVIDIA GPU detected');
+    gpuLine='NVIDIA GPU detected';
   }
   const vtOk=capStatus('voice_trainer')==='ready';
   const voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');

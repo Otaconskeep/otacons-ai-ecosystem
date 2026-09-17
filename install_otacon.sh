@@ -117,11 +117,10 @@ else
     CHAT_HOST="${OTACON_CHAT_HOST:-127.0.0.1}"
   fi
 fi
-# WSL nvidia-smi can hang in D-state and freeze the Core HTTP server / Codec.
-# Default-skip the live probe on WSL unless the user explicitly sets 0.
-if [[ "$WSL_ENV" == "1" && -z "${OTACON_SKIP_NVIDIA_SMI+x}" ]]; then
-  OTACON_SKIP_NVIDIA_SMI=1
-fi
+# WSL nvidia-smi used to hang and freeze Codec; platform.detect() now abandons
+# hung probes on a timeout, so we do NOT default-skip GPU inspection on WSL.
+# Skipping made Codec/Setup lie with "no GPU detected" while Ollama still used CUDA.
+OTACON_SKIP_NVIDIA_SMI="${OTACON_SKIP_NVIDIA_SMI:-0}"
 CHAT_PORT="${OTACON_CHAT_PORT:-5757}"
 VOICE_TRAINER_INSTALLER_URL="${OTACON_VOICE_TRAINER_URL:-https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh}"
 OLLAMA_ENDPOINT="${OTACON_LLM_ENDPOINT:-http://127.0.0.1:11434}"

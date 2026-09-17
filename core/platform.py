@@ -81,6 +81,31 @@ def _nvidia_smi_query(smi: str, timeout_s: float = 5.0) -> str:
   return box['out'] or ''
 
 
+def _proc_nvidia_gpus() -> list[GPU]:
+  """Fallback when nvidia-smi is skipped/hung: read /proc/driver/nvidia (common on WSL)."""
+  root = Path('/proc/driver/nvidia/gpus')
+  if not root.is_dir():
+    return []
+  found: list[GPU] = []
+  try:
+    entries = sorted(root.iterdir())
+  except OSError:
+    return []
+  for i, entry in enumerate(entries):
+    model = 'NVIDIA GPU'
+    try:
+      info = (entry / 'information').read_text(encoding='utf-8', errors='replace')
+      for line in info.splitlines():
+        if line.lower().startswith('model:'):
+          model = line.split(':', 1)[1].strip() or model
+          break
+    except OSError:
+      pass
+    # VRAM unknown from proc — mark 0 so UI still shows the model name.
+    found.append(GPU(f'gpu_{i+1:03d}', 'nvidia', model, 0.0, 'GPU_SMALL'))
+  return found
+
+
 def detect():
  try:
   import psutil
@@ -90,7 +115,8 @@ def detect():
   ram=round(int(next(x for x in open('/proc/meminfo') if x.startswith('MemTotal')).split()[1])/1024**2,1)
  g=[]; gpu_status='unavailable'; gpu_message='NVIDIA inspection tool is unavailable in this environment.'
  smi=_resolve_nvidia_smi()
- if os.environ.get('OTACON_SKIP_NVIDIA_SMI', '').strip() in ('1', 'true', 'yes'):
+ skip = os.environ.get('OTACON_SKIP_NVIDIA_SMI', '').strip().lower() in ('1', 'true', 'yes')
+ if skip:
   smi = None
   gpu_status = 'skipped'
   gpu_message = 'NVIDIA inspection skipped (OTACON_SKIP_NVIDIA_SMI).'
@@ -122,8 +148,16 @@ def detect():
    elif isinstance(exc, TimeoutError):
      detail = ' ' + str(exc)
    gpu_message=f'GPU inspection failed ({type(exc).__name__}) using {smi}.{detail}'
+ # Proc fallback: never claim "no GPU" when the driver is clearly present.
+ if not g:
+  proc_gpus = _proc_nvidia_gpus()
+  if proc_gpus:
+   g = proc_gpus
+   gpu_status = 'detected'
+   src = 'proc (nvidia-smi skipped)' if skip else 'proc fallback'
+   gpu_message = f'Detected {len(g)} NVIDIA GPU(s) via {src}.'
  h=Hardware(platform.system(),platform.processor() or platform.machine(),os.cpu_count() or 1,ram,free,g)
- h.gpu_detection={'status':gpu_status,'message':gpu_message,'nvidia_smi':smi or ''}
+ h.gpu_detection={'status':gpu_status,'message':gpu_message,'nvidia_smi':(_resolve_nvidia_smi() or '') if not skip else '', 'skipped': skip}
  return h
 
 

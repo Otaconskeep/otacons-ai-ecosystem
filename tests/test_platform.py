@@ -39,10 +39,21 @@ class PlatformGpuTests(unittest.TestCase):
 
     def test_detect_empty_output_is_none_not_detected(self):
         with mock.patch('core.platform._resolve_nvidia_smi', return_value='/usr/bin/nvidia-smi'):
-            with mock.patch('core.platform.subprocess.check_output', return_value='\n'):
-                h = detect()
+            with mock.patch('core.platform._nvidia_smi_query', return_value='\n'):
+                with mock.patch('core.platform._proc_nvidia_gpus', return_value=[]):
+                    h = detect()
         self.assertEqual(h.gpus, [])
         self.assertEqual(h.gpu_detection['status'], 'none')
+
+    def test_proc_fallback_when_smi_skipped(self):
+        from core.platform import GPU
+        fake = [GPU('gpu_001', 'nvidia', 'NVIDIA GeForce RTX 3070 Laptop GPU', 0.0, 'GPU_SMALL')]
+        with mock.patch.dict(os.environ, {'OTACON_SKIP_NVIDIA_SMI': '1'}, clear=False):
+            with mock.patch('core.platform._proc_nvidia_gpus', return_value=fake):
+                h = detect()
+        self.assertEqual(h.gpu_detection['status'], 'detected')
+        self.assertEqual(h.gpus[0].model, 'NVIDIA GeForce RTX 3070 Laptop GPU')
+        self.assertIn('proc', h.gpu_detection['message'])
 
 
 if __name__ == '__main__':

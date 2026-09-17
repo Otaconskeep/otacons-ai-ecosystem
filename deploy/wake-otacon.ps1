@@ -30,14 +30,17 @@ function Test-Otacon {
 }
 
 function Start-OtaconStack {
-    # Prefer systemd units. Skip hung GPU probe. Manual start if unit missing.
+    # Prefer systemd units. GPU probe has its own hang timeout in platform.detect —
+    # do NOT force OTACON_SKIP_NVIDIA_SMI (that caused false "no GPU detected").
     $script = @'
 set +e
 pkill -f "wyoming-piper.*10200" 2>/dev/null || true
 sleep 1
 UNIT=/etc/systemd/system/otacon.service
 if [ -f "$UNIT" ]; then
-  grep -q "OTACON_SKIP_NVIDIA_SMI=" "$UNIT" || sed -i "/\[Service\]/a Environment=OTACON_SKIP_NVIDIA_SMI=1" "$UNIT"
+  if grep -q "OTACON_SKIP_NVIDIA_SMI=" "$UNIT"; then
+    sed -i '/OTACON_SKIP_NVIDIA_SMI=/d' "$UNIT"
+  fi
   grep -q "OTACON_HOST=0.0.0.0" "$UNIT" || sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=0.0.0.0|" "$UNIT"
   systemctl daemon-reload >/dev/null 2>&1 || true
 fi
@@ -54,8 +57,8 @@ if ! curl -fsS --max-time 2 http://127.0.0.1:5757/api/branding >/dev/null 2>&1; 
     OWNER="$(stat -c %U "$ROOT" 2>/dev/null || echo root)"
     mkdir -p "/home/${OWNER}/.config/otacon" 2>/dev/null || true
     if command -v runuser >/dev/null 2>&1 && [ "$OWNER" != "root" ]; then
-      runuser -u "$OWNER" -- env OTACON_SKIP_NVIDIA_SMI=1 OTACON_HOST=0.0.0.0 OTACON_PORT=5757 PYTHONPATH="$ROOT" \
-        bash -lc "cd \"$ROOT\" && nohup \"$ROOT/.venv/bin/python\" -m installer.server >\$HOME/.config/otacon/wizard.log 2>&1 &"
+      runuser -u "$OWNER" -- env OTACON_HOST=0.0.0.0 OTACON_PORT=5757 PYTHONPATH="$ROOT" \
+        bash -lc "cd \"$ROOT\" && unset OTACON_SKIP_NVIDIA_SMI && nohup \"$ROOT/.venv/bin/python\" -m installer.server >\$HOME/.config/otacon/wizard.log 2>&1 &"
     fi
   fi
 fi
