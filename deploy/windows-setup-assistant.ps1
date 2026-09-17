@@ -1352,6 +1352,46 @@ function Ensure-Admin {
     }
 }
 
+function Get-WslOnlineDistroNames {
+    <#
+      Parse `wsl.exe --list --online` (same as -l -o).
+      Returns installable NAME tokens (first column), e.g. Ubuntu-22.04, Ubuntu, Debian.
+    #>
+    $names = New-Object System.Collections.Generic.List[string]
+    try {
+        $raw = & wsl.exe --list --online 2>$null
+        if (-not $raw) { $raw = & wsl.exe -l -o 2>$null }
+        foreach ($line in @($raw)) {
+            $t = (("{0}" -f $line) -replace "`0", "").Trim()
+            if (-not $t) { continue }
+            if ($t -match '(?i)^NAME\s+FRIENDLY') { continue }
+            if ($t -match '(?i)^The following') { continue }
+            if ($t -match '(?i)^Install ') { continue }
+            # "Ubuntu-22.04    Ubuntu 22.04 LTS" or "Ubuntu          Ubuntu"
+            if ($t -match '^(\S+)\s+\S+') {
+                $n = $Matches[1].Trim()
+                if ($n -and -not $names.Contains($n)) { [void]$names.Add($n) }
+            }
+        }
+    } catch {
+        Write-KeepLog "wsl --list --online failed: $($_.Exception.Message)" -Level "WARN" -Stage "WSL"
+    }
+    Write-KeepLog ("online distros: " + ($names -join ", ")) -Stage "WSL"
+    return @($names)
+}
+
+function Select-BestOnlineUbuntuInstallName {
+    <# Prefer versioned Ubuntu from the online catalog; avoid bare Ubuntu when possible. #>
+    $online = @(Get-WslOnlineDistroNames)
+    foreach ($want in @("Ubuntu-22.04", "Ubuntu-24.04", "Ubuntu-20.04")) {
+        $hit = $online | Where-Object { $_.Equals($want, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+        if ($hit) { return $hit }
+    }
+    $any = $online | Where-Object { $_ -match '(?i)^Ubuntu' } | Select-Object -First 1
+    if ($any) { return $any }
+    return "Ubuntu-22.04"
+}
+
 function Step-EnableWsl {
     param([string]$DistroName = $PreferredDistro)
     Write-WslListVerbose
@@ -1374,30 +1414,35 @@ function Step-EnableWsl {
         return $rc
     }
 
-    Write-KeepLog "wsl --install -d Ubuntu (virgin path; will rename/use as dedicated when possible)" -Stage "WAITING_FOR_WINDOWS"
-    $p = Start-Process -FilePath "wsl.exe" -ArgumentList "--install","-d","Ubuntu" -PassThru -NoNewWindow
+    # Virgin path: pick from `wsl --list --online` (prefer Ubuntu-22.04 over bare Ubuntu).
+    $installName = Select-BestOnlineUbuntuInstallName
+    Write-KeepLog "wsl --list --online chose install -d $installName (requested=$DistroName)" -Stage "WAITING_FOR_WINDOWS"
+    Write-Host "  Installing Linux distro from Microsoft catalog: $installName" -ForegroundColor Cyan
+    $p = Start-Process -FilePath "wsl.exe" -ArgumentList "--install","-d",$installName -PassThru -NoNewWindow
     while (-not $p.HasExited) {
-        Show-WorkingPanel -Step 3 -StepName "PREPARING WINDOWS" -Detail "Windows is currently enabling Linux support" -Started $started -Typical "2 to 10 minutes"
+        Show-WorkingPanel -Step 3 -StepName "PREPARING WINDOWS" -Detail "Installing $installName from Windows catalog" -Started $started -Typical "2 to 10 minutes"
         Write-Host "  [ OTACON ] still working - do not close this window" -ForegroundColor DarkGray
         Start-Sleep -Seconds 4
     }
-    Write-KeepLog "wsl --install exit=$($p.ExitCode)" -Stage "WAITING_FOR_WINDOWS"
+    Write-KeepLog "wsl --install -d $installName exit=$($p.ExitCode)" -Stage "WAITING_FOR_WINDOWS"
     if ($p.ExitCode -eq 14098 -or $p.ExitCode -eq -2146498798) {
-        $act = Show-ComponentStoreCorruptHelp -Detail "wsl --install exit=$($p.ExitCode)"
+        $act = Show-ComponentStoreCorruptHelp -Detail "wsl --install -d $installName exit=$($p.ExitCode)"
         if ($act -eq "fixed") { return 0 }
         if ($act -eq "retry") { return (Step-EnableWsl -DistroName $DistroName) }
         return 14098
     }
-    # Store install creates distro name "Ubuntu" — accept it so we do not reboot-loop.
     Start-Sleep -Seconds 2
     $familyAfter = Get-WslUbuntuFamilyNames
-    $stock = $familyAfter | Where-Object { $_.Equals("Ubuntu", [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
-    if ($stock) {
-        Save-InstallerState @{ ubuntu_name = "Ubuntu"; ubuntu_mode = "reuse"; target_distro = "Ubuntu" }
-        Write-KeepLog "post-install: stock Ubuntu present - will reuse after first-run setup" -Stage "WAITING_FOR_WINDOWS"
-        [void](Ensure-WslDistroRunning -Name "Ubuntu")
-        if (Test-UbuntuReady "Ubuntu") { return 0 }
-        # Distro exists but first-boot user setup not done — do NOT force another feature reboot loop.
+    # Prefer the exact name we asked for; then any Ubuntu*.
+    $created = $familyAfter | Where-Object { $_.Equals($installName, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+    if (-not $created) {
+        $created = $familyAfter | Where-Object { $_ -match '(?i)Ubuntu' } | Select-Object -First 1
+    }
+    if ($created) {
+        Save-InstallerState @{ ubuntu_name = $created; ubuntu_mode = "reuse"; target_distro = $created }
+        Write-KeepLog "post-install: distro=$created present - will reuse after first-run setup" -Stage "WAITING_FOR_WINDOWS"
+        [void](Ensure-WslDistroRunning -Name $created)
+        if (Test-UbuntuReady $created) { return 0 }
         return 0
     }
     if ($DistroName -eq $PreferredDistro) {
