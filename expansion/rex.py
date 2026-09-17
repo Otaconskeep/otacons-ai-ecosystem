@@ -27,7 +27,7 @@ REX_STAGES = (
     ('PLANNING', 'Planning'),
     ('ASSIGNED', 'Assigned'),
     ('IN_PROGRESS', 'In Progress'),
-    ('VERIFYING', 'Verifying'),
+    ('VERIFYING', 'Verifying · Peer Review'),
     ('REWORK', 'Rework'),
     ('DONE', 'Done'),
 )

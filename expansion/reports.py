@@ -79,11 +79,20 @@ def build_agent_report(agent_id: str, layout: Optional[StateLayout] = None) -> d
             for e in journals
         ],
         'latest_diary': diaries[0] if diaries else None,
+        'recent_diary': diaries[:5],
         'living_observations': [o.__dict__ if hasattr(o, '__dict__') else o for o in living.observations[:10]],
         'vulnerability_activations': vulns.activations,
         'capabilities': {
             'voice': view.voice_id,
             'room': view.room_route,
             'motion_manifest': view.motion_manifest_id,
+            'strengths': list(dossier.capabilities.strengths or ()),
+            'weaknesses': list(dossier.capabilities.weaknesses or ()) if not isinstance(dossier.capabilities.weaknesses, str) else [dossier.capabilities.weaknesses],
+        },
+        'diary_style': dossier.character.diary_style,
+        'social': {
+            'attachment_style': dossier.social.attachment_style,
+            'jealousy_sensitivity': dossier.social.jealousy_sensitivity,
+            'rivalry_behavior': dossier.social.rivalry_behavior,
         },
     }

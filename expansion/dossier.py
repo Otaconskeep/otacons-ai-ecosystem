@@ -39,6 +39,7 @@ class CharacterBlock:
     morals: tuple = ()
     communication_style: str = ''
     humor_style: str = ''
+    diary_style: str = ''  # shapes subjective diary generation; not a social feed voice
 
 
 @dataclass

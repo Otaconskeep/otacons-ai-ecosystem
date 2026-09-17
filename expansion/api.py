@@ -10,101 +10,57 @@ from dataclasses import asdict
 def handle_expansion_get(path: str, send_json) -> bool:
     """Return True if handled."""
     if path == '/api/expansion/command':
-        from expansion.jobs import JobStore
+        from expansion.floors import build_command_floor
         from expansion.runtime import ExpansionRuntime
-        from expansion.emotion_store import EmotionStore
-        from expansion.relationship_interpret import RelationshipInterpreter
-        from expansion.readiness import evaluate_foundation
         rt = ExpansionRuntime()
         if not rt.expansion_enabled():
             send_json({'enabled': False})
             return True
-        jobs = JobStore()
-        emo = EmotionStore()
-        interp = RelationshipInterpreter()
-        roster = []
-        for a in rt.load_roster():
-            e = emo.get_or_create(a.agent_id)
-            top = sorted(e.dimensions.items(), key=lambda kv: kv[1], reverse=True)[:4]
-            roster.append({
-                'agent_id': a.agent_id,
-                'display_name': a.display_name,
-                'role': a.role,
-                'emotion_highlights': {k: round(v, 3) for k, v in top},
-            })
-        shifts = []
-        for edge in (('aria', 'muse'), ('aria', 'vector'), ('muse', 'aria')):
-            s = interp.summarize(*edge)
-            if s.label in ('competitive_attachment', 'jealous_attachment', 'strained'):
-                shifts.append({
-                    'source': s.source_id, 'target': s.target_id,
-                    'label': s.label, 'narrative': s.narrative,
-                })
-        send_json({
-            'surface': 'aria_command_floor',
-            'note': 'Aria Command = agent coordination; Dashboard = owner overview.',
-            'roster': roster,
-            'active_jobs': [asdict(j) for j in jobs.list(limit=30)
-                            if j.status in ('QUEUED', 'ASSIGNED', 'RUNNING', 'WAITING', 'BLOCKED')],
-            'delegations': [
-                {'job_id': j.job_id, 'from': j.coordinator, 'to': j.assigned_agent,
-                 'domain': j.domain, 'status': j.status}
-                for j in jobs.list(limit=30)
-            ],
-            'readiness': evaluate_foundation().to_dict(),
-            'relationship_shifts': shifts,
-            'pending_decisions': [
-                asdict(j) for j in jobs.list(status='WAITING', limit=10)
-            ] + [asdict(j) for j in jobs.list(status='BLOCKED', limit=10)],
-        })
+        send_json(build_command_floor())
+        return True
+    if path == '/api/expansion/dashboard':
+        from expansion.floors import build_dashboard
+        send_json(build_dashboard())
         return True
     if path == '/api/expansion/intel':
-        from expansion.journal import JournalStore
-        from expansion.memory_bridge import ExpansionMemory
-        from expansion.living_dossier import LivingDossierStore
-        from expansion.relationship_interpret import RelationshipInterpreter
-        from expansion.events import EventBus
-        mem = ExpansionMemory()
-        important = []
-        for aid in ('aria', 'vector', 'ledger', 'muse', 'sentry'):
-            for m in mem.list(aid)[:20]:
-                if m.importance >= 0.7:
-                    important.append({
-                        'agent_id': aid, 'memory_id': m.memory_id,
-                        'content': m.content, 'importance': m.importance,
-                    })
-        living = {}
-        store = LivingDossierStore()
-        for aid in ('aria', 'vector', 'ledger', 'muse', 'sentry'):
-            doc = store.load(aid)
-            living[aid] = [{'category': o.category, 'value': o.value,
-                            'confidence': o.confidence} for o in doc.observations[:8]]
-        send_json({
-            'surface': 'ledger_intel',
-            'important_memories': sorted(important, key=lambda x: -x['importance'])[:30],
-            'journal_timeline': [asdict(e) for e in JournalStore().recent(limit=40)],
-            'living_dossiers': living,
-            'relationship_evidence': RelationshipInterpreter().matrix(
-                ['aria', 'muse', 'ledger', 'user_primary']
-            )[:12],
-            'recent_events': [
-                {'event_id': e.event_id, 'event_type': e.event_type,
-                 'actor': e.actor, 'subject': e.subject}
-                for e in EventBus(persist=True).recent(limit=30)
-            ],
-            'note': 'No private medical/household data.',
-        })
+        from expansion.floors import build_intel_floor
+        from expansion.runtime import ExpansionRuntime
+        if not ExpansionRuntime().expansion_enabled():
+            send_json({'enabled': False})
+            return True
+        send_json(build_intel_floor())
+        return True
+    if path == '/api/expansion/dossiers':
+        from expansion.floors import build_dossiers_index
+        from expansion.runtime import ExpansionRuntime
+        if not ExpansionRuntime().expansion_enabled():
+            send_json({'enabled': False, 'agents': []})
+            return True
+        send_json(build_dossiers_index())
+        return True
+    if path.startswith('/api/expansion/dossiers/'):
+        from expansion.floors import build_dossier_card
+        from expansion.canonical_dossiers import CANONICAL_AGENT_IDS
+        agent_id = path.rsplit('/', 1)[-1]
+        if agent_id not in CANONICAL_AGENT_IDS:
+            send_json({'error': 'unknown agent'}, 404)
+            return True
+        send_json(build_dossier_card(agent_id))
         return True
     if path == '/api/expansion/creative':
         from expansion.jobs import JobStore
         from expansion.capabilities.video_studio import probe_video_studio, studio_runtime_context
+        from expansion.readiness import evaluate_foundation
         jobs = [j for j in JobStore().list(agent_id='muse', limit=40)]
         vs = probe_video_studio()
         send_json({
             'surface': 'muse_creative',
             'creative_queue': [asdict(j) for j in jobs
                                if j.status in ('QUEUED', 'ASSIGNED', 'RUNNING') and j.domain in ('creative', 'media')],
+            'active_renders': [asdict(j) for j in jobs
+                               if j.status == 'RUNNING' and j.domain in ('creative', 'media')],
             'recent_creative_jobs': [asdict(j) for j in jobs if j.domain in ('creative', 'media')][:15],
+            'recent_output': [asdict(j) for j in jobs if j.status == 'COMPLETE' and j.domain in ('creative', 'media')][:10],
             'capabilities': {
                 'generation': 'local_template_ready',
                 'video_studio': vs.state,
@@ -113,34 +69,17 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'video_studio': vs.to_dict(),
             'video_studio_readiness': vs.state,
             'runtime_context': studio_runtime_context('muse'),
+            'foundation': evaluate_foundation().to_dict(),
+            'honest_note': (
+                'READY = workflow integration available; LIMITED = supported subset; '
+                'UNAVAILABLE = no fake controls.'
+            ),
             'note': 'Heavy Studio deps optional; personality from Expansion runtime only.',
         })
         return True
     if path == '/api/expansion/ops':
-        from expansion.jobs import JobStore
-        from expansion.emotion_store import EmotionStore
-        from expansion.capabilities.home_assistant import probe_home_assistant
-        from expansion.capabilities.discord_n8n import probe_discord, probe_n8n
-        jobs = JobStore()
-        security = [j for j in jobs.list(agent_id='sentry', limit=40)
-                    if j.domain in ('security', 'monitoring')]
-        emo = EmotionStore().get_or_create('sentry')
-        ha = probe_home_assistant()
-        send_json({
-            'surface': 'sentry_ops',
-            'alerts': [asdict(j) for j in security if j.status == 'FAILED'][:20],
-            'security_jobs': [asdict(j) for j in security][:20],
-            'health_incidents': [asdict(j) for j in jobs.list(status='FAILED', limit=20)
-                                 if j.assigned_agent == 'sentry'],
-            'observations': {
-                'emotion': {k: round(v, 3) for k, v in emo.dimensions.items()
-                            if k in ('concern', 'fear', 'stress', 'confidence')},
-            },
-            'home_assistant': ha.to_dict(),
-            'discord': probe_discord().to_dict(),
-            'n8n': probe_n8n().to_dict(),
-            'package_readiness': 'consult /api/expansion/status',
-        })
+        from expansion.floors import build_ops_floor
+        send_json(build_ops_floor())
         return True
     if path == '/api/expansion/capabilities':
         from expansion.capabilities.discord_n8n import probe_all_optional
@@ -158,6 +97,9 @@ def handle_expansion_get(path: str, send_json) -> bool:
                     'owner_agent': r.owner_agent,
                     'icon': r.icon,
                     'description': r.description,
+                    'required_capabilities': list(r.required_capabilities or ()),
+                    'permissions': list(r.permissions or ()),
+                    'health_source': r.health_source,
                     'enabled': r.enabled,
                     'shared': r.shared,
                     'kind': r.kind,
@@ -167,21 +109,12 @@ def handle_expansion_get(path: str, send_json) -> bool:
         })
         return True
     if path == '/api/expansion/war-room':
-        from expansion.jobs import JobStore
         from expansion.entitlement import EntitlementGate
+        from expansion.floors import build_war_room
         if not EntitlementGate().expansion_surfaces_allowed():
             send_json({'enabled': False, 'message': 'Expansion not entitled'})
             return True
-        jobs = JobStore()
-        send_json({
-            'active': [asdict(j) for j in jobs.list(limit=50)
-                       if j.status in ('QUEUED', 'ASSIGNED', 'RUNNING', 'WAITING', 'BLOCKED')],
-            'failed': [asdict(j) for j in jobs.list(status='FAILED', limit=20)],
-            'complete': [asdict(j) for j in jobs.list(status='COMPLETE', limit=20)],
-            'owner': 'vector',
-            'commander': 'aria',
-            'note': 'War Room = jobs/decisions; Infra Dashboard is separate telemetry.',
-        })
+        send_json(build_war_room())
         return True
     if path == '/api/expansion/rex':
         from expansion.entitlement import EntitlementGate
@@ -287,18 +220,15 @@ def handle_expansion_get(path: str, send_json) -> bool:
         except KeyError:
             send_json({'error': 'unknown agent'}, 404)
         return True
-    if path.startswith('/api/expansion/journal'):
-        from expansion.journal import JournalStore
-        store = JournalStore()
-        # /api/expansion/journal? handled via path only — agent optional in path
+    if path == '/api/expansion/journal' or path.startswith('/api/expansion/journal/'):
+        from expansion.floors import build_journal_browser
         parts = path.strip('/').split('/')
         agent_id = parts[3] if len(parts) > 3 else None
-        entries = store.recent(limit=50, agent_id=agent_id)
-        send_json({
-            'entries': [asdict(e) for e in entries],
-            'kind': 'journal',
-            'rule': 'JOURNAL = WHAT HAPPENED',
-        })
+        send_json(build_journal_browser(agent_id=agent_id))
+        return True
+    if path == '/api/expansion/diary':
+        from expansion.floors import build_diary_index
+        send_json(build_diary_index())
         return True
     if path.startswith('/api/expansion/diary/'):
         from expansion.diary import DiaryStore
@@ -310,8 +240,12 @@ def handle_expansion_get(path: str, send_json) -> bool:
             except KeyError:
                 send_json({'error': 'not found'}, 404)
             return True
+        from expansion.canonical_dossiers import get_canonical_dossier
+        d = get_canonical_dossier(agent_id)
         send_json({
             'entries': DiaryStore().recent(agent_id, limit=50),
+            'agent_id': agent_id,
+            'diary_style': d.character.diary_style,
             'kind': 'diary',
             'rule': 'DIARY = WHAT IT MEANT',
         })
@@ -334,23 +268,38 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'notes': doc.notes,
         })
         return True
+    if path == '/api/expansion/emotion':
+        from expansion.floors import build_emotion_roster
+        send_json(build_emotion_roster())
+        return True
     if path.startswith('/api/expansion/emotion/'):
         from expansion.emotion_store import EmotionStore
+        from expansion.canonical_dossiers import get_canonical_dossier
+        from expansion.emotion import EMOTION_DIMENSIONS
         parts = path.strip('/').split('/')
         agent_id = parts[3]
         emo = EmotionStore().get_or_create(agent_id)
         if len(parts) > 4 and parts[4] == 'why' and len(parts) > 5:
             send_json(emo.explain(parts[5]))
             return True
+        dossier = get_canonical_dossier(agent_id)
         send_json({
             'agent_id': agent_id,
             'dimensions': emo.dimensions,
             'baseline': emo.baseline,
+            'product_baseline': dict(dossier.stress.emotional_baseline or {}),
             'updated_at': emo.updated_at,
+            'provenance': list(emo.provenance or [])[-20:],
+            'primary': sorted(emo.dimensions.items(), key=lambda kv: kv[1], reverse=True)[:5],
+            'secondary': sorted(emo.dimensions.items(), key=lambda kv: kv[1], reverse=True)[5:10],
+            'all_dimensions': list(EMOTION_DIMENSIONS),
+            'stress_behavior': dossier.stress.stress_behavior,
+            'recovery_behavior': dossier.stress.recovery_behavior,
         })
         return True
     if path.startswith('/api/expansion/relationships'):
         from expansion.relationship_interpret import RelationshipInterpreter
+        from expansion.canonical_dossiers import CANONICAL_AGENT_IDS
         interp = RelationshipInterpreter()
         parts = path.strip('/').split('/')
         if len(parts) >= 6 and parts[3] and parts[4] and parts[5] == 'why':
@@ -358,9 +307,24 @@ def handle_expansion_get(path: str, send_json) -> bool:
             return True
         if len(parts) >= 5 and parts[3] and parts[4]:
             s = interp.summarize(parts[3], parts[4])
-            send_json(asdict(s))
+            why = interp.why(parts[3], parts[4])
+            payload = asdict(s)
+            payload['why'] = why
+            send_json(payload)
             return True
-        send_json({'matrix': interp.matrix()})
+        agents = list(CANONICAL_AGENT_IDS) + ['user_primary']
+        matrix = interp.matrix(agents)
+        dims = (
+            'trust', 'affinity', 'respect', 'familiarity', 'dependency',
+            'conflict', 'rivalry', 'jealousy', 'protectiveness', 'reliability', 'attachment',
+        )
+        send_json({
+            'surface': 'relationships',
+            'agents': agents,
+            'dimensions': list(dims),
+            'matrix': matrix,
+            'rule': 'Directional multi-dimension matrix — not a single score.',
+        })
         return True
     if path == '/api/expansion/jobs':
         from expansion.jobs import JobStore

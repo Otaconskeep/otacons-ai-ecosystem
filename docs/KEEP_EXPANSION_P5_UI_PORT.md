@@ -1,6 +1,6 @@
 # Keep Expansion — P5 Flagship UI Port Matrix
 
-**Status:** P5 in progress — Flagship Keep + Autonomy + **Learning Engine**  
+**Status:** P5 correction pass — Flagship UI floors + Autonomy + Learning Engine  
 **Upstream checkpoints:** P0–P3 on origin; P4 qualification complete locally (commit when ready)  
 **Rule:** Private Keep (`/opt/otacon`) is **behavior/visual reference only**. Clean-room rebuild. Never ship private lore, LAN, credentials, medical/household data, or third-party canon agent names.
 
@@ -21,7 +21,7 @@ P0 foundation → P1 runtime → P2 living/command → P3 protected release → 
 
 | Track | Scope | Status |
 |---|---|---|
-| **A** Flagship UI port | Inventory + clean-room surfaces | Inventory ✅; port ongoing |
+| **A** Flagship UI port | Inventory + clean-room surfaces | Floors COMPLETE (dossiers/journal/diary/rel/emotion/war/command/intel/reports/muse/ops/page-builder/CC) |
 | **B** Project REX | Autonomous agile board wired to actions | ✅ |
 | **C** Autonomous R&D | web/docs/github/repo tools | ✅ |
 | **D** Autonomous execution | repo/shell/docker/services | ✅ |
@@ -145,12 +145,15 @@ P5 process (this doc):
 
 **Entry:** `/root/otacons-ai-ecosystem/ui/` — single SPA (`wizard.js` + `home.css` + `codec.css`).
 
-| Exists (usable) | Thin stub (API→cards) | Missing UI (API exists) |
-|---|---|---|
-| Home Command Center | Aria Command, War Room, Ops, Creative | Dedicated Dossiers |
-| Codec (strongest) | Intel (partial), Reports, Rooms list | Dedicated Journals / Diaries |
-| **Project REX corkboard** | Relationships, Emotions | Page Builder editor |
-| Setup wizard | | Video Studio floor |
+| Exists (flagship floor) | Notes |
+|---|---|
+| Command Center / Owner Overview | `command-center` HUD |
+| Codec | Full cockpit |
+| Dossiers / Journal / Diary | Dedicated browsers + WHY |
+| Relationships / Emotions | Full floors + drawers |
+| War Room / Aria Command / Intel / Reports | Deepened operational floors |
+| Muse Creative / Video Studio | Honest READY/LIMITED/UNAVAILABLE |
+| Sentry Ops / Page Builder / REX / Learning | Complete |
 
 Navigation is `showHome` / `showChat` / `showExpansionSurface(kind)` — **registry routes are metadata only**. P5 should add client routing keyed to `RoomRegistry` routes without duplicating hardcoded nav.
 

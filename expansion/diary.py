@@ -60,22 +60,34 @@ class DiaryEntry:
 def _template_diary(agent_id: str, journal: JournalEntry, emotion: dict, dossier) -> tuple[str, dict]:
     """Deterministic local diary text (no LLM required for P2 correctness)."""
     arch = dossier.character.archetype
+    style = (getattr(dossier.character, 'diary_style', None) or '').strip()
     top = sorted(emotion.items(), key=lambda kv: kv[1], reverse=True)[:4]
     feeling = ', '.join(f'{k}={v:.2f}' for k, v in top)
-    vulns = [v.label for v in dossier.vulnerabilities.items[:3]]
-    text = (
-        f"({arch}) Reflecting on: {journal.summary}. "
-        f"Objective result was {journal.objective_result}. "
-        f"My state afterward: {feeling}. "
-        f"This touches my known pressures: {', '.join(vulns) or 'none noted'}."
-    )
+    vulns = [
+        v.label for v in dossier.vulnerabilities.items
+        if not getattr(v, 'intentional_absence', False)
+    ][:3]
+    if style:
+        text = (
+            f"[{style}] {journal.summary} — objective: {journal.objective_result}. "
+            f"Afterward I sat with {feeling}. "
+            f"Pressures in play: {', '.join(vulns) or 'none noted'}."
+        )
+    else:
+        text = (
+            f"({arch}) Reflecting on: {journal.summary}. "
+            f"Objective result was {journal.objective_result}. "
+            f"My state afterward: {feeling}. "
+            f"This touches my known pressures: {', '.join(vulns) or 'none noted'}."
+        )
     why = {
         'source_summary': journal.summary,
         'objective_result': journal.objective_result,
         'archetype': arch,
+        'diary_style': style or None,
         'emotion_highlights': dict(top),
         'vulnerability_labels': vulns,
-        'generator': 'template_v1',
+        'generator': 'template_v2' if style else 'template_v1',
         'rule': 'Diary interprets journal facts; it does not invent events.',
     }
     return text, why

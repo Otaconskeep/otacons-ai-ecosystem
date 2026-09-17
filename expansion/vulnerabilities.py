@@ -44,6 +44,8 @@ class Vulnerability:
     description: str = ''
     triggers: tuple = ()
     affects_operations: bool = False  # must remain False for default product agents
+    # When True: kind is intentionally not a defining trait (still addressable in UI).
+    intentional_absence: bool = False
 
 
 @dataclass
