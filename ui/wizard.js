@@ -129,11 +129,12 @@ async function showHome(){
   await loadCapabilities();
   await loadExpansion();
   let scan=null;
-  try{scan=await apiGet('/api/scan')}catch(e){}
+  try{scan=await apiGet('/api/scan',8000)}catch(e){scan=null}
   const chatOk=capReady('chat'), ttsOk=capReady('tts'), sttOk=capReady('stt');
   const vtOk=capStatus('voice_trainer')==='ready';
   const model=(state.capabilities&&state.capabilities.llm_model)||'—';
-  const gpuDet=((scan&&scan.hardware&&scan.hardware.hardware&&scan.hardware.hardware.gpu_detection)||{});
+  const hwHome=((scan&&scan.hardware&&scan.hardware.hardware)||{});
+  const gpuDet=hwHome.gpu_detection||{};
   const expOn=!!(state.expansion&&state.expansion.enabled);
   const expReady=!!(state.expansion&&state.expansion.foundation_ready);
   const expAgents=(state.roster||[]).map(a=>a.display_name).join(' · ')||'—';

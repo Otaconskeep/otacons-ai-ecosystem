@@ -104,6 +104,8 @@ function Ensure-DistroRunning([string]$Name) {
 
 function Invoke-WslCoreRepair([string]$Name, [int]$PortNum) {
     # Single-quoted bash body — no PowerShell && / & parsing pitfalls.
+    # Pulls latest GitHub tree, removes the old SKIP_NVIDIA / scan=null patches
+    # that falsely showed "No GPU reported", then restarts Codec.
     $bash = @'
 set +e
 PORT="__PORT__"
@@ -119,6 +121,19 @@ OWNER="$(stat -c %U "$ROOT" 2>/dev/null || echo root)"
 echo "OWNER=$OWNER"
 UNIT=/etc/systemd/system/otacon.service
 
+# Pull the pushed fix (memory/THINKING/GPU) — restart alone is not enough.
+if [ -d "$ROOT/.git" ]; then
+  echo "=== git pull ==="
+  echo "before=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo none)"
+  git -C "$ROOT" fetch --prune origin 2>&1 | tail -n 5
+  if ! git -C "$ROOT" pull --ff-only origin main 2>&1; then
+    echo "ff-only failed; hard reset to origin/main"
+    git -C "$ROOT" reset --hard origin/main 2>&1 | tail -n 5
+  fi
+  echo "after=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo none)"
+  echo "revision_file=$(cat "$ROOT/deploy/installer-revision.txt" 2>/dev/null | head -n1)"
+fi
+
 # Stop wedged server (nvidia-smi D-state can pin a single-thread handler forever)
 systemctl stop otacon.service 2>/dev/null || true
 pkill -9 -f "python -m installer.server" 2>/dev/null || true
@@ -126,7 +141,11 @@ pkill -9 -f "installer.server" 2>/dev/null || true
 sleep 1
 
 if [ -f "$UNIT" ]; then
-  grep -q "OTACON_SKIP_NVIDIA_SMI=" "$UNIT" || sed -i "/\[Service\]/a Environment=OTACON_SKIP_NVIDIA_SMI=1" "$UNIT"
+  # REMOVE legacy skip — it forced "No GPU reported" even when CUDA worked.
+  if grep -q "OTACON_SKIP_NVIDIA_SMI=" "$UNIT"; then
+    sed -i '/OTACON_SKIP_NVIDIA_SMI=/d' "$UNIT"
+    echo "removed_OTACON_SKIP_NVIDIA_SMI_from_unit"
+  fi
   # Prefer all-interfaces bind so Windows can use localhost OR the WSL IP
   if grep -q "OTACON_HOST=" "$UNIT"; then
     sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=0.0.0.0|" "$UNIT"
@@ -135,6 +154,8 @@ if [ -f "$UNIT" ]; then
   fi
   if grep -q "OTACON_PORT=" "$UNIT"; then
     sed -i "s|^Environment=OTACON_PORT=.*|Environment=OTACON_PORT=${PORT}|" "$UNIT"
+  else
+    sed -i "/\[Service\]/a Environment=OTACON_PORT=${PORT}" "$UNIT"
   fi
   systemctl daemon-reload 2>/dev/null || true
   systemctl enable otacon.service 2>/dev/null || true
@@ -145,7 +166,8 @@ if [ -f "$UNIT" ]; then
   systemctl is-active otacon.service 2>/dev/null || echo "unit_not_active"
 fi
 
-# Hot-patch Codec UI: never block Open Codec on /api/scan
+# Undo old repair hot-patch that forced scan=null (lied about GPU).
+# Timed /api/scan is safe: platform.detect abandons hung nvidia-smi.
 WIZARD="$ROOT/ui/wizard.js"
 if [ -f "$WIZARD" ]; then
   python3 - "$WIZARD" <<'PY'
@@ -153,17 +175,15 @@ import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 t = p.read_text(encoding="utf-8", errors="replace")
 orig = t
-# Old showChat awaited scan and hung when the server was wedged.
-t = t.replace(
-    "try{scan=await apiGet('/api/scan')}catch(e){}",
-    "scan=null; /* repair: never block Codec on GPU scan */",
-)
-# If scan() has no timeout wrapper yet, leave it; server-side skip is enough.
+bad = "scan=null; /* repair: never block Codec on GPU scan */"
+good = "try{scan=await apiGet('/api/scan',8000)}catch(e){scan=null}"
+if bad in t:
+    t = t.replace(bad, good)
+    print("unpatched_wizard_scan_null")
+else:
+    print("wizard_scan_ok")
 if t != orig:
     p.write_text(t, encoding="utf-8")
-    print("patched_wizard")
-else:
-    print("wizard_ok")
 PY
 fi
 
@@ -177,9 +197,9 @@ if [ "$alive" -ne 1 ] && [ -x "$ROOT/.venv/bin/python" ]; then
   mkdir -p "/home/${OWNER}/.config/otacon" /root/.config/otacon 2>/dev/null || true
   LOGF="/home/${OWNER}/.config/otacon/wizard.log"
   if [ "$OWNER" = "root" ]; then LOGF=/root/.config/otacon/wizard.log; fi
+  # Do NOT set OTACON_SKIP_NVIDIA_SMI — GPU detect has its own timeout.
   if command -v runuser >/dev/null 2>&1 && [ "$OWNER" != "root" ]; then
     runuser -u "$OWNER" -- env \
-      OTACON_SKIP_NVIDIA_SMI=1 \
       OTACON_HOST=0.0.0.0 \
       OTACON_PORT="$PORT" \
       PYTHONPATH="$ROOT" \
@@ -188,7 +208,8 @@ if [ "$alive" -ne 1 ] && [ -x "$ROOT/.venv/bin/python" ]; then
       bash -lc "cd \"$ROOT\" && nohup \"$ROOT/.venv/bin/python\" -m installer.server >\"$LOGF\" 2>&1 & echo \$! >\"\$HOME/.config/otacon/wizard.pid\""
   else
     cd "$ROOT" || exit 3
-    export OTACON_SKIP_NVIDIA_SMI=1 OTACON_HOST=0.0.0.0 OTACON_PORT="$PORT" PYTHONPATH="$ROOT"
+    export OTACON_HOST=0.0.0.0 OTACON_PORT="$PORT" PYTHONPATH="$ROOT"
+    unset OTACON_SKIP_NVIDIA_SMI
     export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wsl/lib:$PATH"
     export LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     nohup "$ROOT/.venv/bin/python" -m installer.server >/tmp/otacon-wizard.log 2>&1 &
@@ -202,10 +223,12 @@ ss -lntp 2>/dev/null | grep ":${PORT}" || netstat -lntp 2>/dev/null | grep ":${P
 echo "=== branding ==="
 curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/api/branding" || echo BRANDING_FAIL
 echo
+echo "=== scan gpu ==="
+curl -fsS --max-time 12 "http://127.0.0.1:${PORT}/api/scan" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); h=((d.get('hardware') or {}).get('hardware') or {}); print('gpus', h.get('gpus')); print('det', h.get('gpu_detection'))" 2>/dev/null || echo SCAN_FAIL
 echo "=== done ==="
 '@
     $bash = $bash.Replace("__PORT__", [string]$PortNum)
-    Write-RepairLog "Running in-WSL core repair..."
+    Write-RepairLog "Running in-WSL core repair (git pull + undo GPU skip)..."
     $out = & wsl.exe -d $Name -u root -- bash -lc $bash 2>&1
     $text = ($out | Out-String)
     Write-RepairLog ($text.Trim())
