@@ -39,7 +39,23 @@ async function api(path,body,timeoutMs){
   const timer=ctrl?setTimeout(()=>ctrl.abort(),ms):null;
   try{
     let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{}),signal:ctrl?ctrl.signal:undefined});
-    return {ok:r.ok,status:r.status,data:await r.json()};
+    let data=null;
+    try{ data=await r.json(); }catch(_e){ data={error:{code:'BAD_JSON',message:'Server returned a non-JSON response.'}}; }
+    return {ok:r.ok,status:r.status,data:data};
+  }catch(err){
+    const aborted=err&&(err.name==='AbortError'||/abort/i.test(String(err&&err.message||err)));
+    return {
+      ok:false,
+      status:0,
+      data:{
+        error:{
+          code: aborted?'TIMEOUT':'NETWORK_ERROR',
+          message: aborted?'The request timed out.':'Could not reach the Otacon server.',
+          technical:String(err&&err.message||err),
+          exception:(err&&err.name)||'Error',
+        }
+      }
+    };
   }finally{ if(timer) clearTimeout(timer); }
 }
 async function apiGet(path,timeoutMs){
@@ -67,7 +83,8 @@ function capStatus(key){
   return c[key]||'not_configured';
 }
 function capReady(key){
-  if(!state.capabilities) return key==='chat'||key==='tts';
+  // Unknown/missing capabilities must NEVER look ready (CHAT READY lying).
+  if(!state.capabilities) return false;
   return capStatus(key)==='ready';
 }
 function capAnnotate(key, readyLabel, fallback){
@@ -554,14 +571,16 @@ function animateFreq(){
 async function showChat(){
   state.view='codec';
   setBodyMode('codec');
-  // Paint Codec even if prefs/voices are slow — never block on /api/scan (WSL nvidia-smi hang).
+  // Paint Codec even if prefs/voices are slow. GPU scan has a hard timeout
+  // (platform.detect abandons hung nvidia-smi) so we never skip it and lie.
   await Promise.allSettled([
     loadPrefs(),
     loadVoices(),
     loadCapabilities(),
     loadExpansion(),
   ]);
-  let scan=null; // GPU sidebar line is cosmetic; skip scan so Open Codec is never a dud
+  let scan=null;
+  try{ scan=await apiGet('/api/scan', 8000); }catch(_e){ scan=null; }
   const aid=currentAgentId();
   let cs;
   try{
@@ -574,9 +593,17 @@ async function showChat(){
   }
 
   const ttsOk=capReady('tts'), chatOk=capReady('chat'), sttOk=capReady('stt');
+  const voiceOk=chatOk&&ttsOk;
   const model=(state.capabilities&&state.capabilities.llm_model)||state.lastModel||'—';
-  const gpus=((scan&&scan.hardware&&scan.hardware.hardware&&scan.hardware.hardware.gpus)||[]);
-  const gpuLine=gpus.length?gpus.map(g=>`${g.model} · ${g.vram_gb} GB`).join(' / '):'No GPU reported';
+  const hw=((scan&&scan.hardware&&scan.hardware.hardware)||{});
+  const gpus=hw.gpus||[];
+  const gpuDet=hw.gpu_detection||{};
+  let gpuLine='No GPU reported';
+  if(gpus.length){
+    gpuLine=gpus.map(g=>`${g.model||g.name||'GPU'} · ${g.vram_gb||'?'} GB`).join(' / ');
+  }else if(gpuDet&&(gpuDet.status==='detected'||gpuDet.nvidia_smi)){
+    gpuLine=String(gpuDet.message||'NVIDIA GPU detected');
+  }
   const vtOk=capStatus('voice_trainer')==='ready';
   const voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
   const roster=state.roster&&state.roster.length?state.roster:[{id:aid,display_name:currentAgentName()}];
@@ -597,7 +624,7 @@ async function showChat(){
       <div class="cc-greeble">
         <span>LINK LOCAL</span>
         <span>CHAT ${chatOk?'READY':'DOWN'}</span>
-        <span>TTS ${ttsOk?'READY':'DOWN'}</span>
+        <span>VOICE ${voiceOk?'READY':'DOWN'}</span>
         <span>MODEL ${escapeHtml(String(model))}</span>
         <span>AGENT ${escapeHtml(String(agentName).toUpperCase())}</span>
       </div>
@@ -785,16 +812,26 @@ async function sendChat(){
   el.value='';
   box.scrollTop=box.scrollHeight;
   setCodecMode('thinking');
-  let r=await api('/api/chat_with_agent',{
-    agent:{id:currentAgentId(),display_name:currentAgentName(),voice_id:state.voiceId},
-    message:m, conversation_id:state.conversation, auto_speak:state.autoSpeak
-  });
-  document.getElementById('wait')?.remove();
-  if(!r.ok){
-    const err=r.data&&r.data.error;
-    const tech=(err&&(err.message||err.technical))||'Your AI service is unavailable.';
-    box.insertAdjacentHTML('beforeend', `<div class="msg-row-bot"><div class="msg-bot"><div class="msg-bot-name">${escapeHtml(currentAgentName())}</div><div>${escapeHtml(tech)}</div></div></div>`);
-    setCodecMode('idle');
+  let r=null;
+  try{
+    r=await api('/api/chat_with_agent',{
+      agent:{id:currentAgentId(),display_name:currentAgentName(),voice_id:state.voiceId},
+      message:m, conversation_id:state.conversation, auto_speak:state.autoSpeak
+    });
+  }catch(err){
+    r={ok:false,data:{error:{code:'CLIENT_ERROR',message:String(err&&err.message||err),exception:(err&&err.name)||'Error'}}};
+  }finally{
+    document.getElementById('wait')?.remove();
+    // Guaranteed: THINKING never sticks after any failure or success.
+    if(!(r&&r.ok&&state.autoSpeak&&r.data&&r.data.voice&&r.data.voice.audio_base64)){
+      setCodecMode('idle');
+    }
+  }
+  if(!r||!r.ok){
+    const err=r&&r.data&&r.data.error;
+    const tech=(err&&(err.technical||err.message))||'';
+    box.insertAdjacentHTML('beforeend', `<div class="msg-row-bot"><div class="msg-bot"><div class="msg-bot-name">${escapeHtml(currentAgentName())}</div><div>I couldn't complete that request.</div></div></div>`);
+    try{ console.warn('[CODEC]', (err&&err.code)||'CHAT_FAIL', (err&&err.exception)||'', tech); }catch(_e){}
     box.scrollTop=box.scrollHeight;
     return;
   }
@@ -803,15 +840,17 @@ async function sendChat(){
   if(d.model_note){
     box.insertAdjacentHTML('beforeend', `<p class=muted style="font-size:10px">${escapeHtml(d.model_note)}</p>`);
   }
+  if(d.conversation_id){ state.conversation=d.conversation_id; }
   let mid=uid+1;
   box.insertAdjacentHTML('beforeend', messageHtml('assistant', d.text, mid));
   box.scrollTop=box.scrollHeight;
-  setCodecMode('idle');
   if(d.voice && d.voice.status==='error'){
     let err=document.querySelector(`[data-speak-err="${mid}"]`);
     if(err) err.textContent='Voice playback unavailable';
   } else if(state.autoSpeak && d.voice && d.voice.audio_base64){
     playAudio(d.voice.audio_base64, mid);
+  } else {
+    setCodecMode('idle');
   }
 }
 

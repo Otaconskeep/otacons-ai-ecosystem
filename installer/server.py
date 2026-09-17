@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 from core.platform import detect
@@ -209,8 +210,70 @@ def _agent_from_request(data: dict) -> dict:
     return agent
 
 
+# Lightweight chat-probe cache: expensive inference must not run on every
+# /api/capabilities poll, but installer acceptance and first Codec paint need truth.
+_CHAT_PROBE_CACHE: dict = {'at': 0.0, 'ok': False, 'detail': '', 'model': ''}
+
+
+def _memory_usable() -> tuple[bool, str]:
+    try:
+        MEMORY.ping()
+        # Prove create/list path (the exact crash site before inference).
+        cid = MEMORY.create_conversation('__health__', '__health__', title='health')
+        MEMORY.list_conversations('__health__', '__health__')
+        MEMORY.delete_conversation(cid, '__health__', '__health__')
+        return True, ''
+    except Exception as exc:  # noqa: BLE001
+        return False, f'{type(exc).__name__}: {exc}'
+
+
+def _chat_inference_probe(endpoint: str, model: str, *, force: bool = False) -> tuple[bool, str, str]:
+    """Return (ok, detail, resolved_model). Cached ~90s unless force=True."""
+    now = time.time()
+    ttl = float(os.getenv('OTACON_CHAT_PROBE_TTL', '90') or '90')
+    if (
+        not force
+        and (now - float(_CHAT_PROBE_CACHE.get('at') or 0)) < ttl
+        and _CHAT_PROBE_CACHE.get('model') == model
+        and _CHAT_PROBE_CACHE.get('at')
+    ):
+        return (
+            bool(_CHAT_PROBE_CACHE.get('ok')),
+            str(_CHAT_PROBE_CACHE.get('detail') or ''),
+            str(_CHAT_PROBE_CACHE.get('resolved') or model),
+        )
+    try:
+        prov = OllamaProvider(endpoint)
+        resolved = model
+        if hasattr(prov, 'resolve_model'):
+            resolved, _note = prov.resolve_model(model)
+        token = 'OTACON_OK'
+        text = prov.generate(
+            resolved,
+            f'Reply with exactly: {token}',
+        )
+        ok = token in (text or '').replace(' ', '')
+        detail = 'inference probe ok' if ok else f'unexpected reply: {(text or "")[:120]}'
+        _CHAT_PROBE_CACHE.update({
+            'at': now, 'ok': ok, 'detail': detail, 'model': model, 'resolved': resolved,
+        })
+        return ok, detail, str(resolved)
+    except Exception as exc:  # noqa: BLE001
+        detail = f'{type(exc).__name__}: {exc}'
+        _CHAT_PROBE_CACHE.update({
+            'at': now, 'ok': False, 'detail': detail, 'model': model, 'resolved': model,
+        })
+        return False, detail, model
+
+
 def _capability_snapshot() -> dict:
-    """Honest capability states for the UI (ready / not_configured / unavailable / degraded / error)."""
+    """Honest capability states for the UI (ready / not_configured / unavailable / degraded / error).
+
+    CHAT READY requires:
+      1) SQLite memory usable (create/list/delete)
+      2) Ollama reachable and configured model present
+      3) Lightweight inference probe (cached; force via OTACON_CHAT_PROBE=1)
+    """
     caps = {
         'chat': 'not_configured',
         'tts': 'not_configured',
@@ -219,32 +282,65 @@ def _capability_snapshot() -> dict:
         'video': 'not_configured',
         'bind_mode': BIND_MODE,
         'lan_auth_required': BIND_MODE == 'lan',
+        'memory_ok': False,
+        'ollama_ok': False,
+        'chat_probe_ok': False,
     }
-    try:
-        provider, endpoint, model = _llm_settings()
-        if os.getenv('OTACON_USE_TEST_LLM', '').strip() in ('1', 'true', 'yes') or provider == 'test':
-            caps['chat'] = 'ready'
-        elif model:
-            try:
-                prov = OllamaProvider(endpoint)
-                if hasattr(prov, 'resolve_model'):
+    mem_ok, mem_detail = _memory_usable()
+    caps['memory_ok'] = mem_ok
+    if not mem_ok:
+        caps['chat'] = 'error'
+        caps['chat_detail'] = f'memory unusable: {mem_detail}'
+    else:
+        try:
+            provider, endpoint, model = _llm_settings()
+            if os.getenv('OTACON_USE_TEST_LLM', '').strip() in ('1', 'true', 'yes') or provider == 'test':
+                caps['chat'] = 'ready'
+                caps['ollama_ok'] = True
+                caps['chat_probe_ok'] = True
+                caps['chat_detail'] = 'test LLM'
+            elif model:
+                try:
+                    prov = OllamaProvider(endpoint)
+                    resolved = model
                     try:
-                        prov.resolve_model(model)
-                        caps['chat'] = 'ready'
+                        if hasattr(prov, 'resolve_model'):
+                            resolved, _note = prov.resolve_model(model)
+                        else:
+                            health = prov.health(model)
+                            if getattr(health, 'state', '') != 'ONLINE':
+                                raise RuntimeError(getattr(health, 'detail', 'model offline'))
+                        caps['ollama_ok'] = True
                     except Exception as exc:
                         caps['chat'] = 'unavailable'
-                        caps['chat_detail'] = str(exc)
-                else:
-                    health = prov.health(model)
-                    caps['chat'] = 'ready' if getattr(health, 'state', '') == 'ONLINE' else 'unavailable'
-                    if caps['chat'] != 'ready':
-                        caps['chat_detail'] = getattr(health, 'detail', '')
-            except Exception:
-                caps['chat'] = 'error'
-        else:
-            caps['chat'] = 'not_configured'
-    except Exception:
-        caps['chat'] = 'error'
+                        caps['chat_detail'] = f'model missing/unreachable: {exc}'
+                        caps['ollama_ok'] = False
+                    if caps['ollama_ok']:
+                        force = os.getenv('OTACON_CHAT_PROBE', '').strip().lower() in (
+                            '1', 'true', 'yes', 'force',
+                        )
+                        # Always require a successful (possibly cached) probe for CHAT READY.
+                        # First call after restart runs a real generate; later polls use cache.
+                        probe_ok, probe_detail, resolved = _chat_inference_probe(
+                            endpoint, model, force=force,
+                        )
+                        caps['chat_probe_ok'] = probe_ok
+                        caps['llm_model_resolved'] = resolved
+                        if probe_ok:
+                            caps['chat'] = 'ready'
+                            caps['chat_detail'] = probe_detail
+                        else:
+                            caps['chat'] = 'unavailable'
+                            caps['chat_detail'] = f'chat probe failed: {probe_detail}'
+                except Exception as exc:
+                    caps['chat'] = 'error'
+                    caps['chat_detail'] = str(exc)
+            else:
+                caps['chat'] = 'not_configured'
+                caps['chat_detail'] = 'no LLM model configured'
+        except Exception as exc:
+            caps['chat'] = 'error'
+            caps['chat_detail'] = str(exc)
 
     try:
         # TTS is ready only when the configured provider is reachable — catalog
@@ -254,8 +350,12 @@ def _capability_snapshot() -> dict:
         assignment = _resolve_tts(_deployment(), 'text_to_speech')
         prov = provider_for_assignment(assignment)
         health = prov.health()
-        if health in (_TTS_READY, 'ONLINE'):
+        if health in (_TTS_READY, 'ONLINE') and caps.get('chat') == 'ready':
             caps['tts'] = 'ready'
+        elif health in (_TTS_READY, 'ONLINE'):
+            # Piper up but chat path not proven — VOICE READY requires chat.
+            caps['tts'] = 'degraded'
+            caps['tts_detail'] = 'TTS healthy; chat not ready yet'
         elif os.getenv('OTACON_ALLOW_TEST_TTS', '').lower() in ('1', 'true', 'yes'):
             caps['tts'] = 'ready'
             caps['tts_detail'] = 'test TTS allowed (OTACON_ALLOW_TEST_TTS=1)'

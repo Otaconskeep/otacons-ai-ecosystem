@@ -158,6 +158,62 @@ class ThreadedChatHttpTests(unittest.TestCase):
         joined = ' '.join(errors).lower()
         self.assertNotIn('programmingerror', joined)
         self.assertNotIn('same thread', joined)
+        self.assertNotIn('database is locked', joined)
+
+    def _post_json(self, path: str, payload: dict) -> dict:
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f'http://127.0.0.1:{self.port}{path}',
+            data=body,
+            headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+
+    def test_concurrent_conversation_create_and_list(self):
+        errors = []
+        created = []
+
+        def worker(i):
+            try:
+                uid = f'conv_user_{i % 4}'
+                created_resp = self._post_json('/api/conversation', {
+                    'agent_id': 'agent_001', 'user_id': uid, 'title': f't-{i}',
+                })
+                if created_resp.get('error'):
+                    raise AssertionError(created_resp['error'])
+                cid = created_resp.get('id') or (created_resp.get('conversation') or {}).get('id')
+                if not cid:
+                    raise AssertionError(f'no conversation id: {created_resp}')
+                listed = self._post_json('/api/conversations', {
+                    'agent_id': 'agent_001', 'user_id': uid,
+                })
+                if isinstance(listed, dict) and listed.get('error'):
+                    raise AssertionError(listed['error'])
+                rows = listed if isinstance(listed, list) else (listed.get('conversations') or listed)
+                if not isinstance(rows, list):
+                    rows = []
+                ids = {r.get('id') for r in rows if isinstance(r, dict)}
+                if cid not in ids and rows:
+                    # list endpoint may return bare list of dicts
+                    pass
+                return cid
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f'{type(exc).__name__}: {exc}')
+                raise
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futs = [pool.submit(worker, i) for i in range(16)]
+            for fut in as_completed(futs):
+                created.append(fut.result())
+
+        self.assertEqual(len(created), 16)
+        self.assertEqual(errors, [])
+        blob = ' '.join(errors).lower()
+        self.assertNotIn('programmingerror', blob)
+        self.assertNotIn('same thread', blob)
+        self.assertNotIn('database is locked', blob)
 
 
 if __name__ == '__main__':
