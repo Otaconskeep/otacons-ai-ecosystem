@@ -70,15 +70,70 @@ if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then
   exit 2
 fi
 
-if [ -d "$ROOT/.git" ]; then
-  echo "=== hard sync to origin/main ==="
-  echo "before=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo none)"
-  git -C "$ROOT" fetch --prune origin 2>&1 | tail -n 8
-  git -C "$ROOT" checkout -B main origin/main 2>&1 | tail -n 5
-  git -C "$ROOT" reset --hard origin/main 2>&1 | tail -n 5
-  echo "after=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo none)"
+OWNER="$(stat -c '%U' "$ROOT" 2>/dev/null || true)"
+OWNER_UID="$(stat -c '%u' "$ROOT" 2>/dev/null || true)"
+echo "OWNER=${OWNER:-}"
+echo "OWNER_UID=${OWNER_UID:-}"
+if [ -z "$OWNER" ] || [ -z "$OWNER_UID" ]; then
+  echo "stage=owner-lookup"
+  echo "APP_REV_FAIL=owner_lookup_failed"
+  exit 3
+fi
+if ! id -u "$OWNER" >/dev/null 2>&1; then
+  echo "stage=owner-lookup"
+  echo "APP_REV_FAIL=owner_invalid owner=$OWNER"
+  exit 3
+fi
+if [ "$OWNER" = "root" ] && [ "$OWNER_UID" != "0" ]; then
+  echo "stage=owner-lookup"
+  echo "APP_REV_FAIL=owner_root_mismatch uid=$OWNER_UID"
+  exit 3
+fi
+if [ "$OWNER" != "root" ] && ! command -v runuser >/dev/null 2>&1; then
+  echo "stage=owner-lookup"
+  echo "APP_REV_FAIL=runuser_missing owner=$OWNER"
+  exit 3
 fi
 
+git_as_owner() {
+  if [ "$OWNER" = "root" ]; then
+    git -C "$ROOT" "$@"
+  else
+    runuser -u "$OWNER" -- git -C "$ROOT" "$@"
+  fi
+}
+
+if [ -d "$ROOT/.git" ]; then
+  echo "=== hard sync to origin/main as owner=$OWNER ==="
+  echo "stage=git-rev-parse"
+  BEFORE="$(git_as_owner rev-parse --short HEAD 2>/dev/null || echo unknown/query_failed)"
+  echo "before=$BEFORE"
+  echo "APP_REV_BEFORE=$BEFORE"
+  echo "stage=git-fetch"
+  git_as_owner fetch --prune origin 2>&1 | tee /tmp/otacon-gpu-fetch.log | tail -n 8
+  FETCH_EC=${PIPESTATUS[0]}
+  echo "git_exit=$FETCH_EC"
+  if [ "$FETCH_EC" -ne 0 ]; then
+    echo "APP_REV_FAIL=git_fetch_failed exit=$FETCH_EC"
+    exit 3
+  fi
+  echo "stage=git-checkout"
+  git_as_owner checkout -B main origin/main 2>&1 | tail -n 5
+  echo "stage=git-reset"
+  git_as_owner reset --hard origin/main 2>&1 | tee /tmp/otacon-gpu-reset.log | tail -n 5
+  RESET_EC=${PIPESTATUS[0]}
+  echo "git_exit=$RESET_EC"
+  if [ "$RESET_EC" -ne 0 ]; then
+    echo "APP_REV_FAIL=git_reset_failed exit=$RESET_EC"
+    exit 3
+  fi
+  echo "after=$(git_as_owner rev-parse --short HEAD 2>/dev/null || echo unknown/query_failed)"
+else
+  echo "APP_REV_FAIL=no_git"
+  exit 3
+fi
+
+echo "stage=systemd"
 UNIT=/etc/systemd/system/otacon.service
 systemctl stop otacon.service 2>/dev/null || true
 pkill -9 -f "installer.server" 2>/dev/null || true
@@ -127,11 +182,12 @@ if [ -f /tmp/otacon-gpu-ok ]; then
 fi
 
 # Must still prove app revision moved / matches tip (same rule as repair-otacon-core).
-AFTER="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo none)"
-ORIGIN_TIP="$(git -C "$ROOT" rev-parse origin/main 2>/dev/null || echo none)"
+echo "stage=git-rev-parse-after"
+AFTER="$(git_as_owner rev-parse HEAD 2>/dev/null || echo unknown/query_failed)"
+ORIGIN_TIP="$(git_as_owner rev-parse origin/main 2>/dev/null || echo unknown/query_failed)"
 echo "APP_REV_AFTER=$AFTER"
 echo "ORIGIN_MAIN=$ORIGIN_TIP"
-if [ "$AFTER" = "none" ] || [ "$AFTER" != "$ORIGIN_TIP" ]; then
+if [ "$AFTER" = "unknown/query_failed" ] || [ "$AFTER" != "$ORIGIN_TIP" ]; then
   echo "APP_REV_FAIL=revision_mismatch after=$AFTER origin=$ORIGIN_TIP"
   exit 4
 fi

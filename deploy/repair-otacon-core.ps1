@@ -142,41 +142,107 @@ if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then
   echo "APP_REV_FAIL=no_install_tree"
   exit 2
 fi
-OWNER="$(stat -c %U "$ROOT" 2>/dev/null || echo root)"
-echo "OWNER=$OWNER"
-
-BEFORE="none"
-if [ -d "$ROOT/.git" ]; then
-  BEFORE="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo none)"
+OWNER="$(stat -c '%U' "$ROOT" 2>/dev/null || true)"
+OWNER_UID="$(stat -c '%u' "$ROOT" 2>/dev/null || true)"
+echo "OWNER=${OWNER:-}"
+echo "OWNER_UID=${OWNER_UID:-}"
+if [ -z "$OWNER" ] || [ -z "$OWNER_UID" ]; then
+  echo "stage=owner-lookup"
+  echo "APP_REV_FAIL=owner_lookup_failed"
+  exit 3
 fi
-echo "APP_REV_BEFORE=$BEFORE"
+if ! id -u "$OWNER" >/dev/null 2>&1; then
+  echo "stage=owner-lookup"
+  echo "APP_REV_FAIL=owner_invalid owner=$OWNER"
+  exit 3
+fi
+# "root" is only valid when the tree is actually uid 0.
+if [ "$OWNER" = "root" ] && [ "$OWNER_UID" != "0" ]; then
+  echo "stage=owner-lookup"
+  echo "APP_REV_FAIL=owner_root_mismatch uid=$OWNER_UID"
+  exit 3
+fi
+if [ "$OWNER" != "root" ] && ! command -v runuser >/dev/null 2>&1; then
+  echo "stage=owner-lookup"
+  echo "APP_REV_FAIL=runuser_missing owner=$OWNER"
+  exit 3
+fi
 
-UPDATE_CMD="git fetch + reset --hard"
-echo "UPDATE_CMD=$UPDATE_CMD"
+# Git must run as the repository owner to satisfy ownership checks. Privileged ops stay root.
+git_as_owner() {
+  if [ "$OWNER" = "root" ]; then
+    git -C "$ROOT" "$@"
+  else
+    runuser -u "$OWNER" -- git -C "$ROOT" "$@"
+  fi
+}
+
+BEFORE="unknown/query_failed"
 if [ -d "$ROOT/.git" ]; then
-  echo "=== git hard sync ==="
-  git -C "$ROOT" fetch --prune origin > /tmp/otacon-git-fetch.log 2>&1
-  FETCH_EC=$?
-  echo "FETCH_EXIT=$FETCH_EC"
-  cat /tmp/otacon-git-fetch.log | tail -n 20
-  git -C "$ROOT" checkout -B main origin/main > /tmp/otacon-git-checkout.log 2>&1
-  echo "CHECKOUT_EXIT=$?"
-  git -C "$ROOT" reset --hard origin/main > /tmp/otacon-git-reset.log 2>&1
-  RESET_EC=$?
-  echo "RESET_EXIT=$RESET_EC"
-  cat /tmp/otacon-git-reset.log | tail -n 10
-  if [ "$FETCH_EC" -ne 0 ] || [ "$RESET_EC" -ne 0 ]; then
-    echo "APP_REV_FAIL=git_sync_failed fetch=$FETCH_EC reset=$RESET_EC"
+  echo "stage=git-rev-parse"
+  BEFORE="$(git_as_owner rev-parse HEAD 2>/tmp/otacon-git-revparse-before.err)"
+  RP_EC=$?
+  echo "git_exit=$RP_EC"
+  if [ "$RP_EC" -ne 0 ] || [ -z "$BEFORE" ]; then
+    BEFORE="unknown/query_failed"
+    echo "APP_REV_BEFORE=$BEFORE"
+    echo "APP_REV_FAIL=git_revparse_failed exit=$RP_EC"
+    tail -n 20 /tmp/otacon-git-revparse-before.err 2>/dev/null || true
     exit 3
   fi
 else
   echo "NO_GIT_DIR"
+  echo "APP_REV_BEFORE=$BEFORE"
   echo "APP_REV_FAIL=no_git"
   exit 3
 fi
+echo "APP_REV_BEFORE=$BEFORE"
 
-AFTER="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo none)"
-ORIGIN_TIP="$(git -C "$ROOT" rev-parse origin/main 2>/dev/null || echo none)"
+UPDATE_CMD="git fetch + reset --hard (as $OWNER)"
+echo "UPDATE_CMD=$UPDATE_CMD"
+echo "=== git hard sync as owner=$OWNER ==="
+
+echo "stage=git-fetch"
+git_as_owner fetch --prune origin > /tmp/otacon-git-fetch.log 2>&1
+FETCH_EC=$?
+echo "git_exit=$FETCH_EC"
+echo "FETCH_EXIT=$FETCH_EC"
+tail -n 20 /tmp/otacon-git-fetch.log
+if [ "$FETCH_EC" -ne 0 ]; then
+  echo "APP_REV_FAIL=git_fetch_failed exit=$FETCH_EC"
+  exit 3
+fi
+
+echo "stage=git-checkout"
+git_as_owner checkout -B main origin/main > /tmp/otacon-git-checkout.log 2>&1
+CHECKOUT_EC=$?
+echo "git_exit=$CHECKOUT_EC"
+echo "CHECKOUT_EXIT=$CHECKOUT_EC"
+tail -n 10 /tmp/otacon-git-checkout.log
+if [ "$CHECKOUT_EC" -ne 0 ]; then
+  echo "APP_REV_FAIL=git_checkout_failed exit=$CHECKOUT_EC"
+  exit 3
+fi
+
+echo "stage=git-reset"
+git_as_owner reset --hard origin/main > /tmp/otacon-git-reset.log 2>&1
+RESET_EC=$?
+echo "git_exit=$RESET_EC"
+echo "RESET_EXIT=$RESET_EC"
+tail -n 10 /tmp/otacon-git-reset.log
+if [ "$RESET_EC" -ne 0 ]; then
+  echo "APP_REV_FAIL=git_reset_failed exit=$RESET_EC"
+  exit 3
+fi
+
+echo "stage=git-rev-parse-after"
+AFTER="$(git_as_owner rev-parse HEAD 2>/tmp/otacon-git-revparse-after.err)"
+AFTER_EC=$?
+echo "git_exit=$AFTER_EC"
+if [ "$AFTER_EC" -ne 0 ] || [ -z "$AFTER" ]; then
+  AFTER="unknown/query_failed"
+fi
+ORIGIN_TIP="$(git_as_owner rev-parse origin/main 2>/dev/null || echo unknown/query_failed)"
 echo "APP_REV_AFTER=$AFTER"
 echo "ORIGIN_MAIN=$ORIGIN_TIP"
 
@@ -184,7 +250,7 @@ echo "ORIGIN_MAIN=$ORIGIN_TIP"
 # installer-revision.txt may name the parent content commit (bump commit is tip),
 # so accept: after==origin/main AND (no target | after has target as ancestor | prefix match).
 REV_OK=0
-if [ "$AFTER" != "none" ] && [ "$AFTER" = "$ORIGIN_TIP" ]; then
+if [ "$AFTER" != "unknown/query_failed" ] && [ "$AFTER" = "$ORIGIN_TIP" ]; then
   REV_OK=1
 fi
 if [ "$REV_OK" -eq 1 ] && [ -n "$TARGET" ]; then
@@ -192,7 +258,7 @@ if [ "$REV_OK" -eq 1 ] && [ -n "$TARGET" ]; then
   TARGET_SHORT="$(echo "$TARGET" | cut -c1-12)"
   if [ "$AFTER" = "$TARGET" ] || [ "$AFTER_SHORT" = "$TARGET_SHORT" ]; then
     echo "TARGET_MATCHES_TIP=1"
-  elif git -C "$ROOT" merge-base --is-ancestor "$TARGET" "$AFTER" 2>/dev/null; then
+  elif git_as_owner merge-base --is-ancestor "$TARGET" "$AFTER" 2>/dev/null; then
     echo "TARGET_INCLUDED_IN_TIP=1"
   else
     echo "APP_REV_FAIL=target_not_in_history target=$TARGET after=$AFTER"
@@ -205,6 +271,7 @@ if [ "$REV_OK" -ne 1 ]; then
   exit 4
 fi
 echo "APP_REV_OK=1"
+echo "stage=content-proofs"
 
 # Content proofs for known Linux-side fixes
 MEM="$ROOT/core/memory.py"
@@ -224,6 +291,7 @@ if [ "$PROOF_MEMORY" -ne 1 ] || [ "$PROOF_SCAN" -ne 1 ] || [ "$PROOF_THINK" -ne 
 fi
 echo "CONTENT_PROOFS_OK=1"
 
+echo "stage=systemd"
 UNIT=/etc/systemd/system/otacon.service
 systemctl stop otacon.service 2>/dev/null || true
 pkill -9 -f "python -m installer.server" 2>/dev/null || true
@@ -304,6 +372,13 @@ exit 0
         $script:OtaconWslTransportExit = [int]$run.ExitCode
         if ($script:OtaconWslTransportExit -eq 0) { $script:OtaconWslTransportExit = 1 }
         return [string]$run.Output
+    }
+    # Surface explicit Git stage markers from the Linux script (separate from transport OK).
+    if ($run.Output -match 'stage=(git-[^\r\n]+)') {
+        Write-RepairLog ("Linux git stage marker: {0}" -f $Matches[1])
+    }
+    if ($run.Output -match 'APP_REV_FAIL=git_') {
+        Write-RepairLog "Linux Git operation failed (see stage=/git_exit= markers above)"
     }
     return [string]$run.Output
 }
