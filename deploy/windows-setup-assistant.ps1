@@ -135,12 +135,65 @@ function Save-InstallerState {
 
 function Save-InstallerComplete {
     # Gate D/J: success must clear prior failure residue.
-    Save-InstallerState @{
+    # Reboot persistence may still be pending - that is explicit state, not silent COMPLETE.
+    $fields = @{
         stage      = "complete"
         step       = 8
         last_error = $null
         last_step  = "complete"
     }
+    $cur = Get-InstallerState
+    if (-not $cur["reboot_persistence"] -or $cur["reboot_persistence"] -eq "") {
+        $fields["reboot_persistence"] = "pending"
+        $fields["reboot_persistence_note"] = "Verify after next Windows sign-in"
+    }
+    Save-InstallerState $fields
+}
+
+function Test-OtaconRebootPersistence {
+    <#
+      Post-sign-in validation: keepalive present, branding identity, systemd active,
+      and a real Aria chat returns text. Promotes reboot_persistence pending -> verified.
+    #>
+    param([string]$Name = "")
+    if (-not $Name) { $Name = Get-UbuntuDistroName }
+    $st = Get-InstallerState
+    $status = [string]$st["reboot_persistence"]
+    if ($status -eq "verified") { return $true }
+    $ok = $true
+    $keepScript = Join-Path $KeepDir "keep-ubuntu-awake.ps1"
+    $startupVbs = Join-Path ([Environment]::GetFolderPath("Startup")) "OtaconsKeep-KeepAlive.vbs"
+    if (-not (Test-Path -LiteralPath $keepScript)) { $ok = $false; Write-KeepLog "reboot persist: missing keepalive script" -Level "WARN" -Stage "REBOOT_PERSIST" }
+    if (-not (Test-Path -LiteralPath $startupVbs)) { $ok = $false; Write-KeepLog "reboot persist: missing Startup VBS" -Level "WARN" -Stage "REBOOT_PERSIST" }
+    if ($Name) {
+        try {
+            $active = (& wsl.exe -d $Name -u root --exec systemctl is-active otacon.service 2>$null | Out-String).Trim()
+            if ($active -ne "active") { $ok = $false; Write-KeepLog "reboot persist: unit=$active" -Level "WARN" -Stage "REBOOT_PERSIST" }
+        } catch { $ok = $false }
+    }
+    if (-not (Test-OtaconHealth)) { $ok = $false }
+    # Aria chat twice
+    try {
+        $body = '{"agent":{"id":"agent_001","display_name":"Aria","voice_id":"voice_aria"},"message":"persist-check","auto_speak":false}'
+        $r1 = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/chat_with_agent" -Method POST -Body $body -ContentType "application/json" -UseBasicParsing -TimeoutSec 90 -ErrorAction Stop
+        $j1 = $r1.Content | ConvertFrom-Json
+        if (-not ($j1.text -or $j1.reply)) { $ok = $false }
+        $r2 = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/chat_with_agent" -Method POST -Body $body -ContentType "application/json" -UseBasicParsing -TimeoutSec 90 -ErrorAction Stop
+        $j2 = $r2.Content | ConvertFrom-Json
+        if (-not ($j2.text -or $j2.reply)) { $ok = $false }
+    } catch {
+        $ok = $false
+        Write-KeepLog "reboot persist: chat failed $($_.Exception.Message)" -Level "WARN" -Stage "REBOOT_PERSIST"
+    }
+    if ($ok) {
+        Save-InstallerState @{ reboot_persistence = "verified"; reboot_persistence_note = $null; stage = "complete" }
+        Write-KeepLog "reboot_persistence=verified" -Stage "REBOOT_PERSIST"
+        return $true
+    }
+    if ($status -ne "pending") {
+        Save-InstallerState @{ reboot_persistence = "pending"; reboot_persistence_note = "Post-sign-in health incomplete" }
+    }
+    return $false
 }
 
 # ---------------------------------------------------------------------------
@@ -3443,11 +3496,15 @@ function Start-GuidedSetup {
                 return 1
             }
             Save-InstallerComplete
+            [void](Test-OtaconRebootPersistence -Name $ubuntuOpen)
+            $stRp = Get-InstallerState
+            $rp = [string]$stRp["reboot_persistence"]
             try { Start-Process (Get-OtaconOpenUrl -Codec) } catch {}
             Show-Box "LINK ESTABLISHED" @(
                 "Otacon app updated and verified.",
                 (Get-OtaconOpenUrl -Codec),
                 "",
+                ("Reboot persistence: {0}" -f $(if ($rp) { $rp } else { "pending" })),
                 "Hard-refresh the browser (Ctrl+Shift+R).",
                 "You can close this window."
             ) -Color Green
@@ -3674,10 +3731,13 @@ function Start-GuidedSetup {
     }
 
     Save-InstallerComplete
+    [void](Test-OtaconRebootPersistence -Name $ubuntu)
     Clear-ResumeMarkers
     $ttsFinal = Test-OtaconTts
     $readyUrl = Get-OtaconOpenUrl -Codec
-    Write-OtaconSay "Installation complete. Identity OK. Voice: $($ttsFinal.reason)." -Mood "ok"
+    $stRp = Get-InstallerState
+    $rp = [string]$stRp["reboot_persistence"]
+    Write-OtaconSay "Installation complete. Identity OK. Voice: $($ttsFinal.reason). Reboot check: $rp." -Mood "ok"
     Show-OtaconRain -Frames 8 -DelayMs 30
     Show-Box "LINK ESTABLISHED" @(
         "Otacon is ready.",

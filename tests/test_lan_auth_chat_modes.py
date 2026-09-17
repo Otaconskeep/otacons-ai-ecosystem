@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import threading
+import time
 import unittest
+import urllib.error
+import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 class ChatAuthModeTests(unittest.TestCase):
@@ -37,10 +43,10 @@ class ChatAuthModeTests(unittest.TestCase):
     def _start_server(self, lan: bool):
         if lan:
             os.environ['OTACON_LAN_MODE'] = '1'
-            os.environ['OTACON_HOST'] = '127.0.0.1'
+            os.environ['OTACON_HOST'] = '0.0.0.0'
         else:
             os.environ['OTACON_LAN_MODE'] = '0'
-            os.environ['OTACON_HOST'] = '0.0.0.0'
+            os.environ['OTACON_HOST'] = '127.0.0.1'
 
         import installer.security as sec
         import installer.server as srv
@@ -60,30 +66,49 @@ class ChatAuthModeTests(unittest.TestCase):
         t = threading.Thread(target=httpd.serve_forever, daemon=True)
         t.start()
         self.addCleanup(httpd.shutdown)
+        self.addCleanup(httpd.server_close)
+        # Wait until the listener accepts connections (avoids ConnectionRefused race).
+        deadline = time.time() + 5
+        last_err = None
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/branding', timeout=1) as resp:
+                    if resp.status < 500:
+                        break
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                time.sleep(0.05)
+        else:
+            raise AssertionError(f'server on :{port} never became ready: {last_err}')
         return port, srv.LAN_TOKEN, srv.BIND_MODE
 
     def _post(self, port: int, path: str, body: dict, token: str | None = None):
-        import urllib.request
-
         data = json.dumps(body).encode()
-        req = urllib.request.Request(
-            f'http://127.0.0.1:{port}{path}',
-            data=data,
-            method='POST',
-            headers={'Content-Type': 'application/json'},
-        )
-        if token:
-            req.add_header('Authorization', f'Bearer {token}')
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return resp.status, json.loads(resp.read().decode())
-        except urllib.error.HTTPError as exc:
-            payload = exc.read().decode()
+        last_exc = None
+        for _ in range(8):
+            req = urllib.request.Request(
+                f'http://127.0.0.1:{port}{path}',
+                data=data,
+                method='POST',
+                headers={'Content-Type': 'application/json'},
+            )
+            if token:
+                req.add_header('Authorization', f'Bearer {token}')
             try:
-                parsed = json.loads(payload)
-            except Exception:
-                parsed = {'raw': payload}
-            return exc.code, parsed
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    return resp.status, json.loads(resp.read().decode())
+            except urllib.error.HTTPError as exc:
+                payload = exc.read().decode()
+                try:
+                    parsed = json.loads(payload)
+                except Exception:
+                    parsed = {'raw': payload}
+                return exc.code, parsed
+            except (ConnectionRefusedError, TimeoutError, urllib.error.URLError) as exc:
+                last_exc = exc
+                time.sleep(0.1)
+                continue
+        raise AssertionError(f'connection refused after retries: {last_exc}')
 
     def test_local_mode_chat_without_token(self):
         port, _token, mode = self._start_server(lan=False)
@@ -174,7 +199,7 @@ class UpdateNetworkModePreservationTests(unittest.TestCase):
         self.assertNotRegex(wiz, r'Bearer [A-Za-z0-9_-]{20,}')
 
     def test_simulated_unit_rewrite_local_stays_local(self):
-        """Existing local-only unit stays OTACON_LAN_MODE=0 after repair logic."""
+        """Existing local-only unit stays OTACON_LAN_MODE=0; HOST stays coherent."""
         with tempfile.TemporaryDirectory() as td:
             unit = Path(td) / 'otacon.service'
             unit.write_text(
@@ -188,20 +213,24 @@ class UpdateNetworkModePreservationTests(unittest.TestCase):
 set -e
 UNIT="{unit}"
 EXISTING_LAN="$(sed -n 's/^Environment=OTACON_LAN_MODE=//p' "$UNIT" 2>/dev/null | tail -n1)"
+EXISTING_HOST="$(sed -n 's/^Environment=OTACON_HOST=//p' "$UNIT" 2>/dev/null | tail -n1)"
 case "$(echo "${{EXISTING_LAN:-0}}" | tr '[:upper:]' '[:lower:]')" in
   1|true|yes|lan) PRESERVE_LAN=1 ;;
   *) PRESERVE_LAN=0 ;;
 esac
+if [ "$PRESERVE_LAN" -eq 1 ]; then WANT_HOST="0.0.0.0"
+elif [ "$EXISTING_HOST" = "127.0.0.1" ] || [ "$EXISTING_HOST" = "0.0.0.0" ]; then WANT_HOST="$EXISTING_HOST"
+else WANT_HOST="127.0.0.1"; fi
 sed -i '/OTACON_LAN_MODE=/d' "$UNIT"
 sed -i "/\\[Service\\]/a Environment=OTACON_LAN_MODE=${{PRESERVE_LAN}}" "$UNIT"
-sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=0.0.0.0|" "$UNIT"
+sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=${{WANT_HOST}}|" "$UNIT"
 grep OTACON_LAN_MODE= "$UNIT"
 grep OTACON_HOST= "$UNIT"
 '''
             import subprocess
             out = subprocess.check_output(['bash', '-c', script], text=True)
             self.assertIn('OTACON_LAN_MODE=0', out)
-            self.assertIn('OTACON_HOST=0.0.0.0', out)
+            self.assertIn('OTACON_HOST=127.0.0.1', out)
 
     def test_simulated_unit_rewrite_lan_stays_lan(self):
         with tempfile.TemporaryDirectory() as td:

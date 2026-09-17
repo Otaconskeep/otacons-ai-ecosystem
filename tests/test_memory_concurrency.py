@@ -3,14 +3,20 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from core.memory import MemoryStore
 from installer import server as server_mod
@@ -98,6 +104,21 @@ class ThreadedChatHttpTests(unittest.TestCase):
         cls.port = cls.httpd.server_address[1]
         cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
         cls.thread.start()
+        # Wait for accept readiness (avoids ConnectionRefused under discover load).
+        deadline = time.time() + 5
+        last_err = None
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(
+                    f'http://127.0.0.1:{cls.port}/api/branding', timeout=1
+                ) as resp:
+                    if resp.status < 500:
+                        break
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                time.sleep(0.05)
+        else:
+            raise RuntimeError(f'ThreadedChatHttpTests server not ready: {last_err}')
 
     @classmethod
     def tearDownClass(cls):

@@ -60,8 +60,9 @@ echo your Otacon install folder, your venv, or any of your data.
 echo Full uninstall is a separate manual step (shown at the end).
 echo.
 
-echo Removing the Windows logon task...
+echo Removing the Windows logon task and keepalive...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Unregister-ScheduledTask -TaskName 'OtaconAutoStart' -Confirm:$false -ErrorAction SilentlyContinue"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=[Environment]::GetFolderPath('Startup'); if($s){ Remove-Item -LiteralPath (Join-Path $s 'OtaconsKeep-KeepAlive.vbs') -Force -ErrorAction SilentlyContinue }; $k=Join-Path $env:LOCALAPPDATA 'OtaconsKeep'; Remove-Item -LiteralPath (Join-Path $k 'keep-ubuntu-awake.ps1') -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath (Join-Path $k 'OtaconsKeep-KeepAlive.vbs') -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath (Join-Path $k 'wake-otacon.ps1') -Force -ErrorAction SilentlyContinue"
 if exist "%LOCALAPPDATA%\Otacon" rd /s /q "%LOCALAPPDATA%\Otacon" >nul 2>&1
 echo Done.
 

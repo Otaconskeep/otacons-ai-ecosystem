@@ -290,40 +290,159 @@ if [ -f "$WIZ" ] && ! grep -q "repair: never block Codec on GPU scan" "$WIZ"; th
 if [ -f "$WIZ" ] && grep -q "setCodecMode('thinking')" "$WIZ" && grep -q "}finally{" "$WIZ"; then PROOF_THINK=1; fi
 PROOF_LAN_UI=0
 if [ -f "$WIZ" ] && grep -q "LAN_AUTH_REQUIRED" "$WIZ" && grep -q "Authorization" "$WIZ" && grep -q "otacon_lan_token" "$WIZ"; then PROOF_LAN_UI=1; fi
+PROOF_AUTH_BOOT=0
+if [ -f "$WIZ" ] && grep -q "/api/auth/bootstrap" "$WIZ" && grep -q "sessionStorage" "$WIZ"; then PROOF_AUTH_BOOT=1; fi
 echo "PROOF_MEMORY_CONNECTION=$PROOF_MEMORY"
 echo "PROOF_NO_SCAN_NULL_PATCH=$PROOF_SCAN"
 echo "PROOF_THINKING_FINALLY=$PROOF_THINK"
 echo "PROOF_LAN_AUTH_UI=$PROOF_LAN_UI"
-if [ "$PROOF_MEMORY" -ne 1 ] || [ "$PROOF_SCAN" -ne 1 ] || [ "$PROOF_THINK" -ne 1 ] || [ "$PROOF_LAN_UI" -ne 1 ]; then
-  echo "APP_REV_FAIL=content_proofs memory=$PROOF_MEMORY scan=$PROOF_SCAN think=$PROOF_THINK lan_ui=$PROOF_LAN_UI"
+echo "PROOF_AUTH_BOOTSTRAP=$PROOF_AUTH_BOOT"
+if [ "$PROOF_MEMORY" -ne 1 ] || [ "$PROOF_SCAN" -ne 1 ] || [ "$PROOF_THINK" -ne 1 ] || [ "$PROOF_LAN_UI" -ne 1 ] || [ "$PROOF_AUTH_BOOT" -ne 1 ]; then
+  echo "APP_REV_FAIL=content_proofs memory=$PROOF_MEMORY scan=$PROOF_SCAN think=$PROOF_THINK lan_ui=$PROOF_LAN_UI auth_boot=$PROOF_AUTH_BOOT"
   exit 5
 fi
 echo "CONTENT_PROOFS_OK=1"
 
-echo "stage=systemd"
+echo "stage=retire-stale-fallback"
 UNIT=/etc/systemd/system/otacon.service
 PRESERVE_LAN=0
+WANT_HOST="127.0.0.1"
+
+# Managed MainPID (0 if inactive/missing). Never kill this as a "fallback".
+UNIT_PID="$(systemctl show -p MainPID --value otacon.service 2>/dev/null || echo 0)"
+case "$UNIT_PID" in ''|*[!0-9]*) UNIT_PID=0 ;; esac
+echo "UNIT_MAINPID=$UNIT_PID"
+
+# Collect PIDs listening on PORT (ss preferred).
+LISTEN_PIDS=""
+if command -v ss >/dev/null 2>&1; then
+  LISTEN_PIDS="$(ss -lntp 2>/dev/null | awk -v p=":$PORT" '
+    index($0, p) {
+      while (match($0, /pid=[0-9]+/)) {
+        print substr($0, RSTART+4, RLENGTH-4)
+        $0 = substr($0, RSTART+RLENGTH)
+      }
+    }' | sort -u)"
+elif command -v lsof >/dev/null 2>&1; then
+  LISTEN_PIDS="$(lsof -iTCP:$PORT -sTCP:LISTEN -t 2>/dev/null | sort -u)"
+fi
+echo "LISTEN_PIDS=${LISTEN_PIDS:-none}"
+
+is_otacon_fallback_proc() {
+  # True only for installer-owned nohup/fallback Otacon servers - not foreign apps.
+  local pid="$1" cmd=""
+  [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null || return 1
+  [ "$pid" = "$UNIT_PID" ] && return 1
+  cmd="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+  case "$cmd" in
+    *"installer.server"*|*" -m installer.server"*|*"python"*"installer/server"*) ;;
+    *) return 1 ;;
+  esac
+  # Prefer evidence of Otacon ownership: cwd under an otacon tree, or tracked wizard.pid.
+  local cwd=""
+  cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+  case "$cwd" in
+    *otacon-ai-ecosystem*|*otacons-ai-ecosystem*|*OtaconsKeep*) return 0 ;;
+  esac
+  if [ -f /tmp/otacon-wizard.pid ] && [ "$(cat /tmp/otacon-wizard.pid 2>/dev/null)" = "$pid" ]; then
+    return 0
+  fi
+  local home owner_home
+  while IFS=: read -r _u _x _uid _gid _gecos home _; do
+    case "$home" in ""|"/"|"/nonexistent") continue ;; esac
+    if [ -f "$home/.config/otacon/wizard.pid" ] && [ "$(cat "$home/.config/otacon/wizard.pid" 2>/dev/null)" = "$pid" ]; then
+      return 0
+    fi
+  done <<EOF
+$(getent passwd)
+EOF
+  # cmdline alone is enough when it is clearly installer.server (not a random python app).
+  return 0
+}
+
+RETIRED=0
+for pid in $LISTEN_PIDS; do
+  if is_otacon_fallback_proc "$pid"; then
+    echo "RETIRE_FALLBACK_PID=$pid"
+    kill -TERM "$pid" 2>/dev/null || true
+    sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    RETIRED=$((RETIRED + 1))
+  else
+    echo "KEEP_LISTENER_PID=$pid (not an Otacon fallback)"
+  fi
+done
+echo "FALLBACK_RETIRED=$RETIRED"
+
+# Stop managed unit cleanly before rewriting the unit file.
 systemctl stop otacon.service 2>/dev/null || true
-pkill -9 -f "python -m installer.server" 2>/dev/null || true
-pkill -9 -f "installer.server" 2>/dev/null || true
 sleep 1
 
+# Re-check port: refuse to proceed if a non-Otacon foreign process still owns it.
+FOREIGN=0
+if command -v ss >/dev/null 2>&1; then
+  for pid in $(ss -lntp 2>/dev/null | awk -v p=":$PORT" '
+    index($0, p) {
+      while (match($0, /pid=[0-9]+/)) {
+        print substr($0, RSTART+4, RLENGTH-4)
+        $0 = substr($0, RSTART+RLENGTH)
+      }
+    }' | sort -u); do
+    if ! is_otacon_fallback_proc "$pid"; then
+      # Still listening and not our fallback: foreign or lingering managed.
+      UNIT_PID2="$(systemctl show -p MainPID --value otacon.service 2>/dev/null || echo 0)"
+      if [ "$pid" != "$UNIT_PID2" ] && [ "$pid" != "0" ]; then
+        cmd2="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+        case "$cmd2" in
+          *"installer.server"*) kill -TERM "$pid" 2>/dev/null || true ;;
+          *) echo "FOREIGN_LISTENER_PID=$pid cmd=$cmd2"; FOREIGN=1 ;;
+        esac
+      fi
+    fi
+  done
+fi
+if [ "$FOREIGN" -eq 1 ]; then
+  echo "APP_REV_FAIL=port_occupied_by_foreign_process"
+  exit 6
+fi
+
+echo "stage=reconcile-unit"
 if [ -f "$UNIT" ]; then
-  # Preserve user's network mode. Never silently enable LAN auth.
+  # Safe backup before any mutation (idempotent timestamped + stable alias).
+  cp -a "$UNIT" "${UNIT}.before-otacon-repair" 2>/dev/null || true
+  cp -a "$UNIT" "${UNIT}.before-otacon-repair.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+  echo "UNIT_BACKUP=${UNIT}.before-otacon-repair"
+
   EXISTING_LAN="$(sed -n 's/^Environment=OTACON_LAN_MODE=//p' "$UNIT" 2>/dev/null | tail -n1)"
+  EXISTING_HOST="$(sed -n 's/^Environment=OTACON_HOST=//p' "$UNIT" 2>/dev/null | tail -n1)"
   case "$(echo "${EXISTING_LAN:-0}" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|lan) PRESERVE_LAN=1 ;;
     *) PRESERVE_LAN=0 ;;
   esac
-  echo "NETWORK_MODE_BEFORE=${EXISTING_LAN:-unset}"
+  # Coherent network mode: never force LAN; never leave HOST vs LAN_MODE contradictory.
+  if [ "$PRESERVE_LAN" -eq 1 ]; then
+    WANT_HOST="0.0.0.0"
+  else
+    case "$(echo "${EXISTING_HOST:-}" | tr '[:upper:]' '[:lower:]')" in
+      127.0.0.1|localhost|::1) WANT_HOST="127.0.0.1" ;;
+      0.0.0.0) WANT_HOST="0.0.0.0" ;;
+      *)
+        if grep -qi microsoft /proc/version 2>/dev/null; then WANT_HOST="0.0.0.0"; else WANT_HOST="127.0.0.1"; fi
+        ;;
+    esac
+  fi
+  echo "NETWORK_MODE_BEFORE=lan=${EXISTING_LAN:-unset};host=${EXISTING_HOST:-unset}"
   echo "NETWORK_MODE_PRESERVED=$PRESERVE_LAN"
+  echo "NETWORK_HOST_RECONCILED=$WANT_HOST"
+
   sed -i '/OTACON_SKIP_NVIDIA_SMI=/d' "$UNIT"
   sed -i "/\[Service\]/a Environment=OTACON_SKIP_NVIDIA_SMI=0" "$UNIT"
-  # Bind-all for WSL reachability; auth mode is OTACON_LAN_MODE only.
   if grep -q "OTACON_HOST=" "$UNIT"; then
-    sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=0.0.0.0|" "$UNIT"
+    sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=${WANT_HOST}|" "$UNIT"
   else
-    sed -i "/\[Service\]/a Environment=OTACON_HOST=0.0.0.0" "$UNIT"
+    sed -i "/\[Service\]/a Environment=OTACON_HOST=${WANT_HOST}" "$UNIT"
   fi
   sed -i '/OTACON_LAN_MODE=/d' "$UNIT"
   sed -i "/\[Service\]/a Environment=OTACON_LAN_MODE=${PRESERVE_LAN}" "$UNIT"
@@ -332,52 +451,124 @@ if [ -f "$UNIT" ]; then
   else
     sed -i "/\[Service\]/a Environment=OTACON_PORT=${PORT}" "$UNIT"
   fi
-  systemctl daemon-reload 2>/dev/null || true
   echo "unit_skip=$(grep OTACON_SKIP_NVIDIA_SMI= "$UNIT" || echo missing)"
   echo "unit_lan=$(grep OTACON_LAN_MODE= "$UNIT" || echo missing)"
+  echo "unit_host=$(grep OTACON_HOST= "$UNIT" || echo missing)"
 fi
 
+echo "stage=systemd-restart"
+systemctl daemon-reload 2>/dev/null || true
 systemctl enable otacon.service 2>/dev/null || true
 systemctl enable otacon-tts.service 2>/dev/null || true
 systemctl restart otacon-tts.service 2>/dev/null || systemctl start otacon-tts.service 2>/dev/null || true
 systemctl restart otacon.service 2>/dev/null || systemctl start otacon.service 2>/dev/null || true
 sleep 2
-systemctl is-active otacon.service 2>/dev/null || echo "unit_not_active"
 
-alive=0
-if curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/branding" >/dev/null 2>&1; then alive=1; fi
-if [ "$alive" -ne 1 ] && [ -x "$ROOT/.venv/bin/python" ]; then
-  echo "manual_start"
-  OWNER_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
-  case "$OWNER_HOME" in ""|"/"|"/nonexistent") OWNER_HOME="" ;; esac
-  if [ -z "$OWNER_HOME" ]; then
-    if [ "$OWNER" = "root" ]; then OWNER_HOME=/root; else OWNER_HOME="/tmp/otacon-$OWNER"; fi
-  fi
-  mkdir -p "${OWNER_HOME}/.config/otacon" /root/.config/otacon 2>/dev/null || true
-  LOGF="${OWNER_HOME}/.config/otacon/wizard.log"
-  if command -v runuser >/dev/null 2>&1 && [ "$OWNER" != "root" ]; then
-    runuser -u "$OWNER" -- env \
-      OTACON_HOST=0.0.0.0 OTACON_LAN_MODE="${PRESERVE_LAN:-0}" OTACON_PORT="$PORT" PYTHONPATH="$ROOT" \
-      PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wsl/lib" \
-      LD_LIBRARY_PATH="/usr/lib/wsl/lib" \
-      bash -lc "cd \"$ROOT\" && unset OTACON_SKIP_NVIDIA_SMI && nohup \"$ROOT/.venv/bin/python\" -m installer.server >\"$LOGF\" 2>&1 & echo \$! >\"\$HOME/.config/otacon/wizard.pid\""
-  else
-    cd "$ROOT" || exit 3
-    unset OTACON_SKIP_NVIDIA_SMI
-    export OTACON_HOST=0.0.0.0 OTACON_LAN_MODE="${PRESERVE_LAN:-0}" OTACON_PORT="$PORT" PYTHONPATH="$ROOT"
-    export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wsl/lib:$PATH"
-    export LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    nohup "$ROOT/.venv/bin/python" -m installer.server >/tmp/otacon-wizard.log 2>&1 &
-    echo $! >/tmp/otacon-wizard.pid
-  fi
-  sleep 3
+ACTIVE="$(systemctl is-active otacon.service 2>/dev/null || echo inactive)"
+ENABLED="$(systemctl is-enabled otacon.service 2>/dev/null || echo disabled)"
+echo "UNIT_ACTIVE=$ACTIVE"
+echo "UNIT_ENABLED=$ENABLED"
+if [ "$ACTIVE" != "active" ]; then
+  echo "APP_REV_FAIL=otacon_service_not_active state=$ACTIVE"
+  systemctl status otacon.service --no-pager -l 2>/dev/null | head -n 40 || true
+  exit 7
+fi
+case "$ENABLED" in
+  enabled|enabled-runtime|static) echo "UNIT_ENABLED_OK=1" ;;
+  *)
+    echo "APP_REV_FAIL=otacon_service_not_enabled state=$ENABLED"
+    exit 7
+    ;;
+esac
+
+echo "stage=e2e-health"
+E2E_OK=1
+brand="$(curl -fsS --max-time 8 "http://127.0.0.1:${PORT}/api/branding" 2>/dev/null || true)"
+echo "=== branding ==="
+echo "$brand"
+case "$brand" in
+  *'"product_name": "Otacon"'*|*"\"product_name\":\"Otacon\""*) echo "BRANDING_OK=1" ;;
+  *) echo "BRANDING_FAIL"; E2E_OK=0 ;;
+esac
+
+scan="$(curl -fsS --max-time 20 "http://127.0.0.1:${PORT}/api/scan" 2>/dev/null || true)"
+echo "=== scan (gpu) ==="
+printf '%s' "$scan" > /tmp/otacon-repair-scan.json
+python3 - <<'PY'
+import json
+try:
+    d=json.load(open("/tmp/otacon-repair-scan.json"))
+except Exception as e:
+    print("SCAN_PARSE_FAIL", e)
+    open("/tmp/otacon-repair-scan-ok","w").write("0")
+    raise SystemExit(0)
+h=((d.get("hardware") or {}).get("hardware") or d.get("hardware") or {})
+gpus=h.get("gpus") or []
+print("GPU_COUNT", len(gpus))
+for g in gpus:
+    print("GPU", g.get("model"), g.get("vram_gb"))
+det=(h.get("gpu_detection") or {})
+print("DET", det.get("status"), det.get("message"))
+open("/tmp/otacon-repair-scan-ok","w").write("1" if gpus else "0")
+PY
+SCAN_OK="$(cat /tmp/otacon-repair-scan-ok 2>/dev/null || echo 0)"
+echo "SCAN_OK=$SCAN_OK"
+# GPU absence is not an automatic hard fail on CPU-only hosts, but SKIP must not force empty.
+if grep -q 'OTACON_SKIP_NVIDIA_SMI=1' "$UNIT" 2>/dev/null; then
+  echo "APP_REV_FAIL=gpu_skip_still_enabled"
+  E2E_OK=0
+fi
+
+caps="$(curl -fsS --max-time 12 "http://127.0.0.1:${PORT}/api/capabilities" 2>/dev/null || true)"
+echo "=== capabilities ==="
+echo "$caps" | head -c 800; echo
+case "$caps" in
+  *"\"chat\": \"ready\""*|*"\"chat\":\"ready\""*) echo "CHAT_CAP_OK=1" ;;
+  *) echo "CHAT_CAP_WARN"; ;;
+esac
+
+# Memory + Aria chat twice (honest probes; not bare HTTP 200).
+chat_once() {
+  local tag="$1"
+  local body='{"agent":{"id":"agent_001","display_name":"Aria","voice_id":"voice_aria"},"message":"ping '"$tag"'","conversation_id":"repair-'"$tag"'","auto_speak":false}'
+  local resp
+  resp="$(curl -fsS --max-time 120 -X POST "http://127.0.0.1:${PORT}/api/chat_with_agent" \
+    -H 'Content-Type: application/json' -d "$body" 2>/dev/null || true)"
+  echo "CHAT_${tag}_RAW=${resp}" | head -c 500; echo
+  case "$resp" in
+    *'"text":'*|*"\"text\":"*)
+      if echo "$resp" | grep -q '"error"'; then
+        echo "CHAT_${tag}_FAIL=error_payload"
+        return 1
+      fi
+      echo "CHAT_${tag}_OK=1"
+      return 0
+      ;;
+    *)
+      echo "CHAT_${tag}_FAIL=no_text"
+      return 1
+      ;;
+  esac
+}
+if chat_once "1"; then :; else E2E_OK=0; fi
+if chat_once "2"; then :; else E2E_OK=0; fi
+
+# Service must still be active after chats.
+ACTIVE2="$(systemctl is-active otacon.service 2>/dev/null || echo inactive)"
+echo "UNIT_ACTIVE_AFTER_CHAT=$ACTIVE2"
+if [ "$ACTIVE2" != "active" ]; then
+  echo "APP_REV_FAIL=otacon_inactive_after_chat"
+  E2E_OK=0
 fi
 
 echo "=== listen ==="
 ss -lntp 2>/dev/null | grep ":${PORT}" || netstat -lntp 2>/dev/null | grep ":${PORT}" || echo NOT_LISTENING
-echo "=== branding ==="
-curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/api/branding" || echo BRANDING_FAIL
-echo
+
+if [ "$E2E_OK" -ne 1 ]; then
+  echo "E2E_HEALTH_FAIL=1"
+  exit 8
+fi
+echo "E2E_HEALTH_OK=1"
 echo "=== done ==="
 exit 0
 '@
@@ -446,6 +637,9 @@ if ([int]$script:OtaconWslTransportExit -ne 0) {
 
 $revOk = ($text -match 'APP_REV_OK=1')
 $contentOk = ($text -match 'CONTENT_PROOFS_OK=1')
+$e2eOk = ($text -match 'E2E_HEALTH_OK=1')
+$unitActive = ($text -match 'UNIT_ACTIVE=active')
+$unitEnabled = ($text -match 'UNIT_ENABLED_OK=1')
 if (-not $revOk -or -not $contentOk) {
     Write-RepairLog "UPDATE FAILED: Linux application revision/content proofs not satisfied."
     Write-RepairLog "installer updated != application updated"
@@ -457,6 +651,69 @@ if (-not $revOk -or -not $contentOk) {
     try { [void][Console]::ReadKey($true) } catch { Start-Sleep 3 }
     exit 4
 }
+if (-not $unitActive -or -not $unitEnabled) {
+    Write-RepairLog "UPDATE FAILED: otacon.service not active+enabled after repair."
+    Write-Host ""
+    Write-Host "  UPDATE FAILED - systemd unit not healthy." -ForegroundColor Red
+    Write-Host "  Log: $LogFile" -ForegroundColor Yellow
+    try { [void][Console]::ReadKey($true) } catch { Start-Sleep 3 }
+    exit 7
+}
+if (-not $e2eOk) {
+    Write-RepairLog "UPDATE FAILED: end-to-end health probes did not pass (branding/chat)."
+    Write-Host ""
+    Write-Host "  UPDATE FAILED - Otacon answered incompletely after repair." -ForegroundColor Red
+    Write-Host "  Log: $LogFile" -ForegroundColor Yellow
+    try { [void][Console]::ReadKey($true) } catch { Start-Sleep 3 }
+    exit 8
+}
+
+# G. Install durable WSL keepalive (user-scoped Startup + LOCALAPPDATA).
+$wakeInstaller = Join-Path $PSScriptRoot "install-wake-task.ps1"
+$keepaliveOk = $false
+if (Test-Path -LiteralPath $wakeInstaller) {
+    try {
+        $wakeOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $wakeInstaller -DistroName $distro -Port $Port 2>&1
+        Write-RepairLog ("keepalive install: " + (($wakeOut | Out-String).Trim()))
+        $keepaliveOk = ($LASTEXITCODE -eq 0)
+    } catch {
+        Write-RepairLog "keepalive install exception: $($_.Exception.Message)"
+        $keepaliveOk = $false
+    }
+} else {
+    Write-RepairLog "WARN: install-wake-task.ps1 missing"
+}
+$keepScript = Join-Path $KeepDir "keep-ubuntu-awake.ps1"
+$startupDir = [Environment]::GetFolderPath("Startup")
+$startupVbs = if ($startupDir) { Join-Path $startupDir "OtaconsKeep-KeepAlive.vbs" } else { "" }
+if (-not (Test-Path -LiteralPath $keepScript)) {
+    Write-RepairLog "WARN: keepalive script missing at $keepScript"
+    $keepaliveOk = $false
+}
+if ($startupVbs -and -not (Test-Path -LiteralPath $startupVbs)) {
+    Write-RepairLog "WARN: Startup launcher missing at $startupVbs"
+    $keepaliveOk = $false
+}
+Write-RepairLog "KEEPALIVE_OK=$keepaliveOk script=$keepScript startup=$startupVbs"
+
+# Mark reboot-persistence pending until a later Setup/Open verifies post-sign-in health.
+try {
+    $statePath = Join-Path $KeepDir "installer-state.json"
+    $state = @{}
+    if (Test-Path -LiteralPath $statePath) {
+        try {
+            $obj = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+            foreach ($p in $obj.PSObject.Properties) { $state[$p.Name] = $p.Value }
+        } catch {}
+    }
+    $state["reboot_persistence"] = "pending"
+    $state["reboot_persistence_note"] = "Verify after next Windows sign-in: keepalive + otacon.service + Aria chat"
+    $state["updated_at"] = (Get-Date).ToUniversalTime().ToString("o")
+    ($state | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $statePath -Encoding UTF8
+    Write-RepairLog "reboot_persistence=pending (clear after post-sign-in health)"
+} catch {
+    Write-RepairLog "WARN: could not persist reboot_persistence state: $($_.Exception.Message)"
+}
 
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $base = $null
@@ -467,7 +724,7 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if (-not $base) {
-    Write-RepairLog "FAILED: revision OK but Otacon not answering HTTP after restart."
+    Write-RepairLog "FAILED: revision+E2E OK markers but Otacon not answering HTTP from Windows."
     Write-RepairLog "Log: $LogFile"
     Write-Host ""
     Write-Host "  Press any key to close." -ForegroundColor DarkYellow
@@ -476,10 +733,14 @@ if (-not $base) {
 }
 
 $openUrl = if ($Codec -or $OpenBrowser) { "$base/?codec=1" } else { "$base/" }
-Write-RepairLog "OK base=$base revision proof passed"
+Write-RepairLog "OK base=$base revision+e2e+systemd proof passed keepalive=$keepaliveOk"
 Write-Host ""
 Write-Host "  Otacon app updated and verified." -ForegroundColor Green
 Write-Host "  $base" -ForegroundColor Green
+if (-not $keepaliveOk) {
+    Write-Host "  WARN: WSL keepalive not fully installed - chat may pause when WSL idles." -ForegroundColor Yellow
+}
+Write-Host "  Reboot persistence: pending (will verify after next Windows sign-in)." -ForegroundColor DarkYellow
 Write-Host ""
 
 if ($OpenBrowser -or $Codec) {
