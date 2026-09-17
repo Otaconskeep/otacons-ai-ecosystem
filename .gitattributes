@@ -3,7 +3,8 @@
 *.bat binary
 *.cmd binary
 
-# PowerShell helpers used by the Windows installer — LF is fine in-repo;
-# Windows PowerShell accepts LF. Keep text normalization predictable.
-deploy/*.ps1 text eol=lf
-*.ps1 text eol=lf
+# PowerShell helpers for the Windows installer must stay PowerShell 5.1-safe:
+# UTF-8 BOM in the blob + CRLF in the working tree. Avoid Unicode punctuation
+# in these scripts (em dash / not-equal / smart quotes break PS 5.1 without BOM).
+deploy/*.ps1 text eol=crlf
+*.ps1 text eol=crlf

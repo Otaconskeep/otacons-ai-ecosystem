@@ -1,4 +1,4 @@
-# Fix false "No GPU detected" / "No GPU reported" on WSL Otacon installs.
+﻿# Fix false "No GPU detected" / "No GPU reported" on WSL Otacon installs.
 # Double-click Fix-Otacon-GPU.bat (or run this script). No menus.
 #
 # Does:

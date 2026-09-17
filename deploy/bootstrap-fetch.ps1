@@ -229,6 +229,26 @@ foreach ($rel in $files) {
     $len = (Get-Item -LiteralPath $out).Length
     Write-Log "ok $rel bytes=$len method=$($result.Method)"
     Write-Host "  OK: $rel ($len bytes) via $($result.Method)" -ForegroundColor Green
+
+    # PowerShell 5.1-safe: ensure UTF-8 BOM + CRLF on shipped .ps1 helpers.
+    if ($rel -like "*.ps1") {
+        try {
+            $bytes = [System.IO.File]::ReadAllBytes($out)
+            $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+            $text = if ($hasBom) {
+                [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+            } else {
+                [System.Text.Encoding]::UTF8.GetString($bytes)
+            }
+            $text = $text -replace "`r`n", "`n" -replace "`r", "`n"
+            $text = $text -replace "`n", "`r`n"
+            $utf8Bom = New-Object System.Text.UTF8Encoding $true
+            [System.IO.File]::WriteAllText($out, $text, $utf8Bom)
+            Write-Log "normalized encoding BOM+CRLF $rel"
+        } catch {
+            Write-Log "encoding normalize skipped $rel : $($_.Exception.Message)" "WARN"
+        }
+    }
 }
 
 if ($failures.Count -gt 0) {
@@ -249,7 +269,7 @@ Write-Log "FETCH OK all requested files"
 Write-Host ""
 Write-Host "  All setup files downloaded." -ForegroundColor Green
 
-# Required helpers — missing these caused "Windows updated, Linux app did not".
+# Required helpers - missing these caused "Windows updated, Linux app did not".
 $required = @(
     "deploy/windows-setup-assistant.ps1",
     "deploy/repair-otacon-core.ps1",
@@ -274,4 +294,29 @@ if ($missingReq.Count -gt 0) {
     exit 1
 }
 Write-Log "required helpers present including repair-otacon-core.ps1"
+
+# Parse-check critical helpers under this host's PowerShell before Setup continues.
+$parseTargets = @(
+    "deploy/repair-otacon-core.ps1",
+    "deploy/windows-setup-assistant.ps1",
+    "deploy/fix-otacon-gpu.ps1"
+)
+foreach ($rel in $parseTargets) {
+    $p = Join-Path $DestRoot ($rel -replace "/", [IO.Path]::DirectorySeparatorChar)
+    if (-not (Test-Path -LiteralPath $p)) { continue }
+    $tokens = $null
+    $errs = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($p, [ref]$tokens, [ref]$errs)
+    if ($errs -and $errs.Count -gt 0) {
+        $msg = "parse failed $rel : " + (($errs | ForEach-Object { $_.Message }) -join " | ")
+        Write-Log $msg "ERROR"
+        Write-Host "  PARSE FAILED: $rel" -ForegroundColor Red
+        Write-Host "OTACON_FETCH_FAILED"
+        Write-Host "FAILED_COMMAND=PowerShell 5.1 parse check for $rel"
+        Write-Host "EXIT_CODE=1"
+        Write-Host "LAST_ERROR=$msg"
+        exit 1
+    }
+    Write-Log "parse ok $rel"
+}
 exit 0

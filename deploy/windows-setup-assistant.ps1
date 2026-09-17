@@ -90,7 +90,7 @@ function Get-OtaconRawFileUrl {
     if ($b -match ("/" + [regex]::Escape($r) + "$")) {
         return "$b/$rel"
     }
-    # Common mistake: Base ends with a different ref — strip last segment if it looks like a ref.
+    # Common mistake: Base ends with a different ref - strip last segment if it looks like a ref.
     if ($b -match '/(main|master|[0-9a-f]{7,40}|v\d[\w\.\-]*)$') {
         $b = $b -replace '/(main|master|[0-9a-f]{7,40}|v\d[\w\.\-]*)$', ''
     }
@@ -661,6 +661,28 @@ function Get-OtaconOpenUrl {
     return "$base/"
 }
 
+function Test-OtaconPs1Parses {
+    <# PowerShell 5.1 preflight: catch UTF-8/BOM misparse before running a helper. #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return @{ Ok = $false; Errors = @("missing: $Path") }
+    }
+    $tokens = $null
+    $errs = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile(
+        $Path,
+        [ref]$tokens,
+        [ref]$errs
+    )
+    $list = @()
+    if ($errs) {
+        foreach ($e in $errs) {
+            $list += ("{0}:{1} {2}" -f $e.Extent.StartLineNumber, $e.Extent.StartColumnNumber, $e.Message)
+        }
+    }
+    return @{ Ok = ($list.Count -eq 0); Errors = $list }
+}
+
 function Invoke-OtaconCoreRepair {
     <#
       Update + revive Linux Otacon app inside WSL.
@@ -676,7 +698,7 @@ function Invoke-OtaconCoreRepair {
     $ps1 = Join-Path $RepoRoot "deploy\repair-otacon-core.ps1"
     if (-not (Test-Path -LiteralPath $ps1)) {
         # Last chance: fetch the helper from GitHub raw into place.
-        # MUST include branch/ref — RawBase alone is the repo root and 404s.
+        # MUST include branch/ref - RawBase alone is the repo root and 404s.
         $raw = Get-OtaconRawFileUrl -RelativePath "deploy/repair-otacon-core.ps1"
         Write-KeepLog "repair helper URL=$raw (RawBase=$RawBase Branch=$Branch)" -Stage "REPAIR"
         $destDir = Split-Path -Parent $ps1
@@ -696,9 +718,17 @@ function Invoke-OtaconCoreRepair {
     }
     if (-not (Test-Path -LiteralPath $ps1) -or ((Get-Item -LiteralPath $ps1).Length -lt 200)) {
         Write-KeepLog "UPDATE FAILED: repair-otacon-core.ps1 missing after fetch attempt" -Level "ERROR" -Stage "REPAIR"
-        Write-OtaconSay "Update helper missing — cannot update the Linux Otacon app. Re-download Setup from the website." -Mood "alert"
+        Write-OtaconSay "Update helper missing - cannot update the Linux Otacon app. Re-download Setup from the website." -Mood "alert"
         return $false
     }
+
+    $parse = Test-OtaconPs1Parses -Path $ps1
+    if (-not $parse.Ok) {
+        Write-KeepLog ("UPDATE FAILED: repair-otacon-core.ps1 parse errors under PowerShell 5.1: " + ($parse.Errors -join " | ")) -Level "ERROR" -Stage "REPAIR"
+        Write-OtaconSay "Update helper is unreadable by Windows PowerShell. Re-download Setup from the website." -Mood "alert"
+        return $false
+    }
+
     Write-KeepLog "Invoke-OtaconCoreRepair via repair-otacon-core.ps1 distro=$Name" -Stage "REPAIR"
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $ps1, "-Port", "$Port", "-TimeoutSeconds", "90")
     if ($Name) { $argList += @("-DistroName", $Name) }
@@ -709,8 +739,10 @@ function Invoke-OtaconCoreRepair {
         $t = (Get-Content -LiteralPath $targetFile -TotalCount 1 -ErrorAction SilentlyContinue)
         if ($t) { $argList += @("-TargetRevision", $t.Trim()) }
     }
-    & powershell @argList
-    $code = [int]$LASTEXITCODE
+    # Start-Process ExitCode is reliable; [int]$LASTEXITCODE can become 0 when null.
+    $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -Wait -PassThru -NoNewWindow
+    $code = 1
+    if ($null -ne $proc -and $null -ne $proc.ExitCode) { $code = [int]$proc.ExitCode }
     $ok = ($code -eq 0)
     Write-KeepLog "repair-otacon-core.ps1 exit=$code ok=$ok" -Stage "REPAIR"
     if ($ok) {
@@ -3231,14 +3263,14 @@ function Start-GuidedSetup {
         if ($ttsOk) {
             Write-OtaconSay "You're already online. Updating the Linux Otacon app to the latest revision..." -Mood "ok"
             $ubuntuOpen = Get-UbuntuDistroName
-            # Soft refresh must PROVE Linux app revision — never brand-only success.
+            # Soft refresh must PROVE Linux app revision - never brand-only success.
             $updated = $false
             if ($ubuntuOpen) {
                 $updated = [bool](Invoke-OtaconCoreRepair -Name $ubuntuOpen -Codec)
             }
             if (-not $updated) {
-                Write-KeepLog "READY path: Linux app update failed — not reporting success" -Level "ERROR" -Stage "REPAIR"
-                Write-OtaconSay "Installer scripts were present, but the Linux Otacon application did not update. That is a failed update — not READY." -Mood "alert"
+                Write-KeepLog "READY path: Linux app update failed - not reporting success" -Level "ERROR" -Stage "REPAIR"
+                Write-OtaconSay "Installer scripts were present, but the Linux Otacon application did not update. That is a failed update - not READY." -Mood "alert"
                 Show-Box "UPDATE FAILED" @(
                     "Windows Setup files may be new,",
                     "but the Linux Otacon app revision did not change.",
@@ -3517,7 +3549,12 @@ try {
     if ($FixCodec) {
         $ubuntu = Get-UbuntuDistroName
         $ok = Invoke-OtaconCoreRepair -Name $ubuntu -OpenBrowser -Codec
-        exit $(if ($ok) { 0 } else { 1 })
+        if (-not $ok) {
+            Write-KeepLog "FixCodec UPDATE FAILED - propagating exit 1" -Level "ERROR" -Stage "REPAIR"
+            Write-OtaconSay "Update failed. The Linux Otacon app was not updated." -Mood "alert"
+            exit 1
+        }
+        exit 0
     }
     if ($Open) {
         $cont = Open-OtaconIfReady

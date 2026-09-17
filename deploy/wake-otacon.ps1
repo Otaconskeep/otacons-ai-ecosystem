@@ -30,7 +30,7 @@ function Test-Otacon {
 }
 
 function Start-OtaconStack {
-    # Prefer systemd units. GPU probe has its own hang timeout in platform.detect —
+    # Prefer systemd units. GPU probe has its own hang timeout in platform.detect -
     # do NOT force OTACON_SKIP_NVIDIA_SMI (that caused false "no GPU detected").
     $script = @'
 set +e

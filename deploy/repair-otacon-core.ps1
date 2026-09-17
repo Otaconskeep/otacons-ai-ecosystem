@@ -1,4 +1,4 @@
-# Fix false "No GPU detected" and other Linux-side drift by hard-syncing
+﻿# Fix false "No GPU detected" and other Linux-side drift by hard-syncing
 # the WSL Otacon application to the Windows installer target revision.
 #
 # Success requires PROOF that the Linux app revision matches target.
@@ -324,9 +324,9 @@ $revOk = ($text -match 'APP_REV_OK=1')
 $contentOk = ($text -match 'CONTENT_PROOFS_OK=1')
 if (-not $revOk -or -not $contentOk) {
     Write-RepairLog "UPDATE FAILED: Linux application revision/content proofs not satisfied."
-    Write-RepairLog "installer updated ≠ application updated"
+    Write-RepairLog "installer updated != application updated"
     Write-Host ""
-    Write-Host "  UPDATE FAILED — Linux Otacon app did not reach the target revision." -ForegroundColor Red
+    Write-Host "  UPDATE FAILED - Linux Otacon app did not reach the target revision." -ForegroundColor Red
     Write-Host "  Log: $LogFile" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  Press any key to close." -ForegroundColor DarkYellow
