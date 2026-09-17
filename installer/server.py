@@ -410,26 +410,35 @@ def _capability_snapshot() -> dict:
     caps['image'] = 'not_configured'
     caps['video'] = 'not_configured'
 
-    # Genome Voice Trainer is a premium feature (not Lite). Offer Open Genome only
-    # when :8765 is actually listening — never from a leftover folder alone.
-    vt_home = Path.home() / 'otacon-voice-trainer'
-    vt_dir = vt_home.is_dir() and any(vt_home.iterdir()) if vt_home.is_dir() else False
-    vt_live = False
+    # Genome Voice Trainer — Expansion premium. Honest states (never fake Open).
     try:
-        import socket
-        with socket.create_connection(('127.0.0.1', 8765), timeout=0.4):
-            vt_live = True
-    except OSError:
-        vt_live = False
-    caps['voice_trainer'] = 'ready' if vt_live else 'premium'
-    caps['voice_trainer_path'] = str(vt_home) if vt_dir else ''
-    caps['voice_trainer_listening'] = vt_live
-    caps['voice_trainer_url'] = 'http://127.0.0.1:8765/' if vt_live else ''
-    caps['voice_trainer_note'] = (
-        'Genome Voice Trainer is a premium feature. '
-        + ('Open on :8765 for Piper cloning/training.' if vt_live
-           else 'Not running on this install — Piper TTS on :10200 does not need it.')
-    )
+        from expansion.capabilities.voice_trainer import probe_voice_trainer
+        vt = probe_voice_trainer()
+        disc = vt.discovery or {}
+        state = (vt.state or '').lower()
+        # Map capability states onto UI vocabulary.
+        if state == 'ready':
+            caps['voice_trainer'] = 'ready'
+        elif state == 'degraded':
+            caps['voice_trainer'] = 'offline'
+        elif state == 'unavailable':
+            caps['voice_trainer'] = 'unavailable'
+        else:
+            caps['voice_trainer'] = 'not_configured'
+        caps['voice_trainer_path'] = disc.get('path') or ''
+        caps['voice_trainer_listening'] = bool(disc.get('listening'))
+        caps['voice_trainer_url'] = disc.get('url') or ''
+        caps['voice_trainer_note'] = vt.detail or (
+            'Genome Voice Trainer is an Expansion premium feature.'
+        )
+        caps['voice_trainer_premium'] = True
+    except Exception as exc:  # noqa: BLE001
+        caps['voice_trainer'] = 'error'
+        caps['voice_trainer_note'] = str(exc)
+        caps['voice_trainer_url'] = ''
+        caps['voice_trainer_listening'] = False
+        caps['voice_trainer_premium'] = True
+
     caps['llm_model'] = ''
     try:
         caps['llm_model'] = _llm_settings()[2]
@@ -897,6 +906,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'error': {'code': 'EVENT_FAILED', 'message': str(exc)}}, 400)
         elif self.path in (
             '/api/expansion/jobs/create',
+            '/api/expansion/voice-trainer/start',
             '/api/expansion/pages/register',
             '/api/expansion/rex/transition',
             '/api/expansion/rex/queue',

@@ -71,11 +71,11 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'runtime_context': studio_runtime_context('muse'),
             'foundation': evaluate_foundation().to_dict(),
             'honest_note': (
-                'FOUNDATION SHELL — not OtaconsKeep Video Studio. No LTX 2.3/2.5, music, '
-                'optimal-prompt widgets, or Keep Studio control pack in Expansion. '
-                'READY/LIMITED here means probe/queue metadata only.'
+                'Expansion Video Studio (premium) — READY when ComfyUI at OTACON_COMFYUI_URL '
+                'is healthy. NOT_CONFIGURED means set the endpoint; LIMITED means endpoint set '
+                'but not answering. Full LTX/music/widget packs land as Studio deps ship.'
             ),
-            'note': 'Heavy Keep Studio deps are separate; Expansion shows Muse queue + readiness only.',
+            'note': 'Muse owns Video Studio. Configure a public ComfyUI URL to go READY.',
         })
         return True
     if path == '/api/expansion/ops':
@@ -347,6 +347,17 @@ def handle_expansion_get(path: str, send_json) -> bool:
 
 
 def handle_expansion_post(path: str, data: dict, send_json) -> bool:
+    if path == '/api/expansion/voice-trainer/start':
+        from expansion.capabilities.voice_trainer import ensure_voice_trainer_ui, probe_voice_trainer
+        result = ensure_voice_trainer_ui()
+        report = probe_voice_trainer()
+        send_json({
+            **result,
+            'state': report.state,
+            'detail': report.detail,
+            'discovery': report.discovery,
+        })
+        return True
     if path == '/api/expansion/jobs/create':
         from expansion.pipeline import LivingPipeline
         pipe = LivingPipeline()

@@ -77,6 +77,8 @@ def test_expansion_windows_installer_contracts():
     must("reset --hard origin/main" in SH, "diverged Core tip recovers via hard reset", fails)
     must("pull --ff-only" in SH, "tries ff-only before reset", fails)
     must("backup/pre-expansion-" in SH, "saves backup branch before hard reset", fails)
+    must("EXP_GENOME_STATE" in SH and "Genome Voice Trainer" in SH,
+         "Expansion installer owns Genome premium path", fails)
 
     must("OtaconExpansion-Setup.bat" in FETCH, "bootstrap-fetch includes Expansion Setup bat", fails)
     must("install-otacon-expansion.ps1" in FETCH, "bootstrap-fetch includes Expansion PS1", fails)

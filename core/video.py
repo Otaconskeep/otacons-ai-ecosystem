@@ -39,10 +39,18 @@ class TestVideoProvider(VideoProvider):
 class ComfyUIProvider(VideoProvider):
  provider_id='comfyui'
  def __init__(self,endpoint=''): self.endpoint=endpoint
- def health(self,model_id): return ('OFFLINE','video runtime endpoint is not configured') if not self.endpoint else ('UNKNOWN','external provider validation pending')
+ def health(self,model_id):
+  if not self.endpoint:
+   return 'OFFLINE','video runtime endpoint is not configured'
+  try:
+   from expansion.capabilities.video_studio import comfy_endpoint_healthy
+   ok, detail = comfy_endpoint_healthy(self.endpoint)
+   return ('ONLINE', detail) if ok else ('OFFLINE', detail)
+  except Exception as exc:
+   return 'OFFLINE', str(exc)
  def execution_plan(self,request):
   p=VIDEO_PROFILES[request.profile]; return {'execution_class':p['execution_class'],'width':request.width or p['width'],'height':request.height or p['height'],'inference_steps':p['inference_steps_reference'],'acceleration_mode':'provider_resolved','fallback_used':False}
- def generate(self,*args,**kwargs): raise RuntimeError('VIDEO_PROVIDER_UNAVAILABLE: configure a public video service')
+ def generate(self,*args,**kwargs): raise RuntimeError('VIDEO_PROVIDER_UNAVAILABLE: wire a Comfy workflow submitter or configure a public video service')
 def validate_video(data):
  if not data.startswith(b'RIFF') or b'AVI ' not in data[:16] or len(data)<16: raise ValueError('VIDEO_ARTIFACT_INVALID')
 class VideoProductionManager:

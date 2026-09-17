@@ -112,9 +112,11 @@ def save_n8n_config(*, url: str, api_key: str = '', layout: Optional[StateLayout
 def probe_all_optional(layout: Optional[StateLayout] = None) -> dict:
     from expansion.capabilities.video_studio import probe_video_studio
     from expansion.capabilities.home_assistant import probe_home_assistant
+    from expansion.capabilities.voice_trainer import probe_voice_trainer
     layout = layout or resolve_layout()
     return {
         'video_studio': probe_video_studio(layout).to_dict(),
+        'voice_trainer': probe_voice_trainer().to_dict(),
         'home_assistant': probe_home_assistant(layout).to_dict(),
         'discord': probe_discord(layout).to_dict(),
         'n8n': probe_n8n(layout).to_dict(),

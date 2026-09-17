@@ -311,7 +311,9 @@ async function showHome(){
   state.scan=scanPack.data;
   state.scanStatus=scanPack;
   const chatOk=capReady('chat'), ttsOk=capReady('tts'), sttOk=capReady('stt');
-  const vtOk=capStatus('voice_trainer')==='ready';
+  const vtStatus=capStatus('voice_trainer');
+  const vtOk=vtStatus==='ready';
+  const vtOffline=vtStatus==='offline';
   const model=(state.capabilities&&state.capabilities.llm_model)||'—';
   const hwHome=scanPack.hardware||{};
   const gpuDet=scanPack.gpu_detection||{};
@@ -365,7 +367,7 @@ async function showHome(){
       </button>
       <button type="button" class="svc" onclick="showExpansionSurface('creative')">
         <div class="svc-top"><div class="svc-ico">CRE</div><div class="svc-name">Creative Studio</div></div>
-        <p class="svc-desc">Creative queue and Studio readiness shell — Muse (heavy Studio later).</p>
+        <p class="svc-desc">Expansion premium Video Studio — READY when ComfyUI is up (OTACON_COMFYUI_URL).</p>
         <span class="svc-pill ok">MUSE</span>
       </button>
       <button type="button" class="svc" onclick="showExpansionSurface('ops')">
@@ -479,10 +481,10 @@ async function showHome(){
         <p class="svc-desc">Model ${escapeHtml(String(model))} · STT ${sttOk?'ready':'off'} · GPU ${escapeHtml(gpuHomeLine)}${expOn?' · Expansion on':''}</p>
         <span class="svc-pill ${chatOk&&ttsOk?'ok':'warn'}">${chatOk&&ttsOk?'HEALTHY':'CHECK SERVICES'}</span>
       </button>
-      <button type="button" class="svc ${vtOk?'':'svc-off'}" ${vtOk?'onclick="openVoiceTrainer()"':'disabled'}>
+      <button type="button" class="svc ${vtOk?'':'svc-off'}" ${vtOk?'onclick="openVoiceTrainer()"':(vtOffline?'onclick="startVoiceTrainer()"':'disabled')}>
         <div class="svc-top"><div class="svc-ico">VT</div><div class="svc-name">Voice Trainer</div></div>
-        <p class="svc-desc">${escapeHtml((state.capabilities&&state.capabilities.voice_trainer_note)||(vtOk?'Genome Voice Trainer (premium) on :8765.':'Genome is a premium feature — not running here. Piper TTS does not need it.'))}</p>
-        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtOk?'OPEN GENOME':'PREMIUM'}</span>
+        <p class="svc-desc">${escapeHtml((state.capabilities&&state.capabilities.voice_trainer_note)||(vtOk?'Genome (Expansion premium) on :8765.':vtOffline?'Genome installed — start the UI on :8765.':'Genome Voice Trainer is Expansion premium — needs GPU install.'))}</p>
+        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtOk?'OPEN GENOME':(vtOffline?'START GENOME':'PREMIUM')}</span>
       </button>
       <button type="button" class="svc svc-off" disabled>
         <div class="svc-top"><div class="svc-ico">IMG</div><div class="svc-name">Images / Video</div></div>
@@ -833,7 +835,9 @@ async function showChat(){
   const voiceOk=chatOk&&ttsOk;
   const model=(state.capabilities&&state.capabilities.llm_model)||state.lastModel||'—';
   const gpuLine=formatGpuLine(scanPack);
-  const vtOk=capStatus('voice_trainer')==='ready';
+  const vtStatus=capStatus('voice_trainer');
+  const vtOk=vtStatus==='ready';
+  const vtOffline=vtStatus==='offline';
   const voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
   const roster=state.roster&&state.roster.length?state.roster:[{id:aid,display_name:currentAgentName()}];
   const agentBtns=roster.map(a=>{
@@ -947,8 +951,8 @@ async function showChat(){
       </div>
       <div class="cc-panel">
         <h2>Voice Trainer</h2>
-        <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Genome Voice Trainer (premium) — training on :8765, not inside Codec chat.':'Genome is a premium feature. Not running on this install — Piper TTS on :10200 does not need it.'}</p>
-        ${vtOk?'<button type=button class="cc-btn" onclick="openVoiceTrainer()">Open Genome (8765)</button>':'<p class=muted style="font-size:10px;margin:0"><span class="svc-pill warn">PREMIUM</span></p>'}
+        <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Genome Voice Trainer (Expansion premium) on :8765.':vtOffline?'Genome installed but UI offline — start it.':'Genome is Expansion premium. Needs GPU install — Piper TTS on :10200 does not need it.'}</p>
+        ${vtOk?'<button type=button class="cc-btn" onclick="openVoiceTrainer()">Open Genome (8765)</button>':(vtOffline?'<button type=button class="cc-btn" onclick="startVoiceTrainer()">Start Genome</button>':'<p class=muted style="font-size:10px;margin:0"><span class="svc-pill warn">PREMIUM</span></p>')}
       </div>
       <div class="cc-panel">
         <h2>How to run</h2>
@@ -1002,7 +1006,7 @@ async function openCurrentAgentRoom(){
 async function openVoiceTrainer(){
   const url=(state.capabilities&&state.capabilities.voice_trainer_url)||'';
   if(!url || capStatus('voice_trainer')!=='ready'){
-    alert('Genome Voice Trainer is a premium feature and is not running on this install (:8765). Piper TTS does not need it.');
+    alert('Genome Voice Trainer is Expansion premium and is not listening on :8765. Use Start Genome if installed, or re-run Expansion on a GPU host.');
     return;
   }
   try{
@@ -1010,6 +1014,20 @@ async function openVoiceTrainer(){
     void probe;
   }catch(_e){}
   window.open(url,'_blank','noopener');
+}
+async function startVoiceTrainer(){
+  try{
+    const r=await api('/api/expansion/voice-trainer/start',{});
+    await loadCapabilities();
+    if(r&&r.ok&&(r.data&&r.data.ok)){
+      if(capStatus('voice_trainer')==='ready') openVoiceTrainer();
+      else alert('Genome start requested — wait a second and refresh if Open is not ready yet.');
+    }else{
+      alert((r&&r.data&&(r.data.error||r.data.detail||r.data.action))||'Could not start Genome UI. Re-run Expansion Voice Trainer install on a GPU host.');
+    }
+  }catch(e){
+    alert('Could not start Genome: '+String(e&&e.message||e));
+  }
 }
 
 async function assignVoice(vid){

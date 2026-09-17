@@ -175,9 +175,9 @@
   }
 
   function foundationShellBanner() {
-    return '<div class="fl-panel" style="margin-bottom:.75rem"><span class="fl-pill warn">FOUNDATION SHELL</span>' +
-      '<p class="fl-note">Expansion floors are coordination/metadata surfaces — not the full OtaconsKeep room packs ' +
-      '(LTX Studio widgets, music, optimal-prompt, Keep control decks). Missing Keep depth here is expected until those packs are wired.</p></div>';
+    return '<div class="fl-panel" style="margin-bottom:.75rem"><span class="fl-pill warn">EXPANSION</span>' +
+      '<p class="fl-note">Premium Expansion surfaces. Genome Voice Trainer and Video Studio go live when their ' +
+      'runtime is present (GPU Genome on :8765; ComfyUI via OTACON_COMFYUI_URL). Thin pills mean that runtime is not up yet — not that the feature is Keep-only.</p></div>';
   }
 
   function floorShell(title, kicker, bodyHtml, extraMeta) {
@@ -1013,30 +1013,34 @@
     var state = d.video_studio_readiness || (d.video_studio && d.video_studio.state) || 'UNAVAILABLE';
     var vs = d.video_studio || {};
     var studio;
-    if (state === 'UNAVAILABLE') {
+    if (state === 'UNAVAILABLE' || state === 'NOT_CONFIGURED') {
       studio = '<div class="fl-panel"><h3 class="fl-h">Video Studio</h3>' +
-        pill('UNAVAILABLE', 'warn') +
-        '<p class="fl-note">' + esc(d.honest_note || 'UNAVAILABLE = no fake controls.') + '</p>' +
-        '<p class="muted">' + esc(vs.note || vs.message || d.note ||
-          'Studio dependencies not present.') + '</p></div>';
+        pill(state || 'NOT_CONFIGURED', 'warn') +
+        '<p class="fl-note">' + esc(d.honest_note || '') + '</p>' +
+        '<p class="muted">' + esc(vs.detail || vs.note || vs.message || d.note ||
+          'Set OTACON_COMFYUI_URL to your ComfyUI (Expansion premium Video Studio).') + '</p>' +
+        '<p class="fl-note">Example: <span class="mono">export OTACON_COMFYUI_URL=http://127.0.0.1:8188</span> then restart Otacon.</p></div>';
     } else {
       studio = '<div class="fl-panel"><h3 class="fl-h">Video Studio</h3>' +
         pill(state, state === 'READY' ? 'ok' : 'warn') +
         '<p class="fl-note">' + esc(d.honest_note || '') + '</p>' +
+        (state === 'READY'
+          ? '<p class="fl-note">ComfyUI is healthy — Muse Studio endpoint is live. Queue creative jobs below; LTX/music widgets continue to land with Studio deps.</p>'
+          : '<p class="muted">Endpoint configured but not healthy yet — check ComfyUI is running.</p>') +
         panel('Queue', listCards(d.creative_queue || [], jobCard, 'Queue empty.')) +
         panel('Active renders', listCards(d.active_renders || [], jobCard, 'No active renders.')) +
         panel('Capabilities', kvPre(d.capabilities || {}, 600)) +
+        panel('Discovery', kvPre(vs.discovery || d.video_studio || {}, 800)) +
         panel('Recent output', listCards(d.recent_output || d.recent_creative_jobs || [],
           jobCard, 'No completed creative jobs.')) +
         panel('Runtime context', kvPre(d.runtime_context || {}, 1200)) + '</div>';
     }
-    floorShell('Muse Creative Studio', 'Creative / Video Studio',
+    floorShell('Muse Creative Studio', 'Expansion premium — Video Studio',
       '<p class="fl-note">' + esc(d.note || '') + '</p>' +
-      '<div class="fl-panel"><h3 class="fl-h">Honest scope</h3>' +
-      pill('FOUNDATION SHELL', 'warn') +
-      '<p class="fl-note">This is <b>not</b> the OtaconsKeep Video Studio. Expansion does not ship ' +
-      'LTX 2.3/2.5, music generation, optimal-prompt widgets, or Keep Studio control surfaces. ' +
-      'What you see here is readiness + creative job queue metadata until the Keep Studio pack is wired.</p></div>' +
+      '<div class="fl-panel"><h3 class="fl-h">Premium scope</h3>' +
+      pill(state === 'READY' ? 'STUDIO LIVE' : 'NEEDS COMFY', state === 'READY' ? 'ok' : 'warn') +
+      '<p class="fl-note">Video Studio is an <b>Expansion premium</b> surface. Wire ComfyUI via ' +
+      '<span class="mono">OTACON_COMFYUI_URL</span> for READY. Piper TTS does not require Studio.</p></div>' +
       studio +
       panel('Muse creative queue', listCards(d.creative_queue || d.recent_creative_jobs || [],
         jobCard, 'No Muse creative jobs yet.')));

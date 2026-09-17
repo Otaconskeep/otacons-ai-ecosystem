@@ -42,12 +42,12 @@ def main() -> int:
          "Codec no longer skips /api/scan forever", fails)
     must("agent:{id:'agent_001'" not in js and "agent_id:'agent_001'" not in js,
          "wizard preview/setup no longer hardcodes agent_001", fails)
-    must("PREMIUM" in js and "premium feature" in js,
-         "Voice Trainer marked premium (not Keep-only)", fails)
+    must("PREMIUM" in js and "Expansion premium" in js,
+         "Voice Trainer framed as Expansion premium", fails)
     must("KEEP ONLY" not in js and "Keep-only" not in js,
          "no Keep-only Genome framing on Expansion UI", fails)
-    must('onclick="openVoiceTrainer()"' in js,
-         "Open Genome only when trainer ready (guarded openVoiceTrainer)", fails)
+    must('onclick="openVoiceTrainer()"' in js and 'startVoiceTrainer' in js,
+         "Open/Start Genome controls wired", fails)
 
     must("_memory_usable" in srv and "chat_probe" in srv, "capabilities require memory + chat probe", fails)
     must("MEMORY.ping" in srv or "create_conversation('__health__'" in srv, "memory health create/list path", fails)

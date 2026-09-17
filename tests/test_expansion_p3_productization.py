@@ -58,12 +58,30 @@ class P3LayoutCase(unittest.TestCase):
 
 class TestP3A_Capabilities(P3LayoutCase):
     def test_video_studio_unavailable_without_endpoint(self):
-        # Clear comfy urls
+        # Clear comfy urls — contracts alone must NOT fake LIMITED/READY
         with mock.patch.dict(os.environ, {'OTACON_COMFYUI_URL': '', 'COMFYUI_URL': ''}, clear=False):
             r = probe_video_studio(self.layout)
-        self.assertIn(r.state, ('UNAVAILABLE', 'LIMITED', 'NOT_CONFIGURED'))
+        self.assertEqual(r.state, 'NOT_CONFIGURED')
         self.assertTrue(r.optional)
         self.assertEqual(r.owner_agent, 'muse')
+
+    def test_video_studio_ready_when_comfy_healthy(self):
+        with mock.patch.dict(os.environ, {'OTACON_COMFYUI_URL': 'http://127.0.0.1:8188'}, clear=False):
+            with mock.patch(
+                'expansion.capabilities.video_studio.comfy_endpoint_healthy',
+                return_value=(True, '/system_stats → 200'),
+            ):
+                r = probe_video_studio(self.layout)
+        self.assertEqual(r.state, 'READY')
+
+    def test_video_studio_limited_when_endpoint_down(self):
+        with mock.patch.dict(os.environ, {'OTACON_COMFYUI_URL': 'http://127.0.0.1:8188'}, clear=False):
+            with mock.patch(
+                'expansion.capabilities.video_studio.comfy_endpoint_healthy',
+                return_value=(False, 'connection refused'),
+            ):
+                r = probe_video_studio(self.layout)
+        self.assertEqual(r.state, 'LIMITED')
 
     def test_video_studio_rejects_private_lan(self):
         topo_path = self.layout.user_preferences / 'topology.json'

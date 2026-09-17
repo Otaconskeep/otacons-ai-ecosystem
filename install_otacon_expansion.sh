@@ -352,6 +352,56 @@ echo "EXP_AGENT_COUNT=$AGENT_COUNT"
 echo "EXP_DATA_DIR=$DATA_DIR"
 
 # ------------------------------------------------------------------------------
+# Genome Voice Trainer — Expansion premium (GPU). Install + ensure UI on :8765.
+# Skip: OTACON_INSTALL_VOICE_TRAINER=0
+# ------------------------------------------------------------------------------
+INSTALL_VOICE_TRAINER="${OTACON_INSTALL_VOICE_TRAINER:-1}"
+VOICE_TRAINER_INSTALLER_URL="${OTACON_VOICE_TRAINER_URL:-https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh}"
+VT_HOME="${OTACON_VT_DIR:-$OWNER_HOME/otacon-voice-trainer}"
+EXP_GENOME_STATE=skipped
+if [[ "$INSTALL_VOICE_TRAINER" != "1" ]]; then
+  warn "Genome Voice Trainer skipped (OTACON_INSTALL_VOICE_TRAINER=0)."
+  EXP_GENOME_STATE=skipped_env
+elif ! command -v nvidia-smi >/dev/null 2>&1 || ! nvidia-smi >/dev/null 2>&1; then
+  warn "Genome Voice Trainer (Expansion premium) needs NVIDIA GPU — nvidia-smi not usable here."
+  warn "  Piper TTS still works on CPU. On a GPU host re-run Expansion or: curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
+  EXP_GENOME_STATE=no_gpu
+else
+  log "Expansion premium: ensuring Genome Voice Trainer (GPU Piper)"
+  if [[ -d "$VT_HOME" ]] && docker image inspect piper-voice-trainer:gpu >/dev/null 2>&1; then
+    ok "Genome already present at $VT_HOME"
+    EXP_GENOME_STATE=present
+  elif [[ "$(id -u)" == "0" ]]; then
+    if run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" OTACON_VT_DIR="$VT_HOME" OTACON_VT_SKIP_UI=1 \
+        bash -c "curl -fsSL \"$VOICE_TRAINER_INSTALLER_URL\" | bash"
+    then
+      ok "Genome Voice Trainer installed for Expansion"
+      EXP_GENOME_STATE=installed
+    else
+      warn "Genome Voice Trainer install failed — Expansion foundation continues; retry Voice Trainer later."
+      EXP_GENOME_STATE=fail
+    fi
+  else
+    warn "Genome install needs root/docker — run Expansion via Windows Setup (privileged) or: wsl -u root"
+    EXP_GENOME_STATE=needs_root
+  fi
+  # Start status UI when installed so Expansion can report READY.
+  if [[ -d "$VT_HOME/ui" ]]; then
+    if ! (echo >/dev/tcp/127.0.0.1/8765) >/dev/null 2>&1; then
+      log "Starting Genome status UI on :8765"
+      run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" OTACON_VT_DIR="$VT_HOME" PYTHONPATH="$INSTALL_DIR" \
+        "$VPY" -c "from expansion.capabilities.voice_trainer import ensure_voice_trainer_ui; print(ensure_voice_trainer_ui())" \
+        || true
+    fi
+    if (echo >/dev/tcp/127.0.0.1/8765) >/dev/null 2>&1; then
+      ok "Genome UI listening on http://127.0.0.1:8765/"
+      EXP_GENOME_STATE=ready
+    fi
+  fi
+fi
+echo "EXP_GENOME_STATE=$EXP_GENOME_STATE"
+
+# ------------------------------------------------------------------------------
 # Final summary
 # ------------------------------------------------------------------------------
 FINAL_STATE=READY
