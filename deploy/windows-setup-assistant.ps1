@@ -3178,14 +3178,16 @@ function Start-GuidedSetup {
         $ttsOk = [bool]$snap.tts_ok
         if ($ttsOk) {
             Save-InstallerComplete
-            Write-OtaconSay "You're already online. Opening Codec now." -Mood "ok"
+            Write-OtaconSay "You're already online. Pulling the latest Codec fixes, then opening..." -Mood "ok"
             $ubuntuOpen = Get-UbuntuDistroName
-            if ($ubuntuOpen) { [void](Invoke-OtaconCoreRepair -Name $ubuntuOpen) }
+            # Soft refresh: git pull + undo GPU-skip patches (no full reinstall needed).
+            if ($ubuntuOpen) { [void](Invoke-OtaconCoreRepair -Name $ubuntuOpen -Codec) }
             try { Start-Process (Get-OtaconOpenUrl -Codec) } catch {}
             Show-Box "LINK ESTABLISHED" @(
                 "Otacon is ready.",
                 (Get-OtaconOpenUrl -Codec),
                 "",
+                "Hard-refresh the browser (Ctrl+Shift+R) if GPU/chat looks stale.",
                 "You can close this window."
             ) -Color Green
             return 0

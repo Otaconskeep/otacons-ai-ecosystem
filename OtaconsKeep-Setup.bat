@@ -76,6 +76,8 @@ if /I "%~1"=="-debug" goto SET_DEBUG
 if /I "%~1"=="--update" goto SET_UPDATE
 if /I "%~1"=="-update" goto SET_UPDATE
 if /I "%~1"=="--refresh" goto SET_UPDATE
+if /I "%~1"=="--reinstall" goto SET_REINSTALL
+if /I "%~1"=="-reinstall" goto SET_REINSTALL
 if /I "%~1"=="--fix-codec" goto SET_FIXCODEC
 if /I "%~1"=="-fix-codec" goto SET_FIXCODEC
 if /I "%~1"=="--fix" goto SET_FIXCODEC
@@ -92,6 +94,10 @@ set "DEBUG=1"
 goto PARSE_SHIFT
 :SET_UPDATE
 set "FORCE_UPDATE=1"
+goto PARSE_SHIFT
+:SET_REINSTALL
+set "FORCE_UPDATE=1"
+set "ARGS=!ARGS! --reinstall"
 goto PARSE_SHIFT
 :SET_FIXCODEC
 set "ARGS=!ARGS! --fix-codec"

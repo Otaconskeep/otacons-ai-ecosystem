@@ -71,6 +71,7 @@ function Get-NormalizedPath {
 $full = @(
     "install_otacon.bat",
     "OtaconsKeep-Setup.bat",
+    "Reinstall-Otacon.bat",
     "install_otacon.sh",
     "release.json",
     "deploy/installer-revision.txt",
