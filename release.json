@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "418516bff4950338869297d8eb3e0a8a3c8e67db",
+  "commit": "33d4b78261e98c3f9882f194ecefbc5a1ac1ede3",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -39,8 +39,8 @@
     },
     {
       "path": "deploy/bootstrap-fetch.ps1",
-      "sha256": "dc6e9ddcad23b1de4beeae2e15e71841e9f7cc09f2f26210798aef00adaa8f05",
-      "bytes": 23497
+      "sha256": "a2afab02cfb81fed359c4b1c04dd35fabd05f5914f304ee89627e46cff06d5c2",
+      "bytes": 23571
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
