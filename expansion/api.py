@@ -358,6 +358,43 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             'discovery': report.discovery,
         })
         return True
+    if path == '/api/expansion/video-studio/config':
+        from expansion.capabilities.video_studio import probe_video_studio
+        from expansion.persist import atomic_write_json
+        from expansion.state_layout import resolve_layout
+        layout = resolve_layout()
+        endpoint = str(
+            (data or {}).get('endpoint')
+            or (data or {}).get('comfyui_url')
+            or ''
+        ).strip()
+        if not endpoint:
+            send_json({'ok': False, 'error': 'endpoint required'}, 400)
+            return True
+        cfg_path = layout.user_preferences / 'video_studio.json'
+        layout.user_preferences.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(cfg_path, {
+            'endpoint': endpoint,
+            'comfyui_url': endpoint,
+            'provider': 'comfyui',
+        })
+        # Also mirror into topology when possible
+        try:
+            from expansion.topology import load_topology, save_topology
+            topo = load_topology()
+            topo.comfyui_url = endpoint
+            save_topology(topo)
+        except Exception:
+            pass
+        report = probe_video_studio(layout)
+        send_json({
+            'ok': True,
+            'endpoint': endpoint,
+            'state': report.state,
+            'detail': report.detail,
+            'video_studio': report.to_dict(),
+        })
+        return True
     if path == '/api/expansion/jobs/create':
         from expansion.pipeline import LivingPipeline
         pipe = LivingPipeline()

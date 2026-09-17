@@ -1018,8 +1018,13 @@
         pill(state || 'NOT_CONFIGURED', 'warn') +
         '<p class="fl-note">' + esc(d.honest_note || '') + '</p>' +
         '<p class="muted">' + esc(vs.detail || vs.note || vs.message || d.note ||
-          'Set OTACON_COMFYUI_URL to your ComfyUI (Expansion premium Video Studio).') + '</p>' +
-        '<p class="fl-note">Example: <span class="mono">export OTACON_COMFYUI_URL=http://127.0.0.1:8188</span> then restart Otacon.</p></div>';
+          'Set a ComfyUI URL to go READY.') + '</p>' +
+        '<label>ComfyUI URL</label>' +
+        '<input id="fl-comfy-url" value="http://127.0.0.1:8188" style="width:100%;max-width:420px;padding:.4rem;margin:.4rem 0">' +
+        '<div class="fl-rail">' +
+        btn('Save & probe', "typeof saveComfyUrlFromFloor==='function'&&saveComfyUrlFromFloor()", false) +
+        btn('Open setup', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", true) +
+        '</div></div>';
     } else {
       studio = '<div class="fl-panel"><h3 class="fl-h">Video Studio</h3>' +
         pill(state, state === 'READY' ? 'ok' : 'warn') +

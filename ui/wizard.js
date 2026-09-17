@@ -314,6 +314,9 @@ async function showHome(){
   const vtStatus=capStatus('voice_trainer');
   const vtOk=vtStatus==='ready';
   const vtOffline=vtStatus==='offline';
+  const videoStatus=capStatus('video');
+  const videoOk=videoStatus==='ready';
+  const expEntitled=!!(state.expansion&&(state.expansion.expansion_entitled||state.expansion.surfaces_ready||state.expansion.enabled));
   const model=(state.capabilities&&state.capabilities.llm_model)||'—';
   const hwHome=scanPack.hardware||{};
   const gpuDet=scanPack.gpu_detection||{};
@@ -323,6 +326,17 @@ async function showHome(){
   const sem=((state.expansion&&state.expansion.report&&state.expansion.report.semantic)||{});
   const emotionOk=sem.emotion_engine==='READY';
   const relOk=sem.relationship_store==='READY';
+  const brandLine=expOn?'Otaconskeep · Expansion':'Otaconskeep · Lite';
+  const footLine=expOn
+    ?'Otaconskeep Expansion · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX'
+    :'Otaconskeep Lite · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX';
+
+  const vtPill=vtOk?'OPEN GENOME':(vtOffline?'START GENOME':(expEntitled?'SETUP GENOME':'PREMIUM'));
+  const vtClick=vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()');
+  const vidPill=videoOk?'STUDIO READY':(videoStatus==='limited'?'STUDIO LIMITED':(expEntitled?'SETUP STUDIO':'PREMIUM'));
+  const vidClick=expEntitled||expOn?'showVideoStudioSetup()':'showExpansionSurface(\'creative\')';
+  const nodesClick=expOn?'showComputeNodes()':'showNodes()';
+  const nodesPill=expOn?'LOCAL NODE':'LOCAL ONLY';
 
   const agentRoomTiles=(state.roster||[]).map(a=>{
     const id=a.id||a.agent_id;
@@ -431,7 +445,7 @@ async function showHome(){
   appRoot().innerHTML=`<div class="home">
   <header class="home-header">
     <div>
-      <p class="home-kicker">Otaconskeep · Lite · build c30c1d2</p>
+      <p class="home-kicker">${brandLine}</p>
       <h1 class="home-greeting">Otacon Command Center</h1>
     </div>
     <div class="home-meta">
@@ -481,25 +495,25 @@ async function showHome(){
         <p class="svc-desc">Model ${escapeHtml(String(model))} · STT ${sttOk?'ready':'off'} · GPU ${escapeHtml(gpuHomeLine)}${expOn?' · Expansion on':''}</p>
         <span class="svc-pill ${chatOk&&ttsOk?'ok':'warn'}">${chatOk&&ttsOk?'HEALTHY':'CHECK SERVICES'}</span>
       </button>
-      <button type="button" class="svc ${vtOk?'':'svc-off'}" ${vtOk?'onclick="openVoiceTrainer()"':(vtOffline?'onclick="startVoiceTrainer()"':'disabled')}>
+      <button type="button" class="svc" onclick="${vtClick}">
         <div class="svc-top"><div class="svc-ico">VT</div><div class="svc-name">Voice Trainer</div></div>
-        <p class="svc-desc">${escapeHtml((state.capabilities&&state.capabilities.voice_trainer_note)||(vtOk?'Genome (Expansion premium) on :8765.':vtOffline?'Genome installed — start the UI on :8765.':'Genome Voice Trainer is Expansion premium — needs GPU install.'))}</p>
-        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtOk?'OPEN GENOME':(vtOffline?'START GENOME':'PREMIUM')}</span>
+        <p class="svc-desc">${escapeHtml((state.capabilities&&state.capabilities.voice_trainer_note)||(vtOk?'Genome on :8765.':vtOffline?'Genome installed — start UI.':'Expansion Genome — click to set up / start.'))}</p>
+        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtPill}</span>
       </button>
-      <button type="button" class="svc svc-off" disabled>
+      <button type="button" class="svc" onclick="${vidClick}">
         <div class="svc-top"><div class="svc-ico">IMG</div><div class="svc-name">Images / Video</div></div>
-        <p class="svc-desc">Not configured in Lite. Providers are architecture-only until you add them.</p>
-        <span class="svc-pill warn">NOT CONFIGURED</span>
+        <p class="svc-desc">${escapeHtml((state.capabilities&&state.capabilities.video_detail)||(videoOk?'ComfyUI Studio healthy.':'Expansion Video Studio — click to configure ComfyUI endpoint.'))}</p>
+        <span class="svc-pill ${videoOk?'ok':'warn'}">${vidPill}</span>
       </button>
-      <button type="button" class="svc svc-off" disabled>
+      <button type="button" class="svc" onclick="${nodesClick}">
         <div class="svc-top"><div class="svc-ico">NODES</div><div class="svc-name">Compute Nodes</div></div>
-        <p class="svc-desc">Remote pairing is Keep-direction — this Lite box is the local node.</p>
-        <span class="svc-pill warn">LOCAL ONLY</span>
+        <p class="svc-desc">${expOn?'This Expansion box is the local compute node — open node status and resources.':'This Lite box is the local node.'}</p>
+        <span class="svc-pill ok">${nodesPill}</span>
       </button>
     </div>
   </section>
 
-  <p class="home-foot">Otaconskeep Lite · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX</p>
+  <p class="home-foot">${footLine}</p>
 </div>`;
 
   if(window.__homeClock) clearInterval(window.__homeClock);
@@ -511,7 +525,7 @@ async function showHome(){
   if(!document.getElementById('ot-boot') && !sessionStorage.getItem('ot_boot_done')){
     const boot=document.createElement('div');
     boot.id='ot-boot';
-    boot.innerHTML=`<div class="frame"><div class="kicker">Otaconskeep</div><div class="title">Command Center</div><div class="sub">Booting local Lite deck…</div></div>`;
+    boot.innerHTML=`<div class="frame"><div class="kicker">Otaconskeep</div><div class="title">Command Center</div><div class="sub">Booting ${expOn?'Expansion':'Lite'} deck…</div></div>`;
     document.body.appendChild(boot);
     setTimeout(()=>{ boot.classList.add('done'); sessionStorage.setItem('ot_boot_done','1'); setTimeout(()=>boot.remove(),700); },900);
   }
@@ -951,8 +965,8 @@ async function showChat(){
       </div>
       <div class="cc-panel">
         <h2>Voice Trainer</h2>
-        <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Genome Voice Trainer (Expansion premium) on :8765.':vtOffline?'Genome installed but UI offline — start it.':'Genome is Expansion premium. Needs GPU install — Piper TTS on :10200 does not need it.'}</p>
-        ${vtOk?'<button type=button class="cc-btn" onclick="openVoiceTrainer()">Open Genome (8765)</button>':(vtOffline?'<button type=button class="cc-btn" onclick="startVoiceTrainer()">Start Genome</button>':'<p class=muted style="font-size:10px;margin:0"><span class="svc-pill warn">PREMIUM</span></p>')}
+        <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Genome Voice Trainer on :8765.':vtOffline?'Genome installed — start UI.':'Expansion Genome — open Setup to install/start.'}</p>
+        ${vtOk?'<button type=button class="cc-btn" onclick="openVoiceTrainer()">Open Genome (8765)</button>':(vtOffline?'<button type=button class="cc-btn" onclick="startVoiceTrainer()">Start Genome</button>':'<button type=button class="cc-btn" onclick="showGenomeSetup()">Setup Genome</button>')}
       </div>
       <div class="cc-panel">
         <h2>How to run</h2>
@@ -1006,7 +1020,7 @@ async function openCurrentAgentRoom(){
 async function openVoiceTrainer(){
   const url=(state.capabilities&&state.capabilities.voice_trainer_url)||'';
   if(!url || capStatus('voice_trainer')!=='ready'){
-    alert('Genome Voice Trainer is Expansion premium and is not listening on :8765. Use Start Genome if installed, or re-run Expansion on a GPU host.');
+    showGenomeSetup();
     return;
   }
   try{
@@ -1021,13 +1035,108 @@ async function startVoiceTrainer(){
     await loadCapabilities();
     if(r&&r.ok&&(r.data&&r.data.ok)){
       if(capStatus('voice_trainer')==='ready') openVoiceTrainer();
-      else alert('Genome start requested — wait a second and refresh if Open is not ready yet.');
+      else alert('Genome start requested — wait a second and open Voice Trainer again.');
     }else{
-      alert((r&&r.data&&(r.data.error||r.data.detail||r.data.action))||'Could not start Genome UI. Re-run Expansion Voice Trainer install on a GPU host.');
+      showGenomeSetup();
     }
   }catch(e){
-    alert('Could not start Genome: '+String(e&&e.message||e));
+    showGenomeSetup();
   }
+}
+async function showGenomeSetup(){
+  state.view='home';
+  setBodyMode('home');
+  await loadCapabilities();
+  const note=(state.capabilities&&state.capabilities.voice_trainer_note)||'';
+  const st=capStatus('voice_trainer');
+  const path=(state.capabilities&&state.capabilities.voice_trainer_path)||'~/otacon-voice-trainer';
+  appRoot().innerHTML=`<div class="home">
+  <header class="home-header"><div><p class="home-kicker">Expansion premium</p><h1 class="home-greeting">Genome Voice Trainer</h1></div>
+  <div class="home-meta">${btnHome()}</div></header>
+  <section class="home-group">
+    <div class="card">
+      <p><b>Status:</b> ${escapeHtml(st)} — you have Expansion; Genome just needs its runtime.</p>
+      <p class="muted">${escapeHtml(note)}</p>
+      <ol style="margin:12px 0 12px 1.2rem;line-height:1.6">
+        <li>NVIDIA GPU + working <span class="mono">nvidia-smi</span> in WSL</li>
+        <li>Install: <span class="mono">curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh | bash</span></li>
+        <li>Or re-run Expansion Setup on a GPU host (installs Genome automatically)</li>
+        <li>Then click <b>Start Genome</b> so :8765 is listening</li>
+      </ol>
+      <p class="muted">Install path: <span class="mono">${escapeHtml(path)}</span></p>
+      <div class="fl-rail" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button type="button" class="cc-btn" onclick="startVoiceTrainer()">Start Genome</button>
+        <button type="button" class="cc-btn" onclick="openVoiceTrainer()">Open :8765</button>
+        <button type="button" class="cc-btn" onclick="showHome()">Back</button>
+      </div>
+    </div>
+  </section>
+</div>`;
+}
+function btnHome(){
+  return `<button type="button" class="cc-btn" onclick="showHome()">Home</button>`;
+}
+async function showVideoStudioSetup(){
+  state.view='home';
+  setBodyMode('home');
+  await loadCapabilities();
+  const detail=(state.capabilities&&state.capabilities.video_detail)||'';
+  const st=capStatus('video');
+  const ep=(state.capabilities&&state.capabilities.video_endpoint)||'http://127.0.0.1:8188';
+  appRoot().innerHTML=`<div class="home">
+  <header class="home-header"><div><p class="home-kicker">Expansion premium</p><h1 class="home-greeting">Video Studio</h1></div>
+  <div class="home-meta">${btnHome()}</div></header>
+  <section class="home-group">
+    <div class="card">
+      <p><b>Status:</b> ${escapeHtml(st)} — Expansion is entitled; wire ComfyUI to go READY.</p>
+      <p class="muted">${escapeHtml(detail)}</p>
+      <label style="display:block;margin:12px 0 6px">ComfyUI URL</label>
+      <input id="comfyUrl" value="${escapeHtml(ep)}" style="width:100%;max-width:480px;padding:8px" placeholder="http://127.0.0.1:8188">
+      <div class="fl-rail" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button type="button" class="cc-btn" onclick="saveComfyUrl()">Save &amp; probe</button>
+        <button type="button" class="cc-btn" onclick="showExpansionSurface('creative')">Open Muse Studio</button>
+        <button type="button" class="cc-btn" onclick="showHome()">Back</button>
+      </div>
+      <p class="muted" style="margin-top:12px">Start ComfyUI locally, then save the URL. READY = healthy Comfy. Piper TTS does not need Studio.</p>
+    </div>
+  </section>
+</div>`;
+}
+async function saveComfyUrl(){
+  const el=document.getElementById('comfyUrl');
+  const endpoint=(el&&el.value||'').trim();
+  if(!endpoint){ alert('Enter a ComfyUI URL'); return; }
+  try{
+    const r=await api('/api/expansion/video-studio/config',{endpoint});
+    await loadCapabilities();
+    if(r&&r.ok){
+      const st=(r.data&&r.data.state)||capStatus('video');
+      alert('Saved. Video Studio state: '+st);
+      if(String(st).toUpperCase()==='READY'||st==='ready') showExpansionSurface('creative');
+      else showVideoStudioSetup();
+    }else{
+      alert((r&&r.data&&r.data.error)||'Save failed');
+    }
+  }catch(e){
+    alert('Save failed: '+String(e&&e.message||e));
+  }
+}
+async function showComputeNodes(){
+  state.view='home';
+  setBodyMode('home');
+  let nodes={}, resources={};
+  try{ nodes=await apiGet('/api/nodes'); }catch(_e){ nodes={}; }
+  try{ resources=await apiGet('/api/resources'); }catch(_e){ resources={}; }
+  const list=Array.isArray(nodes)?nodes:(nodes.nodes||nodes.items||[]);
+  const rows=list.length
+    ? list.map(n=>`<div class="card"><b>${escapeHtml(n.name||n.id||'node')}</b><p class="muted">${escapeHtml(JSON.stringify(n).slice(0,240))}</p></div>`).join('')
+    : `<div class="card"><b>local</b><p class="muted">This Expansion host is the active compute node. Remote pairing ships in a later Expansion pack.</p>
+       <pre class="muted" style="white-space:pre-wrap">${escapeHtml(JSON.stringify(resources||{},null,2).slice(0,1200))}</pre></div>`;
+  appRoot().innerHTML=`<div class="home">
+  <header class="home-header"><div><p class="home-kicker">Expansion</p><h1 class="home-greeting">Compute Nodes</h1></div>
+  <div class="home-meta">${btnHome()}</div></header>
+  <section class="home-group">${rows}
+  <button type="button" class="cc-btn" onclick="showHome()">Back</button></section></div>`;
 }
 
 async function assignVoice(vid){
@@ -1171,7 +1280,7 @@ async function toggleRecording(){
 }
 
 async function showNodes(){
-  // Kept for welcome-step compatibility; Codec is primary.
+  if(state.expansion&&state.expansion.enabled) return showComputeNodes();
   render();
 }
 

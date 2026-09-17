@@ -409,6 +409,26 @@ def _capability_snapshot() -> dict:
 
     caps['image'] = 'not_configured'
     caps['video'] = 'not_configured'
+    try:
+        from expansion.capabilities.video_studio import probe_video_studio
+        vs = probe_video_studio()
+        vs_ui = {
+            'READY': 'ready',
+            'LIMITED': 'limited',
+            'NOT_CONFIGURED': 'not_configured',
+            'UNAVAILABLE': 'unavailable',
+            'FAILED': 'error',
+            'DEGRADED': 'limited',
+        }.get(vs.state, 'not_configured')
+        caps['video'] = vs_ui
+        caps['image'] = vs_ui
+        caps['video_detail'] = vs.detail
+        caps['image_detail'] = vs.detail
+        caps['video_studio'] = vs.to_dict()
+        disc = vs.discovery or {}
+        caps['video_endpoint'] = disc.get('endpoint') or ''
+    except Exception as exc:  # noqa: BLE001
+        caps['video_detail'] = str(exc)
 
     # Genome Voice Trainer — Expansion premium. Honest states (never fake Open).
     try:
@@ -907,6 +927,7 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path in (
             '/api/expansion/jobs/create',
             '/api/expansion/voice-trainer/start',
+            '/api/expansion/video-studio/config',
             '/api/expansion/pages/register',
             '/api/expansion/rex/transition',
             '/api/expansion/rex/queue',
