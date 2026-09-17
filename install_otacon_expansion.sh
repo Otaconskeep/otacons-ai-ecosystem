@@ -102,16 +102,95 @@ printf '\033[0;37mFull spec & status: %s\033[0m\n\n' "$SPEC_URL"
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
 # ------------------------------------------------------------------------------
+# Discover Core install (dynamic — no hardcoded usernames/paths)
+# ------------------------------------------------------------------------------
+discover_core_root() {
+  if [[ -n "${OTACON_INSTALL_DIR:-}" && -d "${OTACON_INSTALL_DIR}/.git" && -d "${OTACON_INSTALL_DIR}/core" ]]; then
+    printf '%s\n' "$OTACON_INSTALL_DIR"
+    return 0
+  fi
+  local home u
+  while IFS=: read -r u _x _uid _gid _gecos home _shell; do
+    case "$home" in ""|"/"|"/nonexistent") continue ;; esac
+    if [[ -d "$home/otacon-ai-ecosystem/.git" && -d "$home/otacon-ai-ecosystem/core" ]]; then
+      printf '%s\n' "$home/otacon-ai-ecosystem"
+      return 0
+    fi
+  done <<EOF
+$(getent passwd)
+EOF
+  if [[ -d /root/otacon-ai-ecosystem/.git && -d /root/otacon-ai-ecosystem/core ]]; then
+    printf '%s\n' /root/otacon-ai-ecosystem
+    return 0
+  fi
+  return 1
+}
+
+resolve_owner() {
+  local root="$1"
+  local owner
+  owner="$(stat -c '%U' "$root" 2>/dev/null || true)"
+  if [[ -z "$owner" ]] || ! id -u "$owner" >/dev/null 2>&1; then
+    return 1
+  fi
+  printf '%s\n' "$owner"
+}
+
+run_as_owner() {
+  # Usage: run_as_owner OWNER -- command...
+  local owner="$1"
+  shift
+  if [[ "$1" == "--" ]]; then shift; fi
+  if [[ "$owner" == "root" ]] || [[ "$(id -u)" != "0" ]]; then
+    "$@"
+  else
+    runuser -u "$owner" -- "$@"
+  fi
+}
+
+# ------------------------------------------------------------------------------
 # Core prerequisite
 # ------------------------------------------------------------------------------
 log "Checking for an existing Otacon Core install"
 
-if [[ ! -d "$INSTALL_DIR/.git" || ! -d "$INSTALL_DIR/core" ]]; then
-  die "Otacon Core is not installed at $INSTALL_DIR. Expansion installs on top of Core -- install Core first:
+DISCOVERED="$(discover_core_root || true)"
+if [[ -z "$DISCOVERED" ]]; then
+  die "Otacon Core is not installed (no otacon-ai-ecosystem with core/ found). Expansion installs on top of Core -- install Core first:
     curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash
-  Then rerun this script. (If Core is installed somewhere else, set OTACON_INSTALL_DIR to that path first.)"
+  Then rerun this script. (If Core is elsewhere, set OTACON_INSTALL_DIR to that path first.)"
 fi
-ok "Otacon Core found: $INSTALL_DIR"
+INSTALL_DIR="$DISCOVERED"
+VENV_DIR="$INSTALL_DIR/.venv"
+OWNER="$(resolve_owner "$INSTALL_DIR" || true)"
+if [[ -z "$OWNER" ]]; then
+  die "Could not resolve repository owner for $INSTALL_DIR"
+fi
+OWNER_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
+if [[ -z "$OWNER_HOME" || ! -d "$OWNER_HOME" ]]; then
+  die "Owner home missing for $OWNER"
+fi
+# Prefer owner-scoped expansion data unless caller overrode.
+if [[ -z "${OTACON_EXPANSION_DATA_DIR:-}" ]]; then
+  DATA_DIR="$OWNER_HOME/.config/otacon/expansion/agents"
+else
+  DATA_DIR="$OTACON_EXPANSION_DATA_DIR"
+fi
+if [[ -z "${OTACON_INSTALL_LOG_DIR:-}" ]]; then
+  INSTALL_LOG_DIR="$OWNER_HOME/.config/otacon/logs"
+else
+  INSTALL_LOG_DIR="$OTACON_INSTALL_LOG_DIR"
+fi
+mkdir -p "$INSTALL_LOG_DIR"
+# Re-bind log if we discovered a better owner home after early tee setup
+if [[ "$INSTALL_LOG" != "$INSTALL_LOG_DIR/"* ]]; then
+  NEW_LOG="$INSTALL_LOG_DIR/install-expansion-$(date +%Y%m%d-%H%M%S).log"
+  cp -f "$INSTALL_LOG" "$NEW_LOG" 2>/dev/null || true
+  INSTALL_LOG="$NEW_LOG"
+fi
+
+ok "Otacon Core found: $INSTALL_DIR (owner=$OWNER)"
+echo "EXP_CORE_ROOT=$INSTALL_DIR"
+echo "EXP_CORE_OWNER=$OWNER"
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   die "Core's Python virtual environment wasn't found at $VENV_DIR/bin/python. Re-run Core's installer to repair it, then rerun this script."
@@ -124,10 +203,10 @@ ok "Reusing Core's Python environment: $VPY"
 # ------------------------------------------------------------------------------
 log "Synchronizing the public repository"
 
-git -C "$INSTALL_DIR" fetch --prune origin
-CURRENT_BRANCH="$(git -C "$INSTALL_DIR" branch --show-current || true)"
+run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" fetch --prune origin
+CURRENT_BRANCH="$(run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" branch --show-current || true)"
 if [[ "$CURRENT_BRANCH" == "main" ]]; then
-  git -C "$INSTALL_DIR" pull --ff-only
+  run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" pull --ff-only
 else
   warn "Repository is on branch '${CURRENT_BRANCH:-detached}'. Fetched origin only; leaving your branch untouched."
 fi
@@ -139,12 +218,23 @@ ok "expansion/ present: $INSTALL_DIR/expansion"
 
 cd "$INSTALL_DIR"
 
+# Export for nested Python / seed so layout resolves under the owner.
+export OTACON_INSTALL_DIR="$INSTALL_DIR"
+export OTACON_EXPANSION_DATA_DIR="$DATA_DIR"
+export HOME="$OWNER_HOME"
+export OTACON_EXPANSION_CONFIG_ROOT="${OTACON_EXPANSION_CONFIG_ROOT:-$OWNER_HOME/.config/otacon/expansion}"
+export OTACON_EXPANSION_DATA_ROOT="${OTACON_EXPANSION_DATA_ROOT:-$OWNER_HOME/.local/share/otacon/expansion}"
+
 # ------------------------------------------------------------------------------
 # Acceptance gate: the real expansion/ test suite
 # ------------------------------------------------------------------------------
 if [[ "$RUN_TESTS" == "1" ]]; then
   log "Running the Expansion test suite (foundation + P0 platform primitives)"
-  if PYTHONPATH="$INSTALL_DIR" "$VPY" -m unittest discover -s tests -p "test_expansion_*.py" -v; then
+  if run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" PYTHONPATH="$INSTALL_DIR" \
+      OTACON_EXPANSION_DATA_DIR="$DATA_DIR" \
+      OTACON_EXPANSION_CONFIG_ROOT="$OTACON_EXPANSION_CONFIG_ROOT" \
+      OTACON_EXPANSION_DATA_ROOT="$OTACON_EXPANSION_DATA_ROOT" \
+      "$VPY" -m unittest discover -s tests -p "test_expansion_*.py" -v; then
     ok "Expansion test suite passed"
     TESTS_OK=1
   else
@@ -152,7 +242,7 @@ if [[ "$RUN_TESTS" == "1" ]]; then
     TESTS_OK=0
   fi
 else
-  warn "Skipping the acceptance gate (OTACON_RUN_TESTS=0) -- not recommended"
+  warn "Skipping the acceptance gate (OTACON_RUN_TESTS=0) -- Windows installer verifies via foundation + API"
   TESTS_OK=1
 fi
 
@@ -161,7 +251,9 @@ fi
 # ------------------------------------------------------------------------------
 log "Generating and validating the default roster (Aria, Vector, Ledger, Muse, Sentry)"
 
-if PYTHONPATH="$INSTALL_DIR" "$VPY" -m expansion.seed_defaults "$DATA_DIR"; then
+if run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" PYTHONPATH="$INSTALL_DIR" \
+    OTACON_EXPANSION_DATA_DIR="$DATA_DIR" \
+    "$VPY" -m expansion.seed_defaults "$DATA_DIR"; then
   ok "Default roster written to $DATA_DIR"
   SEED_OK=1
 else
@@ -173,7 +265,8 @@ fi
 # P0 platform: user-state layout, versions ledger, baseline migration, readiness
 # ------------------------------------------------------------------------------
 log "Applying P0/P1 platform bootstrap (state layout, versions, migrations, runtime state, readiness)"
-if PYTHONPATH="$INSTALL_DIR" OTACON_EXPANSION_DATA_DIR="$DATA_DIR" "$VPY" - <<'PY'
+BOOT_PY="$(mktemp /tmp/otacon-expansion-bootstrap.XXXXXX.py)"
+cat >"$BOOT_PY" <<'PY'
 from expansion.state_layout import resolve_layout
 from expansion.versions import current_versions, save_installed_versions
 from expansion.migrations import apply_pending
@@ -196,12 +289,36 @@ print('semantic=', {k: (v.value if hasattr(v, 'value') else v) for k, v in repor
 if not report.foundation_ready():
     raise SystemExit(1)
 PY
+if run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" PYTHONPATH="$INSTALL_DIR" \
+    OTACON_EXPANSION_DATA_DIR="$DATA_DIR" \
+    OTACON_EXPANSION_CONFIG_ROOT="$OTACON_EXPANSION_CONFIG_ROOT" \
+    OTACON_EXPANSION_DATA_ROOT="$OTACON_EXPANSION_DATA_ROOT" \
+    "$VPY" "$BOOT_PY"
 then
   ok "P0/P1 platform bootstrap complete"
+  echo "EXP_FOUNDATION_READY=1"
 else
   warn "P0/P1 platform bootstrap reported a problem"
   REQUIRED_FAIL=1
+  echo "EXP_FOUNDATION_READY=0"
 fi
+rm -f "$BOOT_PY"
+
+# Restart Core service so /api/expansion/status sees the new roster (root only).
+if [[ "$(id -u)" == "0" ]] && command_exists systemctl; then
+  log "Restarting otacon.service so Expansion APIs reload"
+  systemctl restart otacon.service 2>/dev/null || systemctl start otacon.service 2>/dev/null || true
+  sleep 2
+  echo "EXP_SERVICE_ACTIVE=$(systemctl is-active otacon.service 2>/dev/null || echo unknown)"
+fi
+
+# Agent count proof for Windows parsers
+AGENT_COUNT=0
+if [[ -d "$DATA_DIR" ]]; then
+  AGENT_COUNT="$(find "$DATA_DIR" -maxdepth 1 -name 'default-*.json' 2>/dev/null | wc -l | tr -d ' ')"
+fi
+echo "EXP_AGENT_COUNT=$AGENT_COUNT"
+echo "EXP_DATA_DIR=$DATA_DIR"
 
 # ------------------------------------------------------------------------------
 # Final summary

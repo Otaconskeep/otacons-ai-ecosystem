@@ -88,13 +88,16 @@ function Get-FileSha256Hex {
 $full = @(
     "install_otacon.bat",
     "OtaconsKeep-Setup.bat",
+    "OtaconExpansion-Setup.bat",
     "Reinstall-Otacon.bat",
     "Fix-Otacon-GPU.bat",
     "install_otacon.sh",
+    "install_otacon_expansion.sh",
     "release.json",
     "deploy/installer-revision.txt",
     "deploy/windows-setup-assistant.ps1",
     "deploy/repair-otacon-core.ps1",
+    "deploy/install-otacon-expansion.ps1",
     "deploy/wsl-bash-file.ps1",
     "deploy/fix-otacon-gpu.ps1",
     "deploy/get-fix-codec.cmd",
@@ -108,10 +111,12 @@ $full = @(
 )
 $deployOnly = @(
     "install_otacon.sh",
+    "install_otacon_expansion.sh",
     "release.json",
     "deploy/installer-revision.txt",
     "deploy/windows-setup-assistant.ps1",
     "deploy/repair-otacon-core.ps1",
+    "deploy/install-otacon-expansion.ps1",
     "deploy/wsl-bash-file.ps1",
     "deploy/fix-otacon-gpu.ps1",
     "deploy/get-fix-codec.cmd",
@@ -259,7 +264,7 @@ if ($relResult.Ok) {
                 if (-not $p) { continue }
                 if ($p -eq "deploy/bootstrap-fetch.ps1") { continue } # refreshed by launcher, not self
                 if ($Manifest -eq "deploy") {
-                    if ($p -like "deploy/*" -or $p -eq "install_otacon.sh" -or $p -eq "release.json" -or $p -eq "deploy/installer-revision.txt") {
+                    if ($p -like "deploy/*" -or $p -eq "install_otacon.sh" -or $p -eq "install_otacon_expansion.sh" -or $p -eq "OtaconExpansion-Setup.bat" -or $p -eq "release.json" -or $p -eq "deploy/installer-revision.txt") {
                         $fromRelease += $p
                     }
                 } else {

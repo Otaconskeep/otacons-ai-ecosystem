@@ -20,14 +20,17 @@ ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_FILES = [
     "install_otacon.bat",
     "OtaconsKeep-Setup.bat",
+    "OtaconExpansion-Setup.bat",
     "Reinstall-Otacon.bat",
     "Fix-Otacon-GPU.bat",
     "install_otacon.sh",
+    "install_otacon_expansion.sh",
     "release.json",  # excluded from files[] self-hash
     # installer-revision.txt is downloaded from branch tip (unhashed); Linux sync target.
     "deploy/bootstrap-fetch.ps1",
     "deploy/windows-setup-assistant.ps1",
     "deploy/repair-otacon-core.ps1",
+    "deploy/install-otacon-expansion.ps1",
     "deploy/wsl-bash-file.ps1",
     "deploy/fix-otacon-gpu.ps1",
     "deploy/get-fix-codec.cmd",

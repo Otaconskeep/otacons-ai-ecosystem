@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "51dea665d3f217dd96411724b16f295eee066557",
+  "commit": "f7893e26ce2f628100c814bf1d3e0831343b6977",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -23,6 +23,11 @@
       "bytes": 19643
     },
     {
+      "path": "OtaconExpansion-Setup.bat",
+      "sha256": "b9778c6062f0bb29ef36f715435ec38c29ab5dc559f011a925313a0874ee4330",
+      "bytes": 5629
+    },
+    {
       "path": "Reinstall-Otacon.bat",
       "sha256": "87032676a4839017945a84d04ea452e8ed33843b71d74fbca8b08dac5f8be14a",
       "bytes": 2302
@@ -38,9 +43,14 @@
       "bytes": 91881
     },
     {
+      "path": "install_otacon_expansion.sh",
+      "sha256": "1d51610c714b05288c9768b979412eb5aa7f29318a54ccec808838fb89a7acea",
+      "bytes": 17018
+    },
+    {
       "path": "deploy/bootstrap-fetch.ps1",
-      "sha256": "a2afab02cfb81fed359c4b1c04dd35fabd05f5914f304ee89627e46cff06d5c2",
-      "bytes": 23571
+      "sha256": "6cfa00952624beaf5d7de0002a1106d911d68be69659441fadb33bd9f855686d",
+      "bytes": 23845
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
@@ -51,6 +61,11 @@
       "path": "deploy/repair-otacon-core.ps1",
       "sha256": "b0062f7332dc88d06e52f7c456780f6e0e138e0d573b0eb6fabab40924268c9e",
       "bytes": 34385
+    },
+    {
+      "path": "deploy/install-otacon-expansion.ps1",
+      "sha256": "15cb0e7b447a9afed6a9746d463ae4dc2c2c82f9045eeb1d8595ccf0c85cfb3e",
+      "bytes": 11572
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
