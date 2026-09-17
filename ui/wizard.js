@@ -547,7 +547,7 @@ async function showChat(){
         <div id="codec-bar">OTACON CODEC · ${state.roster.length?'EXPANSION':'LITE'} · TRANSMISSION LOCAL · GHOST PASTEL HUD</div>
         <div id="codec-header">
           <div class="codec-inner code-border-inner">
-            <div class="codec-port port-left" id="port-xof">
+            <div class="codec-port port-left" id="port-operator">
               <div class="op-port-fill"><span>Operator</span></div>
               <div class="codec-port-crt"></div>
               <div class="codec-port-lbl">YOU</div>
