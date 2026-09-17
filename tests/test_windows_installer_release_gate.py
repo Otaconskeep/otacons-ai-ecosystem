@@ -75,6 +75,8 @@ def test_C2_wsl_phase_uses_file_script_and_exit_marker():
     assert "fromMarker" in ASSISTANT
     assert "WriteAllText" in ASSISTANT
     assert '", "-c",' in ASSISTANT
+    assert "Format-StartProcessArgumentList" in ASSISTANT
+    assert "Start-OtaconWslBashCProcess" in ASSISTANT
     # Stale waiting_for_reboot must yield when Ubuntu is already ready
     assert "ubuntuReady -and -not $rebootPending" in ASSISTANT
     fetch = (ROOT / "deploy" / "bootstrap-fetch.ps1").read_text(encoding="utf-8", errors="replace")

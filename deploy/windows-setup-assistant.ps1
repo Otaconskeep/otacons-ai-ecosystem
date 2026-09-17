@@ -12,6 +12,8 @@ param(
     [switch]$Repair,
     [switch]$Reinstall,
     [switch]$FixCodec,
+    [switch]$ProbeWslLauncher,
+    [string]$ProbeDistro = "",
     [string]$RepoRoot = "",
     [string]$Branch = "main",
     [string]$RawBase = "https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem"
@@ -1502,6 +1504,14 @@ function Install-DedicatedUbuntuOtacon {
     $code = $p.ExitCode
     if ($code -eq 0) {
         Save-InstallerState @{ ubuntu_name = $PreferredDistro; ubuntu_mode = "dedicated" }
+        # Imported rootfs has only root — provision the expected non-root user now.
+        [void](Ensure-WslDistroRunning -Name $PreferredDistro)
+        $provisioned = Ensure-WslTargetUser -Name $PreferredDistro
+        if (-not $provisioned) {
+            Write-KeepLog "dedicated import succeeded but user auto-provision failed" -Level "WARN" -Stage "WAITING_FOR_WINDOWS"
+        } else {
+            Write-KeepLog "dedicated import user provisioned=$provisioned" -Stage "WAITING_FOR_WINDOWS"
+        }
     }
     return $code
 }
@@ -1618,11 +1628,445 @@ function Get-WslNvidiaName {
     return "not visible in WSL"
 }
 
+function ConvertTo-OtaconLinuxUsername {
+    param([string]$Raw)
+    if (-not $Raw) { $Raw = "" }
+    $s = $Raw.Trim().ToLowerInvariant()
+    $s = [regex]::Replace($s, '[^a-z0-9_-]', '')
+    $s = [regex]::Replace($s, '^[^a-z_]+', '')
+    if ($s.Length -gt 32) { $s = $s.Substring(0, 32) }
+    if (-not $s -or $s -eq "root") { $s = "otacon" }
+    return $s
+}
+
+function Get-OtaconExpectedWslUsername {
+    <#
+      Expected Linux username for dedicated Ubuntu-Otacon.
+      Prefer OTACON_TARGET_USER, else sanitize the Windows username, else "otacon".
+    #>
+    $raw = ""
+    if ($env:OTACON_TARGET_USER) { $raw = [string]$env:OTACON_TARGET_USER }
+    if (-not $raw) { $raw = [string]$env:USERNAME }
+    if (-not $raw) { $raw = "otacon" }
+    return (ConvertTo-OtaconLinuxUsername -Raw $raw)
+}
+
 function Get-WslDefaultUser {
     param([string]$Name)
-    $u = (& wsl.exe -d $Name -- bash -lc "whoami" 2>$null | Select-Object -Last 1)
-    if ($u) { return ("{0}" -f $u).Trim() }
+    if (-not $Name) { return "" }
+    try {
+        $u = (& wsl.exe -d $Name -- bash -lc "whoami" 2>$null | Select-Object -Last 1)
+        $who = if ($u) { ("{0}" -f $u).Trim() } else { "" }
+        if ($who -and $who -ne "root") { return $who }
+    } catch {}
+    try {
+        $conf = (& wsl.exe -d $Name -u root -- bash -lc "awk -F= '/^[[:space:]]*default=/ {gsub(/[[:space:]]/,\"\",`$2); print `$2; exit}' /etc/wsl.conf 2>/dev/null" 2>$null | Select-Object -Last 1)
+        $cu = if ($conf) { ("{0}" -f $conf).Trim() } else { "" }
+        if ($cu -and $cu -ne "root") {
+            $ok = & wsl.exe -d $Name -u root -- bash -lc "id '$cu' >/dev/null 2>&1 && echo ok" 2>$null
+            if (("$ok" | Out-String) -match 'ok') { return $cu }
+        }
+    } catch {}
+    try {
+        $cand = (& wsl.exe -d $Name -u root -- bash -lc "getent passwd | awk -F: '`$3>=1000 && `$3<65534 && `$6 ~ /^\/home\// {print `$1; exit}'" 2>$null | Select-Object -Last 1)
+        $c = if ($cand) { ("{0}" -f $cand).Trim() } else { "" }
+        if ($c -and $c -ne "root") { return $c }
+    } catch {}
     return ""
+}
+
+function Test-WslLinuxUserValid {
+    param([string]$Name, [string]$User)
+    if (-not $Name -or -not $User -or $User -eq "root") { return $false }
+    $esc = $User.Replace("'", "'\''")
+    $check = @"
+u='$esc'
+id "`$u" >/dev/null 2>&1 || exit 1
+uid=`$(id -u "`$u")
+home=`$(getent passwd "`$u" | cut -d: -f6)
+shell=`$(getent passwd "`$u" | cut -d: -f7)
+[ -n "`$uid" ] && [ "`$uid" -ge 1000 ] && [ "`$uid" -lt 65534 ] || exit 2
+[ -n "`$home" ] && [ -d "`$home" ] || exit 3
+case "`$shell" in */bash|*/sh|*/zsh|*/fish) ;; *) exit 4 ;; esac
+echo VALID
+"@
+    $out = & wsl.exe -d $Name -u root -- bash -lc $check 2>$null
+    return (("$out" | Out-String) -match 'VALID')
+}
+
+function Invoke-WslRootBashFile {
+    param([string]$Name, [string]$ScriptWin)
+    $scriptWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $ScriptWin -EnsureExists
+    if (-not $scriptWsl) { return @{ Ok = $false; Output = "wslpath-failed" } }
+    $scriptEsc = $scriptWsl.Replace("'", "'\''")
+    $out = & wsl.exe -d $Name -u root -- bash -c "bash '$scriptEsc'" 2>&1
+    return @{ Ok = $true; Output = (($out | Out-String)); ScriptWsl = $scriptWsl }
+}
+
+function Set-WslDefaultUser {
+    param(
+        [string]$Name,
+        [string]$User,
+        [switch]$EnsureGroups
+    )
+    if (-not $Name -or -not $User -or $User -eq "root") { return $false }
+    $escUser = $User.Replace("'", "'\''")
+    $groupBlock = if ($EnsureGroups) {
+        @(
+            'for g in sudo adm video render plugdev users audio cdrom dip docker; do',
+            '  if getent group "$g" >/dev/null 2>&1; then usermod -aG "$g" "$USER_NAME" || true; fi',
+            'done'
+        )
+    } else { @() }
+    $bashLines = @(
+        '#!/bin/bash',
+        'set -euo pipefail',
+        ("USER_NAME='{0}'" -f $escUser),
+        'id "$USER_NAME" >/dev/null 2>&1 || exit 1'
+    ) + $groupBlock + @(
+        'WSL_CONF=/etc/wsl.conf',
+        'touch "$WSL_CONF"',
+        'if grep -qE "^[[:space:]]*\[user\]" "$WSL_CONF"; then',
+        '  if grep -qE "^[[:space:]]*default[[:space:]]*=" "$WSL_CONF"; then',
+        '    sed -i -E "s/^[[:space:]]*default[[:space:]]*=.*/default=${USER_NAME}/" "$WSL_CONF"',
+        '  else',
+        '    sed -i -E "/^[[:space:]]*\[user\]/a default=${USER_NAME}" "$WSL_CONF"',
+        '  fi',
+        'else',
+        '  printf "\n[user]\ndefault=%s\n" "$USER_NAME" >>"$WSL_CONF"',
+        'fi',
+        'echo "OTACON_DEFAULT_SET=$USER_NAME"',
+        'exit 0'
+    )
+    $scriptWin = Join-Path $LogDir "wsl-set-default-user.sh"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($scriptWin, (($bashLines -join "`n") + "`n"), $utf8NoBom)
+    $result = Invoke-WslRootBashFile -Name $Name -ScriptWin $scriptWin
+    return ($result.Ok -and ($result.Output -match 'OTACON_DEFAULT_SET'))
+}
+
+function Ensure-WslTargetUser {
+    <#
+      Auto-provision the expected non-root WSL user for dedicated Ubuntu-Otacon
+      (wsl --import leaves only root). Creates home + shell + groups, sets
+      /etc/wsl.conf [user] default=, verifies identity, never requires a
+      password. Existing valid users are left intact (not deleted/recreated).
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$PreferredUser = ""
+    )
+    if (-not (Ensure-WslDistroRunning -Name $Name)) {
+        Write-KeepLog "Ensure-WslTargetUser: distro not running name=$Name" -Level "ERROR" -Stage "WSL_USER"
+        return ""
+    }
+
+    $preferred = if ($PreferredUser) {
+        ConvertTo-OtaconLinuxUsername -Raw $PreferredUser
+    } else {
+        Get-OtaconExpectedWslUsername
+    }
+
+    $existing = Get-WslDefaultUser -Name $Name
+    if ($existing -and (Test-WslLinuxUserValid -Name $Name -User $existing)) {
+        Write-KeepLog "Ensure-WslTargetUser: reusing valid existing user=$existing (preferred=$preferred)" -Stage "WSL_USER"
+        [void](Set-WslDefaultUser -Name $Name -User $existing -EnsureGroups)
+        if (Test-WslLinuxUserValid -Name $Name -User $existing) { return $existing }
+    }
+
+    if (Test-WslLinuxUserValid -Name $Name -User $preferred) {
+        Write-KeepLog "Ensure-WslTargetUser: preferred user already valid user=$preferred (not recreated)" -Stage "WSL_USER"
+        [void](Set-WslDefaultUser -Name $Name -User $preferred -EnsureGroups)
+        return $preferred
+    }
+
+    Write-KeepLog "Ensure-WslTargetUser: creating user=$preferred in distro=$Name (no password)" -Stage "WSL_USER"
+    Write-Host "  Creating Linux user '$preferred' in $Name (no password required)..." -ForegroundColor Cyan
+
+    $escUser = $preferred.Replace("'", "'\''")
+    $bashLines = @(
+        '#!/bin/bash',
+        'set -euo pipefail',
+        ("USER_NAME='{0}'" -f $escUser),
+        'if id "$USER_NAME" >/dev/null 2>&1; then',
+        '  echo "OTACON_USER_EXISTS=$USER_NAME"',
+        'else',
+        '  if command -v adduser >/dev/null 2>&1; then',
+        '    adduser --disabled-password --gecos "OtaconsKeep" "$USER_NAME"',
+        '  else',
+        '    useradd -m -s /bin/bash -c "OtaconsKeep" "$USER_NAME"',
+        '    passwd -d "$USER_NAME" >/dev/null 2>&1 || true',
+        '  fi',
+        '  echo "OTACON_USER_CREATED=$USER_NAME"',
+        'fi',
+        'HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"',
+        'if [ -z "$HOME_DIR" ]; then echo "OTACON_USER_FAIL=no-home"; exit 1; fi',
+        'if [ ! -d "$HOME_DIR" ]; then mkdir -p "$HOME_DIR"; chown "$USER_NAME":"$USER_NAME" "$HOME_DIR"; fi',
+        'chsh -s /bin/bash "$USER_NAME" >/dev/null 2>&1 || usermod -s /bin/bash "$USER_NAME"',
+        'passwd -d "$USER_NAME" >/dev/null 2>&1 || true',
+        'for g in sudo adm video render plugdev users audio cdrom dip docker; do',
+        '  if getent group "$g" >/dev/null 2>&1; then usermod -aG "$g" "$USER_NAME" || true; fi',
+        'done',
+        'WSL_CONF=/etc/wsl.conf',
+        'touch "$WSL_CONF"',
+        'if grep -qE "^[[:space:]]*\[user\]" "$WSL_CONF"; then',
+        '  if grep -qE "^[[:space:]]*default[[:space:]]*=" "$WSL_CONF"; then',
+        '    sed -i -E "s/^[[:space:]]*default[[:space:]]*=.*/default=${USER_NAME}/" "$WSL_CONF"',
+        '  else',
+        '    sed -i -E "/^[[:space:]]*\[user\]/a default=${USER_NAME}" "$WSL_CONF"',
+        '  fi',
+        'else',
+        '  printf "\n[user]\ndefault=%s\n" "$USER_NAME" >>"$WSL_CONF"',
+        'fi',
+        'uid="$(id -u "$USER_NAME")"',
+        'shell="$(getent passwd "$USER_NAME" | cut -d: -f7)"',
+        'groups="$(id -nG "$USER_NAME" | tr " " ",")"',
+        'echo "OTACON_USER_OK user=$USER_NAME uid=$uid home=$HOME_DIR shell=$shell groups=$groups"',
+        'id -un "$USER_NAME"',
+        'exit 0'
+    )
+    $scriptWin = Join-Path $LogDir "wsl-provision-user.sh"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($scriptWin, (($bashLines -join "`n") + "`n"), $utf8NoBom)
+    $result = Invoke-WslRootBashFile -Name $Name -ScriptWin $scriptWin
+    Write-KeepLog "Ensure-WslTargetUser provision output: $($result.Output.Trim())" -Stage "WSL_USER"
+    if (-not $result.Ok -or $result.Output -notmatch 'OTACON_USER_OK') {
+        Write-KeepLog "Ensure-WslTargetUser: provision failed for user=$preferred" -Level "ERROR" -Stage "WSL_USER"
+        return ""
+    }
+
+    # Default user in wsl.conf applies after distro restart.
+    try { & wsl.exe --terminate $Name 2>$null | Out-Null } catch {}
+    Start-Sleep -Seconds 2
+    [void](Ensure-WslDistroRunning -Name $Name)
+
+    $verified = ""
+    try {
+        $v = (& wsl.exe -d $Name -u $preferred -- bash -lc "whoami; id -u; test -d `"`$HOME`" && echo HOME_OK" 2>$null | Out-String)
+        if ($v -match [regex]::Escape($preferred) -and $v -match 'HOME_OK') { $verified = $preferred }
+    } catch {}
+    if (-not $verified) {
+        $fallback = Get-WslDefaultUser -Name $Name
+        if ($fallback -and (Test-WslLinuxUserValid -Name $Name -User $fallback)) { $verified = $fallback }
+    }
+    if ($verified) {
+        Write-KeepLog "Ensure-WslTargetUser: verified user=$verified" -Stage "WSL_USER"
+        Write-Host "  [ok] Linux user ready: $verified" -ForegroundColor Green
+        Save-InstallerState @{ wsl_user = $verified }
+        return $verified
+    }
+    Write-KeepLog "Ensure-WslTargetUser: identity verification failed for preferred=$preferred" -Level "ERROR" -Stage "WSL_USER"
+    return ""
+}
+
+function Format-StartProcessArgumentList {
+    <#
+      PowerShell Start-Process -ArgumentList <string[]> joins elements with spaces
+      and does NOT quote tokens that contain whitespace or metacharacters. That
+      splits a bash -c payload (spaces, pipes, redirects, &&/||/; ) across argv,
+      so WSL starts but bash never runs the intended command.
+
+      Return one Arguments string for Start-Process where each original token is
+      preserved as a single CreateProcess argument (Windows CRT: quote when
+      needed; double embedded quotes).
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Arguments
+    )
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($arg in $Arguments) {
+        if ($null -eq $arg) { $arg = "" }
+        $s = [string]$arg
+        if ($s.Length -eq 0) {
+            [void]$parts.Add('""')
+            continue
+        }
+        if ($s -match '[\s"]') {
+            [void]$parts.Add('"' + ($s.Replace('"', '""')) + '"')
+        } else {
+            [void]$parts.Add($s)
+        }
+    }
+    return ($parts -join ' ')
+}
+
+function Start-OtaconWslBashCProcess {
+    <#
+      Production Windows -> WSL -> bash -c launcher.
+      Always formats ArgumentList so the complete bash -c payload stays one argv.
+      Captures stdout and stderr to separate files (Start-Process cannot redirect
+      both streams to the same path).
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Distro,
+        [string[]]$UserArg = @(),
+        [Parameter(Mandatory = $true)][string]$BashCommand,
+        [Parameter(Mandatory = $true)][string]$StdoutPath,
+        [string]$StderrPath = ""
+    )
+    if (-not $StderrPath) {
+        $StderrPath = "$StdoutPath.stderr"
+    }
+    foreach ($p in @($StdoutPath, $StderrPath)) {
+        if (Test-Path -LiteralPath $p) {
+            Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+        }
+        try {
+            $parent = [System.IO.Path]::GetDirectoryName($p)
+            if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+                New-Item -ItemType Directory -Force -Path $parent | Out-Null
+            }
+            [System.IO.File]::WriteAllBytes($p, [byte[]]@())
+        } catch {}
+    }
+
+    $rawArgs = @("-d", $Distro) + @($UserArg) + @("--", "bash", "-c", $BashCommand)
+    # CRITICAL: pass one pre-quoted string — never a bare string[] — to Start-Process.
+    $argString = Format-StartProcessArgumentList -Arguments $rawArgs
+    $proc = Start-Process -FilePath "wsl.exe" -ArgumentList $argString `
+        -NoNewWindow -PassThru `
+        -RedirectStandardOutput $StdoutPath `
+        -RedirectStandardError $StderrPath
+    return @{
+        Proc         = $proc
+        StderrPath   = $StderrPath
+        ArgumentList = $argString
+        RawArgs      = $rawArgs
+    }
+}
+
+function Get-OtaconMergedLogLines {
+    param([string]$StdoutPath, [string]$StderrPath = "")
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($p in @($StdoutPath, $StderrPath)) {
+        if (-not $p -or -not (Test-Path -LiteralPath $p)) { continue }
+        foreach ($line in @(Get-Content -LiteralPath $p -ErrorAction SilentlyContinue)) {
+            [void]$lines.Add([string]$line)
+        }
+    }
+    return @($lines)
+}
+
+function Test-OtaconWslBashCLauncher {
+    <#
+      Harmless regression probe through the exact production launcher.
+      Proves quoted args, spaces, pipes, redirects, and shell operators survive
+      Windows -> WSL -> bash -c, with stdout+stderr+exit captured.
+    #>
+    param(
+        [string]$Distro = "",
+        [string]$OutDir = ""
+    )
+    if (-not $Distro) {
+        try { $Distro = Get-UbuntuDistroName } catch { $Distro = "" }
+    }
+    if (-not $Distro) {
+        Write-Host "FAIL ProbeWslLauncher: no WSL distro available"
+        return 1
+    }
+    if (-not $OutDir) { $OutDir = $LogDir }
+    New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+
+    $okOut = Join-Path $OutDir "wsl-bash-c-probe-ok.out"
+    $okMarker = Join-Path $OutDir "wsl-bash-c-probe-ok.exit"
+    $failOut = Join-Path $OutDir "wsl-bash-c-probe-fail.out"
+    $failMarker = Join-Path $OutDir "wsl-bash-c-probe-fail.exit"
+    foreach ($p in @($okOut, "$okOut.stderr", $okMarker, $failOut, "$failOut.stderr", $failMarker)) {
+        if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+    }
+
+    # Touch markers so wslpath-style paths are not required; write via bash redirect.
+    [System.IO.File]::WriteAllBytes($okMarker, [byte[]]@())
+    [System.IO.File]::WriteAllBytes($failMarker, [byte[]]@())
+    $okMarkerWsl = Convert-WindowsPathToWsl -Distro $Distro -WindowsPath $okMarker -EnsureExists
+    $failMarkerWsl = Convert-WindowsPathToWsl -Distro $Distro -WindowsPath $failMarker -EnsureExists
+    if (-not $okMarkerWsl -or -not $failMarkerWsl) {
+        Write-Host "FAIL ProbeWslLauncher: could not map exit marker paths into WSL"
+        return 1
+    }
+    $okEsc = $okMarkerWsl.Replace("'", "'\''")
+    $failEsc = $failMarkerWsl.Replace("'", "'\''")
+
+    # Spaces + pipe + redirect + && / ; must remain one bash -c argv.
+    $okCmd = ('set +e; echo "hello world" | tr a-z A-Z; echo PROBE_ERR >&2; true && echo PROBE_OK; rc=$?; printf ''%s\n'' "$rc" > ''{0}''; exit "$rc"' -f $okEsc)
+    $launchOk = Start-OtaconWslBashCProcess -Distro $Distro -BashCommand $okCmd -StdoutPath $okOut
+    $procOk = $launchOk.Proc
+    if (-not $procOk.WaitForExit(120000)) {
+        try { Stop-Process -Id $procOk.Id -Force -ErrorAction SilentlyContinue } catch {}
+        Write-Host "FAIL ProbeWslLauncher: ok probe timed out"
+        return 1
+    }
+    Start-Sleep -Milliseconds 200
+    $okLines = Get-OtaconMergedLogLines -StdoutPath $okOut -StderrPath $launchOk.StderrPath
+    $okText = ($okLines -join "`n")
+    $okMarkerRaw = (Get-Content -LiteralPath $okMarker -TotalCount 1 -ErrorAction SilentlyContinue)
+    $okCode = 0
+    if (-not [int]::TryParse([string]$okMarkerRaw, [ref]$okCode)) { $okCode = 998 }
+
+    $okPass = $true
+    if ($okText -notmatch 'HELLO WORLD') {
+        Write-Host "FAIL ProbeWslLauncher: stdout missing HELLO WORLD (pipe/spaces broken)"
+        $okPass = $false
+    }
+    if ($okText -notmatch 'PROBE_ERR') {
+        Write-Host "FAIL ProbeWslLauncher: stderr missing PROBE_ERR (redirect broken)"
+        $okPass = $false
+    }
+    if ($okText -notmatch 'PROBE_OK') {
+        Write-Host "FAIL ProbeWslLauncher: missing PROBE_OK (shell operators broken)"
+        $okPass = $false
+    }
+    if ($okCode -ne 0) {
+        Write-Host "FAIL ProbeWslLauncher: expected exit 0, marker='$okMarkerRaw' proc=$($procOk.ExitCode)"
+        $okPass = $false
+    }
+    if ($launchOk.ArgumentList -notmatch '"set \+e;') {
+        Write-Host "FAIL ProbeWslLauncher: ArgumentList did not quote bash -c payload"
+        $okPass = $false
+    }
+
+    $failCmd = ('set +e; echo FAIL_OUT; echo FAIL_ERR >&2; false; rc=$?; printf ''%s\n'' "$rc" > ''{0}''; exit "$rc"' -f $failEsc)
+    $launchFail = Start-OtaconWslBashCProcess -Distro $Distro -BashCommand $failCmd -StdoutPath $failOut
+    $procFail = $launchFail.Proc
+    if (-not $procFail.WaitForExit(120000)) {
+        try { Stop-Process -Id $procFail.Id -Force -ErrorAction SilentlyContinue } catch {}
+        Write-Host "FAIL ProbeWslLauncher: fail probe timed out"
+        return 1
+    }
+    Start-Sleep -Milliseconds 200
+    $failLines = Get-OtaconMergedLogLines -StdoutPath $failOut -StderrPath $launchFail.StderrPath
+    $failText = ($failLines -join "`n")
+    $failMarkerRaw = (Get-Content -LiteralPath $failMarker -TotalCount 1 -ErrorAction SilentlyContinue)
+    $failCode = 0
+    if (-not [int]::TryParse([string]$failMarkerRaw, [ref]$failCode)) { $failCode = 998 }
+
+    $failPass = $true
+    if ($failText -notmatch 'FAIL_OUT') {
+        Write-Host "FAIL ProbeWslLauncher: failing command stdout missing"
+        $failPass = $false
+    }
+    if ($failText -notmatch 'FAIL_ERR') {
+        Write-Host "FAIL ProbeWslLauncher: failing command stderr missing"
+        $failPass = $false
+    }
+    if ($failCode -eq 0) {
+        Write-Host "FAIL ProbeWslLauncher: expected nonzero exit, marker='$failMarkerRaw'"
+        $failPass = $false
+    }
+
+    if ($okPass -and $failPass) {
+        Write-Host "PASS ProbeWslLauncher distro=$Distro ok_exit=$okCode fail_exit=$failCode"
+        Write-KeepLog "ProbeWslLauncher PASS distro=$Distro ok=$okCode fail=$failCode" -Stage "PROBE"
+        return 0
+    }
+    Write-Host "---- ok probe output ----"
+    Write-Host $okText
+    Write-Host "---- fail probe output ----"
+    Write-Host $failText
+    Write-KeepLog "ProbeWslLauncher FAIL distro=$Distro" -Level "ERROR" -Stage "PROBE"
+    return 1
 }
 
 function Invoke-WslInstallPhase {
@@ -1718,13 +2162,18 @@ function Invoke-WslInstallPhase {
 
     Write-KeepLog "starting linux phase=$Phase as=$AsUser target=$TargetUser in $Name branch=$Branch local=$([bool]$localWsl) script=$phaseScriptWsl" -Stage "INSTALLING_OTACON"
 
-    # Run the file. Merge stderr inside bash - Windows cannot RedirectStandardOutput
-    # and RedirectStandardError to the same path.
+    # Run via production launcher. bash -c payload stays one quoted argv
+    # (Format-StartProcessArgumentList). Merge script stderr with 2>&1 inside
+    # bash, and also RedirectStandardError for wsl/bash startup noise.
+    # Outer wrapper always writes EXIT_MARKER even if the phase script dies
+    # before emit_rc.
     $phaseScriptEsc = $phaseScriptWsl.Replace("'", "'\''")
-    $runner = "bash '{0}' 2>&1" -f $phaseScriptEsc
-    $argList = @("-d", $Name) + $userArg + @("--", "bash", "-c", $runner)
-    $proc = Start-Process -FilePath "wsl.exe" -ArgumentList $argList `
-        -NoNewWindow -PassThru -RedirectStandardOutput $LogPipe
+    $runner = ('set +e; bash ''{0}'' 2>&1; rc=$?; printf ''%s\n'' "$rc" > ''{1}''; exit "$rc"' -f $phaseScriptEsc, $exitMarkerEsc)
+    $launch = Start-OtaconWslBashCProcess -Distro $Name -UserArg $userArg `
+        -BashCommand $runner -StdoutPath $LogPipe
+    $proc = $launch.Proc
+    $errPipe = $launch.StderrPath
+    Write-KeepLog "wsl bash -c payload preserved as one quoted ArgumentList token" -Stage "INSTALLING_OTACON"
 
     $lastProgress = Get-Date
     $lastByteLen = 0L
@@ -1736,37 +2185,41 @@ function Invoke-WslInstallPhase {
 
     while (-not $proc.HasExited) {
         $recent = @()
-        if (Test-Path $LogPipe) {
-            $item = Get-Item -LiteralPath $LogPipe -ErrorAction SilentlyContinue
-            if ($item -and $item.Length -gt $lastByteLen) {
-                $lastByteLen = $item.Length
-                $lastProgress = Get-Date
+        $byteLen = 0L
+        foreach ($pipePath in @($LogPipe, $errPipe)) {
+            if (Test-Path -LiteralPath $pipePath) {
+                $item = Get-Item -LiteralPath $pipePath -ErrorAction SilentlyContinue
+                if ($item) { $byteLen += $item.Length }
             }
-            $all = @(Get-Content $LogPipe -ErrorAction SilentlyContinue)
-            foreach ($line in $all) {
-                if ($line -match '\[STAGE\]\s+(\S+)\s+(\S+)\s+(.*)$') {
-                    $currentSub = ("{0} [{1}] {2}" -f $Matches[1], $Matches[2], $Matches[3])
-                    $lastProgress = Get-Date
-                } elseif ($line -match '\[AGG::HEARTBEAT\]\s*(.+)$') {
-                    $lastProgress = Get-Date
-                    $hb = $Matches[1]
-                    $currentSub = $hb.Substring(0, [Math]::Min(90, $hb.Length))
-                } elseif ($line -match '\[AGG::PROGRESS\]\s*(.+)$') {
-                    $lastProgress = Get-Date
-                    $pg = $Matches[1]
-                    $currentSub = $pg.Substring(0, [Math]::Min(90, $pg.Length))
-                } elseif ($line -match '^(Get:|Hit:|Ign:|Fetched |Unpacking |Setting up |Processing triggers|Preparing to unpack)') {
-                    $lastProgress = Get-Date
-                    $t = $line.Trim()
-                    $currentSub = $t.Substring(0, [Math]::Min(90, $t.Length))
-                } elseif ($line -match 'pulling|Downloading|Enabling systemd|restart once') {
-                    $lastProgress = Get-Date
-                    $t = $line.Trim()
-                    $currentSub = $t.Substring(0, [Math]::Min(90, $t.Length))
-                }
-            }
-            $recent = @($all | Select-Object -Last 6)
         }
+        if ($byteLen -gt $lastByteLen) {
+            $lastByteLen = $byteLen
+            $lastProgress = Get-Date
+        }
+        $all = @(Get-OtaconMergedLogLines -StdoutPath $LogPipe -StderrPath $errPipe)
+        foreach ($line in $all) {
+            if ($line -match '\[STAGE\]\s+(\S+)\s+(\S+)\s+(.*)$') {
+                $currentSub = ("{0} [{1}] {2}" -f $Matches[1], $Matches[2], $Matches[3])
+                $lastProgress = Get-Date
+            } elseif ($line -match '\[AGG::HEARTBEAT\]\s*(.+)$') {
+                $lastProgress = Get-Date
+                $hb = $Matches[1]
+                $currentSub = $hb.Substring(0, [Math]::Min(90, $hb.Length))
+            } elseif ($line -match '\[AGG::PROGRESS\]\s*(.+)$') {
+                $lastProgress = Get-Date
+                $pg = $Matches[1]
+                $currentSub = $pg.Substring(0, [Math]::Min(90, $pg.Length))
+            } elseif ($line -match '^(Get:|Hit:|Ign:|Fetched |Unpacking |Setting up |Processing triggers|Preparing to unpack)') {
+                $lastProgress = Get-Date
+                $t = $line.Trim()
+                $currentSub = $t.Substring(0, [Math]::Min(90, $t.Length))
+            } elseif ($line -match 'pulling|Downloading|Enabling systemd|restart once') {
+                $lastProgress = Get-Date
+                $t = $line.Trim()
+                $currentSub = $t.Substring(0, [Math]::Min(90, $t.Length))
+            }
+        }
+        $recent = @($all | Select-Object -Last 6)
 
         Show-Stage6Panel -Started $Started -Substep ("[{0}] {1}" -f $Phase, $currentSub) -RecentLines $recent `
             -LastProgress $lastProgress -GpuWin $GpuWin -GpuWsl $GpuWsl
@@ -1807,11 +2260,9 @@ function Invoke-WslInstallPhase {
         if ([int]::TryParse([string]$rawMarker, [ref]$tmpM)) { $fromMarker = $tmpM }
     }
     $fromLog = $null
-    if (Test-Path -LiteralPath $LogPipe) {
-        foreach ($line in @(Get-Content -LiteralPath $LogPipe -ErrorAction SilentlyContinue)) {
-            if ($line -match 'OTACON_PHASE_EXIT=(\d+)') { $fromLog = [int]$Matches[1] }
-            elseif ($line -match '\[STAGE\]\s+exit\s+CODE\s+(\d+)') { $fromLog = [int]$Matches[1] }
-        }
+    foreach ($line in @(Get-OtaconMergedLogLines -StdoutPath $LogPipe -StderrPath $errPipe)) {
+        if ($line -match 'OTACON_PHASE_EXIT=(\d+)') { $fromLog = [int]$Matches[1] }
+        elseif ($line -match '\[STAGE\]\s+exit\s+CODE\s+(\d+)') { $fromLog = [int]$Matches[1] }
     }
 
     $rawCode = $proc.ExitCode
@@ -1826,9 +2277,9 @@ function Invoke-WslInstallPhase {
     }
     Write-KeepLog "linux phase=$Phase exit=$code (raw='$rawCode' marker='$fromMarker' log='$fromLog')" -Stage "INSTALLING_OTACON"
 
-    if ($code -ne 0 -and $code -ne 42 -and (Test-Path -LiteralPath $LogPipe)) {
+    if ($code -ne 0 -and $code -ne 42) {
         Write-KeepLog "---- linux-install-tail (phase=$Phase, last 40) ----" -Level "ERROR" -Stage "INSTALLING_OTACON"
-        foreach ($line in @(Get-Content -LiteralPath $LogPipe -Tail 40 -ErrorAction SilentlyContinue)) {
+        foreach ($line in @((Get-OtaconMergedLogLines -StdoutPath $LogPipe -StderrPath $errPipe) | Select-Object -Last 40)) {
             Write-KeepLog $line -Level "ERROR" -Stage "LINUX_TAIL"
         }
     }
@@ -1845,11 +2296,16 @@ function Step-InstallOtacon {
 
     # Elevation architecture: never configure NOPASSWD:ALL.
     # privileged + finalize run as WSL root via wsl.exe -u root; user phase runs as the normal account.
+    # Dedicated Ubuntu-Otacon imports start with only root — auto-provision the expected user.
     $targetUser = Get-WslDefaultUser -Name $Name
-    if (-not $targetUser -or $targetUser -eq "root") {
+    if (-not $targetUser -or $targetUser -eq "root" -or -not (Test-WslLinuxUserValid -Name $Name -User $targetUser)) {
+        Write-KeepLog "WSL user missing/invalid (got='$targetUser') — auto-provisioning" -Stage "INSTALLING_OTACON"
+        $targetUser = Ensure-WslTargetUser -Name $Name
+    }
+    if (-not $targetUser -or $targetUser -eq "root" -or -not (Test-WslLinuxUserValid -Name $Name -User $targetUser)) {
         Write-KeepLog "could not resolve non-root WSL default user (got='$targetUser')" -Level "ERROR" -Stage "INSTALLING_OTACON"
         Show-SetupNeedsHelp -Step "installing otacon (no default user)" -PlainError (
-            "Could not determine the normal Ubuntu username. Finish Ubuntu first-run setup, then rerun OtaconsKeep Setup."
+            "Could not create or verify the Linux username for OtaconsKeep. Check Logs under %LOCALAPPDATA%\OtaconsKeep\Logs, then rerun Setup."
         ) | Out-Null
         return 1
     }
@@ -2475,6 +2931,9 @@ try {
         Write-KeepLog "installer revision=$rev assistantBytes=$((Get-Item -LiteralPath $MyInvocation.MyCommand.Path).Length)" -Stage "READY"
     }
     if ($Status) { Show-StatusReport; exit 0 }
+    if ($ProbeWslLauncher) {
+        exit (Test-OtaconWslBashCLauncher -Distro $ProbeDistro)
+    }
     if ($Diagnostics) { Write-DiagnosticsFile | Out-Null; exit 0 }
     if ($FixCodec) {
         $ubuntu = Get-UbuntuDistroName

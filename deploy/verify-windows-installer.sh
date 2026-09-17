@@ -17,6 +17,12 @@ python3 deploy/verify-bat-ps-boundaries.py
 echo "== Windows installer release gate (A-J contracts) =="
 python3 tests/test_windows_installer_release_gate.py
 
+echo "== WSL bash -c ArgumentList boundary (privileged-bootstrap launcher) =="
+python3 tests/test_wsl_bash_c_argument_boundary.py
+
+echo "== WSL target-user auto-provision contracts =="
+python3 tests/test_wsl_user_auto_provision.py
+
 echo "== website download copy must match ecosystem BAT =="
 SITE_BAT="${SITE_BAT_PATH:-}"
 if [[ -z "$SITE_BAT" && -f /root/otaconskeep-site/downloads/OtaconsKeep-Setup.bat ]]; then
