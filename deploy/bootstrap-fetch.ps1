@@ -101,6 +101,7 @@ $full = @(
     "deploy/find-ubuntu.ps1",
     "deploy/install-wake-task.ps1",
     "deploy/wake-otacon.ps1",
+    "deploy/keep-ubuntu-awake.ps1",
     "deploy/download-one.ps1",
     "deploy/tail-log.ps1",
     "deploy/check-bat-encoding.ps1"
@@ -117,6 +118,7 @@ $deployOnly = @(
     "deploy/find-ubuntu.ps1",
     "deploy/install-wake-task.ps1",
     "deploy/wake-otacon.ps1",
+    "deploy/keep-ubuntu-awake.ps1",
     "deploy/download-one.ps1",
     "deploy/tail-log.ps1",
     "deploy/check-bat-encoding.ps1"
