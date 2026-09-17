@@ -245,6 +245,68 @@ function Test-IsAdmin {
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-WslDistroState {
+    param([string]$Name)
+    try {
+        $lines = & wsl.exe -l -v 2>$null | ForEach-Object { $_ -replace "`0", "" }
+        foreach ($line in $lines) {
+            $t = ("{0}" -f $line).Trim()
+            if (-not $t -or $t -match '(?i)^NAME\s+STATE') { continue }
+            # "* Ubuntu-22.04      Running         2"  or  "  Ubuntu            Stopped         2"
+            if ($t -match '^\*?\s*(.+?)\s+(Running|Stopped|Starting|Installing)\s+(\d+)\s*$') {
+                $n = $Matches[1].Trim()
+                if ($n.Equals($Name, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    return $Matches[2]
+                }
+            }
+        }
+    } catch {}
+    return "Unknown"
+}
+
+function Ensure-WslDistroRunning {
+    <#
+      wslpath / install phases require the distro to actually boot.
+      A Stopped (or half-initialized) Ubuntu returns empty wslpath -> exit 997.
+    #>
+    param([string]$Name)
+    $state = Get-WslDistroState -Name $Name
+    Write-KeepLog "Ensure-WslDistroRunning name=$Name state=$state" -Stage "WSL"
+    if ($state -eq "Running") { return $true }
+
+    Write-KeepLog "starting WSL distro=$Name (was $state)" -Stage "WSL"
+    try {
+        # Cheap boot probe as root — works even when default user has no shell yet.
+        & wsl.exe -d $Name -u root -- echo ok 1>$null 2>$null
+    } catch {}
+    Start-Sleep -Seconds 2
+    $state2 = Get-WslDistroState -Name $Name
+    if ($state2 -eq "Running") { return $true }
+
+    # One more explicit start attempt
+    try { & wsl.exe -d $Name --exec /bin/true 1>$null 2>$null } catch {}
+    Start-Sleep -Seconds 2
+    $state3 = Get-WslDistroState -Name $Name
+    Write-KeepLog "Ensure-WslDistroRunning after-start state=$state3" -Stage "WSL"
+    return ($state3 -eq "Running")
+}
+
+function Convert-WindowsPathToWsl {
+    param(
+        [string]$Distro,
+        [string]$WindowsPath
+    )
+    if (-not (Ensure-WslDistroRunning -Name $Distro)) {
+        Write-KeepLog "distro not running for wslpath distro=$Distro path=$WindowsPath" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        return ""
+    }
+    try {
+        $out = ((& wsl.exe -d $Distro -u root -- wslpath -a $WindowsPath 2>$null) | Select-Object -First 1)
+        if ($out) { return ("{0}" -f $out).Trim() }
+    } catch {}
+    return ""
+}
+
 function Write-WslListVerbose {
     try {
         $list = & wsl.exe -l -v 2>$null | ForEach-Object { $_ -replace "`0", "" }
@@ -320,10 +382,13 @@ function Resolve-OtaconDistroInteractive {
     )
     $idx = 1
     foreach ($d in $others) {
-        $lines += ("  [{0}] {1}" -f $idx, $d)
+        $st = Get-WslDistroState -Name $d
+        $mark = if ($st -eq "Running") { "RUNNING - prefer this" } else { $st.ToUpperInvariant() }
+        $lines += ("  [{0}] {1}  ({2})" -f $idx, $d, $mark)
         $idx++
     }
     $lines += ""
+    $lines += "Tip: pick a RUNNING Ubuntu if you have one (Stopped distros often fail)."
     $lines += "OtaconsKeep prefers a dedicated distro named $PreferredDistro"
     $lines += "so your existing Ubuntu is not silently changed."
     $lines += ""
@@ -1220,10 +1285,7 @@ function Invoke-WslInstallPhase {
     $localWin = Join-Path $RepoRoot "install_otacon.sh"
     $localWsl = ""
     if (Test-Path -LiteralPath $localWin) {
-        try {
-            $localWsl = ((& wsl.exe -d $Name -- wslpath -a $localWin 2>$null) | Select-Object -First 1)
-            if ($localWsl) { $localWsl = "$localWsl".Trim() }
-        } catch { $localWsl = "" }
+        $localWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $localWin
     }
     $localEsc = if ($localWsl) { $localWsl.Replace("'", "'\''") } else { "" }
 
@@ -1240,13 +1302,10 @@ function Invoke-WslInstallPhase {
         }
     }
 
-    $exitMarkerWsl = ""
-    try {
-        $exitMarkerWsl = ((& wsl.exe -d $Name -- wslpath -a $exitMarkerWin 2>$null) | Select-Object -First 1)
-        if ($exitMarkerWsl) { $exitMarkerWsl = "$exitMarkerWsl".Trim() }
-    } catch { $exitMarkerWsl = "" }
+    $exitMarkerWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $exitMarkerWin
     if (-not $exitMarkerWsl) {
-        Write-KeepLog "could not wslpath exit marker for phase=$Phase" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        $st = Get-WslDistroState -Name $Name
+        Write-KeepLog "could not wslpath exit marker for phase=$Phase distro=$Name state=$st path=$exitMarkerWin" -Level "ERROR" -Stage "INSTALLING_OTACON"
         return 997
     }
     $exitMarkerEsc = $exitMarkerWsl.Replace("'", "'\''")
@@ -1279,13 +1338,10 @@ function Invoke-WslInstallPhase {
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($phaseScriptWin, $bashText, $utf8NoBom)
 
-    $phaseScriptWsl = ""
-    try {
-        $phaseScriptWsl = ((& wsl.exe -d $Name -- wslpath -a $phaseScriptWin 2>$null) | Select-Object -First 1)
-        if ($phaseScriptWsl) { $phaseScriptWsl = "$phaseScriptWsl".Trim() }
-    } catch { $phaseScriptWsl = "" }
+    $phaseScriptWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $phaseScriptWin
     if (-not $phaseScriptWsl) {
-        Write-KeepLog "could not wslpath phase script for phase=$Phase path=$phaseScriptWin" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        $st = Get-WslDistroState -Name $Name
+        Write-KeepLog "could not wslpath phase script for phase=$Phase distro=$Name state=$st path=$phaseScriptWin" -Level "ERROR" -Stage "INSTALLING_OTACON"
         return 997
     }
 
@@ -1495,8 +1551,13 @@ function Step-InstallOtacon {
                     -Result "Still not fully installed or removed after repair (exit $code)." `
                     -LogPath $logPipe
             } else {
+                $hint997 = ""
+                if ($code -eq 997) {
+                    $st = Get-WslDistroState -Name $Name
+                    $hint997 = " Windows could not map installer paths into WSL distro '$Name' (state=$st). Pick a RUNNING Ubuntu (e.g. Ubuntu-22.04), or run: wsl -d $Name -u root -- echo ok — then retry. Do not reuse a Stopped/broken Ubuntu."
+                }
                 $act = Show-SetupNeedsHelp -Step "installing otacon (privileged bootstrap)" -PlainError (
-                    "Root bootstrap failed (exit $code). No sudo password was required; this uses wsl -u root. Log: $logPipe"
+                    "Root bootstrap failed (exit $code). No sudo password was required; this uses wsl -u root.$hint997 Log: $logPipe"
                 )
             }
             if ($act -eq "retry" -and $userRepairRetries -lt 2) {
