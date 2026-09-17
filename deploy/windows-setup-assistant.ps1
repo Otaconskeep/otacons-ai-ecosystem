@@ -382,9 +382,17 @@ function Get-WslUbuntuFamilyNames {
 
 function Get-UbuntuDistroName {
     # Prefer dedicated OtaconsKeep distro. Never silently return first Ubuntu*.
+    # Never trust a saved bare "Ubuntu" (Store default) — that name is what
+    # kept Josh pinned to a broken distro through exit 997.
     $st = Get-InstallerState
     $stated = [string]$st["ubuntu_name"]
     $mode = [string]$st["ubuntu_mode"]
+    if ($stated -and $stated.Equals("Ubuntu", [System.StringComparison]::OrdinalIgnoreCase)) {
+        Write-KeepLog "ignoring saved stock distro name=Ubuntu mode=$mode (often broken)" -Level "WARN" -Stage "WSL"
+        Save-InstallerState @{ ubuntu_name = $null; ubuntu_mode = $null }
+        $stated = ""
+        $mode = ""
+    }
     if ($stated) {
         $isPreferred = [bool]($PreferredDistroAliases | Where-Object { $stated.Equals($_, [System.StringComparison]::OrdinalIgnoreCase) })
         if (($isPreferred -or $mode -eq "reuse") -and (Test-UbuntuReady $stated)) {
@@ -394,12 +402,17 @@ function Get-UbuntuDistroName {
     $finder = Join-Path $RepoRoot "deploy\find-ubuntu.ps1"
     if (Test-Path $finder) {
         $name = & powershell -NoProfile -ExecutionPolicy Bypass -File $finder 2>$null
-        if ($name) { return ($name | Select-Object -First 1).ToString().Trim() }
+        if ($name) {
+            $n = ($name | Select-Object -First 1).ToString().Trim()
+            if ($n -and -not $n.Equals("Ubuntu", [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $n
+            }
+        }
     }
-    foreach ($want in $PreferredDistroAliases) {
+    foreach ($want in ($PreferredDistroAliases + @("Ubuntu-22.04"))) {
         $family = Get-WslUbuntuFamilyNames
         $hit = $family | Where-Object { $_.Equals($want, [System.StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
-        if ($hit) { return $hit }
+        if ($hit -and (Test-UbuntuReady $hit)) { return $hit }
     }
     return $null
 }
@@ -419,7 +432,8 @@ function Resolve-OtaconDistroInteractive {
     $family = Get-WslUbuntuFamilyNames
     $others = @($family | Where-Object {
             $n = $_
-            -not ($PreferredDistroAliases | Where-Object { $n.Equals($_, [System.StringComparison]::OrdinalIgnoreCase) })
+            -not ($PreferredDistroAliases | Where-Object { $n.Equals($_, [System.StringComparison]::OrdinalIgnoreCase) }) -and
+            -not $n.Equals("Ubuntu", [System.StringComparison]::OrdinalIgnoreCase)
         })
 
     if ($others.Count -eq 0) {
