@@ -63,9 +63,11 @@ def main() -> int:
     must("Linux application revision not proven" in assistant
          or "Linux Otacon application did not update" in assistant,
          "READY path fails when Linux app not updated", fails)
-    must("installer updated ≠ application updated" in repair
-         or "installer updated" in repair,
-         "repair states installer≠application rule", fails)
+    must('"$RawBase/deploy/repair-otacon-core.ps1"' not in assistant,
+         "broken branchless RawBase repair URL removed", fails)
+    must("Get-OtaconRawFileUrl" in assistant, "assistant builds raw URLs via Get-OtaconRawFileUrl", fails)
+    must("Never omit the branch/ref" in assistant or "MUST include branch/ref" in assistant,
+         "assistant documents branch/ref requirement", fails)
 
     must("repair-otacon-core.ps1" in setup, "Setup.bat checks for repair helper", fails)
     must("FETCH_REPAIR_MISSING" in setup or "missing repair-otacon-core" in setup.lower(),

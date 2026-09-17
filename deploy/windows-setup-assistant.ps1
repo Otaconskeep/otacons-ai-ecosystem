@@ -67,6 +67,36 @@ if ($Branch -eq "main") {
     }
 }
 
+function Get-OtaconRawFileUrl {
+    <#
+      Build raw.githubusercontent.com URL as: RawBase + Branch/ref + relative path.
+      RawBase may be either:
+        https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem
+        https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main
+      Never omit the branch/ref (that caused HTTP 404 on repair-otacon-core.ps1).
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$RelativePath,
+        [string]$Base = $RawBase,
+        [string]$Ref = $Branch
+    )
+    $b = ([string]$Base).Trim().TrimEnd('/')
+    $r = if ([string]::IsNullOrWhiteSpace($Ref)) { "main" } else { ([string]$Ref).Trim().Trim('/') }
+    $rel = ([string]$RelativePath).Trim().TrimStart('/')
+    if (-not $b) {
+        $b = "https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem"
+    }
+    # Already includes /<ref> at the end (Setup.bat passes RAW with branch).
+    if ($b -match ("/" + [regex]::Escape($r) + "$")) {
+        return "$b/$rel"
+    }
+    # Common mistake: Base ends with a different ref — strip last segment if it looks like a ref.
+    if ($b -match '/(main|master|[0-9a-f]{7,40}|v\d[\w\.\-]*)$') {
+        $b = $b -replace '/(main|master|[0-9a-f]{7,40}|v\d[\w\.\-]*)$', ''
+    }
+    return "$b/$r/$rel"
+}
+
 # ---------------------------------------------------------------------------
 # Logging (no secrets)
 # ---------------------------------------------------------------------------
@@ -646,16 +676,22 @@ function Invoke-OtaconCoreRepair {
     $ps1 = Join-Path $RepoRoot "deploy\repair-otacon-core.ps1"
     if (-not (Test-Path -LiteralPath $ps1)) {
         # Last chance: fetch the helper from GitHub raw into place.
-        $raw = if ($RawBase) { "$RawBase/deploy/repair-otacon-core.ps1" } else {
-            "https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/deploy/repair-otacon-core.ps1"
-        }
+        # MUST include branch/ref — RawBase alone is the repo root and 404s.
+        $raw = Get-OtaconRawFileUrl -RelativePath "deploy/repair-otacon-core.ps1"
+        Write-KeepLog "repair helper URL=$raw (RawBase=$RawBase Branch=$Branch)" -Stage "REPAIR"
         $destDir = Split-Path -Parent $ps1
         try {
             New-Item -ItemType Directory -Force -Path $destDir | Out-Null
             Write-KeepLog "repair-otacon-core.ps1 missing - downloading $raw" -Level "WARN" -Stage "REPAIR"
             Invoke-WebRequest -Uri $raw -OutFile $ps1 -UseBasicParsing -TimeoutSec 60
+            if (-not (Test-Path -LiteralPath $ps1) -or ((Get-Item -LiteralPath $ps1).Length -lt 200)) {
+                throw "download wrote missing/small file"
+            }
         } catch {
-            Write-KeepLog "repair-otacon-core.ps1 download failed: $($_.Exception.Message)" -Level "ERROR" -Stage "REPAIR"
+            Write-KeepLog "repair-otacon-core.ps1 download failed: $($_.Exception.Message) url=$raw" -Level "ERROR" -Stage "REPAIR"
+            if (Test-Path -LiteralPath $ps1) {
+                Remove-Item -LiteralPath $ps1 -Force -ErrorAction SilentlyContinue
+            }
         }
     }
     if (-not (Test-Path -LiteralPath $ps1) -or ((Get-Item -LiteralPath $ps1).Length -lt 200)) {

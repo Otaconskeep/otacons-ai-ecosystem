@@ -155,7 +155,7 @@ exit /b 1
 :ENSURE_OK
 if defined DEBUG echo [DEBUG] command=powershell -File windows-setup-assistant.ps1
 call :LOG "launching assistant MODE=%MODE%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%ASSISTANT%" %MODE% -RepoRoot "%SCRIPT_DIR:~0,-1%" -Branch "%BRANCH%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ASSISTANT%" %MODE% -RepoRoot "%SCRIPT_DIR:~0,-1%" -Branch "%BRANCH%" -RawBase "%RAW%"
 set "RC=!ERRORLEVEL!"
 call :LOG "assistant exit=!RC!"
 if defined DEBUG echo [DEBUG] errorlevel=!RC!
