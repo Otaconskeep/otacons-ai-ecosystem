@@ -120,6 +120,7 @@ class LivingPipeline:
         error: str = '',
         simulate: bool = False,
         queue_only: bool = False,
+        assigned_agent: Optional[str] = None,
     ) -> dict:
         """Create a job.
 
@@ -127,7 +128,7 @@ class LivingPipeline:
         Pass simulate=True (test-only) with succeed=True/False to emit fake
         completion/failure records for pipeline tests.
         """
-        job = self.jobs.create(request, domain=domain)
+        job = self.jobs.create(request, domain=domain, assigned_agent=assigned_agent)
         created = new_event(
             'job.created', actor=job.coordinator, subject=job.assigned_agent,
             payload={'job_id': job.job_id, 'domain': domain, 'request': request},

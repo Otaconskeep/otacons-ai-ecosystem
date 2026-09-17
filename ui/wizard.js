@@ -962,6 +962,20 @@ async function showNodes(){
 async function showExpansionSurface(kind){
   state.view='expansion';
   setBodyMode('home');
+  try{
+    const pathMap={
+      'war-room':'/war-room','dashboard':'/dashboard','intel':'/intel',
+      'video-studio':'/video-studio','ha':'/ha','rex':'/rex','learning':'/learning',
+      'creative':'/creative','ops':'/ops','reports':'/reports','dossiers':'/dossiers',
+      'journal':'/journal','diary':'/diary','page-builder':'/page-builder','rooms':'/rooms',
+      'relationships':'/relationships','emotion':'/emotion','command':'/command',
+      'command-center':'/command-center'
+    };
+    const target=pathMap[kind]||('/'+String(kind||'').replace(/^\/+/,''));
+    if(target && location.pathname!==target){
+      history.pushState({expansion:kind}, '', target);
+    }
+  }catch(_e){}
   if(kind==='rex'){
     await showRexBoard();
     return;
@@ -970,6 +984,11 @@ async function showExpansionSurface(kind){
     let body='';
     try{
       const d=await apiGet('/api/expansion/learning');
+      if(d && d.enabled===false){
+        body=`<h2>Learning Engine</h2>
+          <p class=err>${escapeHtml(d.message||'Expansion not entitled')}</p>
+          <p class=muted>Open /api/expansion/entitlement for the denial reason. Foundation may be installed while surfaces stay locked.</p>`;
+      }else{
       const sum=d.summary||{};
       const card=(c)=>`<div class="learn-claim card">
         <div class="svc-top"><div class="svc-name">LEARNED CLAIM</div><span class="svc-pill ok">${escapeHtml(String(c.confidence))}</span></div>
@@ -988,6 +1007,7 @@ async function showExpansionSurface(kind){
         <h3>Shared Keep learning</h3>${shared}
         <h3>Private agent learning</h3>${privBlocks}
         <div id="learn-why" class="card" style="display:none;margin-top:16px"></div>`;
+      }
     }catch(e){ body=`<p class=err>${escapeHtml(String(e))}</p>`; }
     appRoot().innerHTML=`<div class="home"><header class="home-header"><div>
       <p class="home-kicker">Keep Expansion</p><h1 class="home-greeting">Learning</h1></div>
@@ -1347,8 +1367,35 @@ async function showRexBoard(opts){
 (async()=>{
   await ensureLanAuthSession();
   await loadCapabilities(); await loadPrefs(); await loadVoices(); await loadExpansion();
+  function floorFromLocation(){
+    const q=new URLSearchParams(location.search);
+    if(q.get('floor')) return q.get('floor');
+    if(q.get('surface')) return q.get('surface');
+    const hash=(location.hash||'').replace(/^#/, '');
+    if(hash && hash!=='codec') return hash;
+    const p=(location.pathname||'/').replace(/\/+$/,'') || '/';
+    const map={
+      '/war-room':'war-room','/dashboard':'dashboard','/intel':'intel',
+      '/video-studio':'creative','/ha':'ops','/rex':'rex','/learning':'learning',
+      '/creative':'creative','/ops':'ops','/reports':'reports','/dossiers':'dossiers',
+      '/journal':'journal','/diary':'diary','/page-builder':'page-builder','/rooms':'rooms',
+      '/relationships':'relationships','/emotion':'emotion','/command':'command',
+      '/command-center':'command-center','/codec':'codec','/expansion':'command'
+    };
+    return map[p]||'';
+  }
+  window.addEventListener('popstate', ()=>{
+    const kind=floorFromLocation();
+    if(kind==='codec') showChat();
+    else if(kind) showExpansionSurface(kind);
+    else showHome();
+  });
   if(location.search.includes('setup=1')) render();
-  else if(location.search.includes('codec=1') || location.hash==='#codec') showChat();
+  else if(location.search.includes('codec=1') || location.hash==='#codec' || floorFromLocation()==='codec') showChat();
   else if(location.search.includes('rex=1') || location.hash==='#rex') showRexBoard();
-  else showHome();
+  else {
+    const kind=floorFromLocation();
+    if(kind) await showExpansionSurface(kind);
+    else showHome();
+  }
 })();

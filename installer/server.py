@@ -569,8 +569,29 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/':
             self.path = '/index.html'
             self.serve()
+        elif self._is_expansion_spa_route(path):
+            # Direct URLs like /war-room must load the SPA shell (floors are client-routed).
+            self.path = '/index.html'
+            self.serve()
         else:
             self.serve()
+
+    @staticmethod
+    def _is_expansion_spa_route(path: str) -> bool:
+        """Roster/room routes and floor aliases that are not static files."""
+        if not path or path.startswith('/api/') or path.startswith('/assets/'):
+            return False
+        # Static files under ui/ keep normal serve behavior.
+        if '.' in path.rsplit('/', 1)[-1]:
+            return False
+        known = {
+            '/dashboard', '/war-room', '/intel', '/video-studio', '/ha',
+            '/codec', '/rex', '/learning', '/creative', '/ops', '/reports',
+            '/dossiers', '/journal', '/diary', '/page-builder', '/rooms',
+            '/relationships', '/emotion', '/command', '/command-center',
+            '/expansion',
+        }
+        return path.rstrip('/') in known or path in known
 
     def do_POST(self):
         if not self._require_auth_if_needed():

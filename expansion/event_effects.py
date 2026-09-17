@@ -27,6 +27,21 @@ _EMOTION_EFFECTS = {
         'subject': {'frustration': 0.06, 'insecurity': 0.05, 'pride': -0.04,
                     'stress': 0.04, 'confidence': -0.03},
     },
+    'user.apologized_to_agent': {
+        'subject': {'joy': 0.05, 'frustration': -0.06, 'insecurity': -0.04,
+                    'stress': -0.04},
+    },
+    'user.insulted_agent': {
+        'subject': {'frustration': 0.1, 'insecurity': 0.08, 'pride': -0.08,
+                    'stress': 0.07, 'loneliness': 0.04},
+    },
+    'user.compared_agents': {
+        # subject = addressed agent (often the "loser" of the comparison)
+        'subject': {'jealousy': 0.08, 'insecurity': 0.06, 'pride': -0.05, 'frustration': 0.04},
+    },
+    'job.delegated': {
+        'subject': {'curiosity': 0.03, 'stress': 0.02},
+    },
     'job.completed': {
         'subject': {'satisfaction': 0.08, 'confidence': 0.06, 'pride': 0.05,
                     'stress': -0.05, 'frustration': -0.04},
@@ -56,6 +71,22 @@ _RELATIONSHIP_EFFECTS = {
     'user.corrected_agent': {
         ('subject', 'user_primary'): {'trust': -0.02, 'conflict': 0.03},
         ('user_primary', 'subject'): {'reliability': -0.02},
+    },
+    'user.apologized_to_agent': {
+        ('subject', 'user_primary'): {'conflict': -0.05, 'trust': 0.03, 'affinity': 0.03},
+        ('user_primary', 'subject'): {'conflict': -0.04, 'affinity': 0.02},
+    },
+    'user.insulted_agent': {
+        ('subject', 'user_primary'): {'conflict': 0.06, 'trust': -0.04, 'affinity': -0.05},
+        ('user_primary', 'subject'): {'respect': -0.03},
+    },
+    'user.compared_agents': {
+        ('subject', 'user_primary'): {'conflict': 0.02},
+        # rival named in payload gets respect bump from user_primary when present
+    },
+    'job.delegated': {
+        ('user_primary', 'subject'): {'trust': 0.02, 'reliability': 0.01},
+        ('subject', 'user_primary'): {'attachment': 0.02},
     },
     'job.completed': {
         ('observer_aria', 'subject'): {'trust': 0.05, 'respect': 0.04, 'reliability': 0.05},
@@ -198,6 +229,32 @@ class EventApplicator:
                 note='service.failed observed by Sentry',
             ))
 
+        # Comparison: addressed subject feels insecure; rival may get respect
+        elif et == 'user.compared_agents' and subject:
+            emotion_updates.extend(self._apply_subject_emotion(event, subject))
+            relationship_updates.extend(self._apply_user_subject_relationships(event, subject))
+            rival = (payload.get('rival_agent') or payload.get('other_agent') or '').strip().lower()
+            favored = (payload.get('favored_agent') or '').strip().lower()
+            if rival and rival != subject:
+                if favored == rival:
+                    # User said rival is better than subject
+                    relationship_updates.append(
+                        self._bump_rel(event, subject, rival, {
+                            'jealousy': 0.07, 'rivalry': 0.05, 'respect': 0.02,
+                        }, note='operator compared agents; rival favored')
+                    )
+                    relationship_updates.append(
+                        self._bump_rel(event, 'user_primary', rival, {
+                            'respect': 0.03,
+                        }, note='operator favored rival in comparison')
+                    )
+                elif favored == subject:
+                    relationship_updates.append(
+                        self._bump_rel(event, subject, rival, {
+                            'respect': 0.03, 'rivalry': 0.02,
+                        }, note='operator favored subject over rival')
+                    )
+
         # Creative work ignored (Muse)
         elif payload.get('creative_ignored') and subject == 'muse':
             emotion_updates.append(self._apply_raw_emotion(
@@ -231,7 +288,7 @@ class EventApplicator:
             # Generic catalog
             if subject and et in _EMOTION_EFFECTS:
                 emotion_updates.extend(self._apply_subject_emotion(event, subject))
-            if subject and et == 'user.praised_agent':
+            if subject and et in _RELATIONSHIP_EFFECTS:
                 relationship_updates.extend(self._apply_user_subject_relationships(event, subject))
             if subject and et == 'job.completed':
                 emotion_updates.extend(self._apply_subject_emotion(event, subject))

@@ -49,6 +49,39 @@ class ChatLearningCase(unittest.TestCase):
         self.assertEqual(classify_chat_intent('please keep it concise'), 'preference')
         self.assertEqual(classify_chat_intent('remember that my dog is named Rex'), 'remember')
         self.assertEqual(classify_chat_intent('what is the status'), 'chat')
+        self.assertEqual(classify_chat_intent('I am sorry for insulting you'), 'apology')
+        self.assertEqual(classify_chat_intent('Muse is smarter than you'), 'comparison')
+        self.assertEqual(classify_chat_intent('Aria, handle the release'), 'task')
+        self.assertEqual(classify_chat_intent('You are useless'), 'insult')
+
+    def test_task_queues_job_without_complete(self):
+        pre = before_reply('aria', 'Aria, handle the release', layout=self.layout)
+        self.assertEqual(pre['intent'], 'task')
+        self.assertTrue(pre['intercept'])
+        self.assertTrue(pre['job_id'])
+        self.assertIn('Queued', pre['reply'])
+        from expansion.jobs import JobStore
+        job = JobStore(self.layout).get(pre['job_id'])
+        self.assertIsNotNone(job)
+        self.assertEqual(job.status, 'RUNNING')
+        self.assertEqual(job.assigned_agent, 'aria')
+        self.assertNotEqual(job.status, 'COMPLETE')
+
+    def test_apology_and_insult_emit_typed_events(self):
+        apo = before_reply('aria', 'I am sorry for insulting you', layout=self.layout)
+        self.assertEqual(apo['intent'], 'apology')
+        self.assertTrue(apo['event_id'])
+        before = float(EmotionStore(self.layout).get('aria').dimensions.get('frustration') or 0)
+        insult = before_reply('aria', 'You are useless', layout=self.layout)
+        self.assertEqual(insult['intent'], 'insult')
+        after = float(EmotionStore(self.layout).get('aria').dimensions.get('frustration') or 0)
+        self.assertGreater(after, before)
+        self.assertTrue(insult['emotion_updates'] or insult['relationship_updates'])
+
+    def test_comparison_targets_addressed_agent(self):
+        pre = before_reply('aria', 'Muse is smarter than you', layout=self.layout)
+        self.assertEqual(pre['intent'], 'comparison')
+        self.assertTrue(pre['emotion_updates'] or pre['relationship_updates'])
 
     def test_extract_remember_fact(self):
         self.assertEqual(

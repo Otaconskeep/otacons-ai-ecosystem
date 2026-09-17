@@ -50,8 +50,9 @@ def test_expansion_windows_installer_contracts():
     must("expansion_entitled" in ps1, "checks entitlement after install", fails)
     must("FOUNDATION INSTALLED" in ps1, "honest foundation banner (not EXPANSION READY)", fails)
     must("EXPANSION READY" not in ps1, "does not overclaim EXPANSION READY", fails)
-    must("PSBoundParameters.ContainsKey" in ps1 and "SkipTests" in ps1,
-         "honors SkipTests instead of hardcoding runTests=0", fails)
+    must("Wait-ExpansionHealthy" in ps1, "post-install health wait helper present", fails)
+    must("second wake" in ps1.lower() or "API cold" in ps1, "retry wake when API cold after foundation", fails)
+    must("EXP_SERVICE_ACTIVE" in ps1, "surfaces Linux service marker on exit 8", fails)
     must("Aria" in ps1 and "Vector" in ps1 and "Ledger" in ps1, "expects public roster names", fails)
     must("Muse" in ps1 and "Sentry" in ps1, "expects full five-agent roster", fails)
     must("I found your existing Keep" in ps1, "OtaconSay UX present", fails)

@@ -321,7 +321,15 @@ rm -f "$BOOT_PY"
 if [[ "$(id -u)" == "0" ]] && command_exists systemctl; then
   log "Restarting otacon.service so Expansion APIs reload"
   systemctl restart otacon.service 2>/dev/null || systemctl start otacon.service 2>/dev/null || true
-  sleep 2
+  # Brand endpoint often answers before Expansion status finishes loading — wait for active + settle.
+  for _i in 1 2 3 4 5 6 7 8 9 10; do
+    st="$(systemctl is-active otacon.service 2>/dev/null || echo unknown)"
+    if [[ "$st" == "active" ]]; then
+      break
+    fi
+    sleep 1
+  done
+  sleep 3
   echo "EXP_SERVICE_ACTIVE=$(systemctl is-active otacon.service 2>/dev/null || echo unknown)"
 fi
 

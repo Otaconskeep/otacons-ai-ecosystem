@@ -99,7 +99,40 @@ function Get-ExpansionStatus([string]$Base) {
     try {
         $r = Invoke-WebRequest -Uri "$Base/api/expansion/status" -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
         return ($r.Content | ConvertFrom-Json)
-    } catch { return $null }
+    } catch {
+        Write-ExpLog ("Get-ExpansionStatus failed base={0} err={1}" -f $Base, $_.Exception.Message)
+        return $null
+    }
+}
+
+function Wait-ExpansionHealthy([string]$Name, [int]$PortNum, [int]$Seconds) {
+    $deadline = (Get-Date).AddSeconds([Math]::Max(15, $Seconds))
+    $lastBase = $null
+    $lastStatus = $null
+    $attempt = 0
+    do {
+        $attempt++
+        $base = Find-WorkingBase -Name $Name -PortNum $PortNum
+        if (-not $base) {
+            Write-ExpLog ("health wait attempt={0} brand=unreachable" -f $attempt)
+            Start-Sleep -Seconds 2
+            continue
+        }
+        $lastBase = $base
+        $status = Get-ExpansionStatus $base
+        $lastStatus = $status
+        $n = 0
+        if ($status -and $status.agents) { $n = @($status.agents).Count }
+        $en = if ($status) { $status.enabled } else { $false }
+        $fr = if ($status) { $status.foundation_ready } else { $false }
+        Write-ExpLog ("health wait attempt={0} base={1} enabled={2} foundation_ready={3} agents={4}" -f $attempt, $base, $en, $fr, $n)
+        if ($status -and $en -and $fr -and $n -ge 5) {
+            return @{ Base = $base; Status = $status }
+        }
+        # After service restart the brand may answer before Expansion status is loaded.
+        Start-Sleep -Seconds 3
+    } while ((Get-Date) -lt $deadline)
+    return @{ Base = $lastBase; Status = $lastStatus }
 }
 
 function Ensure-DistroRunning([string]$Name) {
@@ -257,14 +290,34 @@ if ($installExit -eq 2) {
     Write-OtaconSay "Foundation install finished. Verifying Expansion health..." "ok"
 }
 
-$deadline = (Get-Date).AddSeconds([Math]::Max(30, $TimeoutSeconds))
-$status = $null
-do {
-    $base = Find-WorkingBase -Name $distro -PortNum $Port
-    if ($base) { $status = Get-ExpansionStatus $base }
-    if ($status -and $status.enabled -and $status.foundation_ready) { break }
+# Service just restarted inside the Linux helper; give Core time, then wake + poll.
+Start-Sleep -Seconds 4
+$wake = Join-Path $InstDir "deploy\wake-otacon.ps1"
+if (-not (Test-Path -LiteralPath $wake)) {
+    $wake = Join-Path (Join-Path (Resolve-RepoRoot) "deploy") "wake-otacon.ps1"
+}
+if ($wake -and (Test-Path -LiteralPath $wake)) {
+    Write-ExpLog "post-install wake via $wake"
+    try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wake -DistroName $distro -Port $Port | Out-Null } catch {}
     Start-Sleep -Seconds 2
-} while ((Get-Date) -lt $deadline)
+}
+
+$waitSecs = [Math]::Max(90, $TimeoutSeconds)
+$healthy = Wait-ExpansionHealthy -Name $distro -PortNum $Port -Seconds $waitSecs
+$base = $healthy.Base
+$status = $healthy.Status
+
+# One extra wake+retry if install markers looked good but the API was still cold.
+if ((-not $status -or -not $status.enabled -or -not $status.foundation_ready) -and $out -match 'EXP_FOUNDATION_READY=1') {
+    Write-ExpLog "API cold after foundation markers; second wake+wait"
+    if ($wake -and (Test-Path -LiteralPath $wake)) {
+        try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wake -DistroName $distro -Port $Port | Out-Null } catch {}
+    }
+    Start-Sleep -Seconds 5
+    $healthy = Wait-ExpansionHealthy -Name $distro -PortNum $Port -Seconds 60
+    $base = $healthy.Base
+    $status = $healthy.Status
+}
 
 $agentCount = 0
 if ($status -and $status.agents) { $agentCount = @($status.agents).Count }
@@ -273,11 +326,12 @@ if ($status -and $status.agents) {
     $names = @($status.agents | ForEach-Object { $_.display_name })
 }
 
-Write-ExpLog ("status enabled={0} foundation_ready={1} entitled={2} agents={3}" -f `
+Write-ExpLog ("status enabled={0} foundation_ready={1} entitled={2} agents={3} base={4}" -f `
     $(if ($status) { $status.enabled } else { 'null' }), `
     $(if ($status) { $status.foundation_ready } else { 'null' }), `
     $(if ($status -and $status.expansion_entitled) { $status.expansion_entitled } elseif ($status -and $status.entitlement) { $status.entitlement.entitled } else { 'null' }), `
-    $agentCount)
+    $agentCount, `
+    $(if ($base) { $base } else { 'null' }))
 
 $need = @('Aria', 'Vector', 'Ledger', 'Muse', 'Sentry')
 $missing = @($need | Where-Object { $names -notcontains $_ })
@@ -295,6 +349,12 @@ if (-not $status -or -not $status.enabled -or -not $status.foundation_ready -or 
     Write-Host ("  foundation_ready={0}" -f $(if ($status) { $status.foundation_ready } else { 'n/a' }))
     Write-Host ("  expansion_entitled={0}" -f $entitled)
     Write-Host ("  agents={0}  missing={1}" -f $agentCount, ($missing -join ','))
+    Write-Host ("  base={0}" -f $(if ($base) { $base } else { 'unreachable' }))
+    Write-Host ("  linux_markers EXP_FOUNDATION_READY / EXP_AGENT_COUNT in log: $LogFile")
+    if ($out -match 'EXP_FOUNDATION_READY=(\d+)') { Write-Host ("  EXP_FOUNDATION_READY={0}" -f $Matches[1]) }
+    if ($out -match 'EXP_AGENT_COUNT=(\d+)') { Write-Host ("  EXP_AGENT_COUNT={0}" -f $Matches[1]) }
+    if ($out -match 'EXP_SERVICE_ACTIVE=(\S+)') { Write-Host ("  EXP_SERVICE_ACTIVE={0}" -f $Matches[1]) }
+    Write-Host "  Tip: wait a few seconds and rerun deploy\install-otacon-expansion.ps1 (no reinstall needed)."
     Write-Host "  Log: $LogFile"
     exit 8
 }
