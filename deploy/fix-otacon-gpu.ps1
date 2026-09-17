@@ -124,12 +124,20 @@ done
 
 if [ -f /tmp/otacon-gpu-ok ]; then
   echo "GPU_FIX_OK"
-  exit 0
 fi
-echo "GPU_FIX_SCAN_EMPTY"
-# Still exit 0 if branding works — UI may need hard refresh; don't scare the user.
-curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/api/branding" >/dev/null 2>&1 && exit 0
-exit 1
+
+# Must still prove app revision moved / matches tip (same rule as repair-otacon-core).
+AFTER="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo none)"
+ORIGIN_TIP="$(git -C "$ROOT" rev-parse origin/main 2>/dev/null || echo none)"
+echo "APP_REV_AFTER=$AFTER"
+echo "ORIGIN_MAIN=$ORIGIN_TIP"
+if [ "$AFTER" = "none" ] || [ "$AFTER" != "$ORIGIN_TIP" ]; then
+  echo "APP_REV_FAIL=revision_mismatch after=$AFTER origin=$ORIGIN_TIP"
+  exit 4
+fi
+echo "APP_REV_OK=1"
+curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/api/branding" >/dev/null 2>&1 || exit 1
+exit 0
 '@
 $bash = $bash.Replace("__PORT__", [string]$Port)
 
