@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "97826815d742b1ebae466dbc8c071cfb502b74af",
+  "commit": "7070a1834cb310bb6e844c90de961762641f9d1e",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -14,13 +14,13 @@
   "files": [
     {
       "path": "install_otacon.bat",
-      "sha256": "7bf4dc677bafc72129fefe31f3f0ae2b8946a18ea8d8c675763bf3949b911eaa",
-      "bytes": 13619
+      "sha256": "842e81b649cb25ccc39caa2171b7388133adfbad3c1f6fd15a32170dbfc20d20",
+      "bytes": 14571
     },
     {
       "path": "OtaconsKeep-Setup.bat",
-      "sha256": "e1026e584518ef5944a2ed17283939e45b59103d43277a793820eb5a2ed35a3f",
-      "bytes": 16702
+      "sha256": "18decd204ecbec4e36abaa86a83ac1fe464b85df0bdd04eb3a2f83d37851fbb2",
+      "bytes": 19643
     },
     {
       "path": "Reinstall-Otacon.bat",
@@ -44,8 +44,8 @@
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
-      "sha256": "252ba31fbc01f3e56056337d0cd5b0ee747ca5c1ff3eb5fa0b43412d8e150cf6",
-      "bytes": 165603
+      "sha256": "4fe0aedd7817f9bfb1a623f3c2efe6af9732df0ab2c4302552f1b75a74b7addc",
+      "bytes": 166426
     },
     {
       "path": "deploy/repair-otacon-core.ps1",

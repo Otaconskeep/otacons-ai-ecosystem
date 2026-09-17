@@ -130,14 +130,20 @@ if defined DEBUG echo [DEBUG] RAW=%RAW%
 
 set "LOCAL_ASSISTANT=%~dp0deploy\windows-setup-assistant.ps1"
 set "LOCAL_SH=%~dp0install_otacon.sh"
-REM Only skip fetch for a full repo/dev tree (has install_otacon.sh).
-REM AppData\OtaconsKeep\installer ALSO has deploy\*.ps1 after first fetch - skipping
-REM there pinned crist on stale assistants and reboot-looped forever.
-if exist "%LOCAL_ASSISTANT%" if exist "%LOCAL_SH%" goto USE_LOCAL_TREE
+REM Only skip fetch for a real checkout OUTSIDE AppData (dev tree).
+REM AppData\OtaconsKeep\installer has install_otacon.sh after first fetch - never treat that as "local tree".
+if exist "%LOCAL_ASSISTANT%" if exist "%LOCAL_SH%" goto CHECK_LOCAL_TREE
 goto NEED_FETCH
+:CHECK_LOCAL_TREE
+echo %~dp0| find /I "\OtaconsKeep\installer" >nul
+if not errorlevel 1 (
+  call :LOG "Setup running from AppData installer - never skip refresh"
+  goto NEED_FETCH
+)
+goto USE_LOCAL_TREE
 
 :USE_LOCAL_TREE
-call :LOG "full local tree detected (install_otacon.sh present); skipping bootstrap fetch"
+call :LOG "dev local tree detected; install_otacon.bat will still refresh deploy helpers"
 if defined DEBUG echo [DEBUG] command=call "%~dp0install_otacon.bat" %ARGS%
 call "%~dp0install_otacon.bat" %ARGS%
 set "RC=!ERRORLEVEL!"
@@ -147,11 +153,28 @@ if not "!RC!"=="0" call :STAY_OPEN_AFTER_CHILD !RC!
 exit /b !RC!
 
 :NEED_FETCH
-REM Installer-owned files are valid only when they match GitHub release/hash.
-REM Existence / local pin alone is NEVER enough - always refresh the bundle.
-call :LOG "website Setup always refreshes installer bundle from GitHub"
+REM Compare cached vs published revision. Users must NOT need --update.
+REM --update remains a force-refresh option only.
+call :CHECK_INSTALLER_STALE
+if not defined FORCE_UPDATE goto AFTER_FORCE_UPDATE
+call :LOG "FORCE_UPDATE=1 force refresh"
+set "REFRESH_REQUIRED=1"
+:AFTER_FORCE_UPDATE
+call :LOG "cached revision=%CACHED_REV%"
+call :LOG "published revision=%PUBLISHED_REV%"
+call :LOG "refresh required=%REFRESH_REQUIRED%"
+if not "!REFRESH_REQUIRED!"=="0" goto NEED_FETCH_FORCE
+call :LOG "pin matches published - still verifying helper content proofs"
+call :VERIFY_CACHED_HELPERS
+if "!HELPERS_OK!"=="1" goto FETCH_CACHED_OK
+call :LOG "cached helpers failed content proofs - refreshing"
+set "REFRESH_REQUIRED=1"
 goto NEED_FETCH_FORCE
+:FETCH_CACHED_OK
+call :LOG "cached helpers verified current; launching without full refetch"
+goto FETCH_VERIFY_OK
 :NEED_FETCH_FORCE
+call :LOG "refreshing installer bundle from GitHub (no --update required)"
 echo.
 echo ============================================================
 echo                  OTACONSKEEP SETUP
@@ -172,7 +195,59 @@ echo.
 
 :FETCH_RETRY
 call :LOG "FETCH_RETRY begin"
-call :ENSURE_FETCH_HELPER
+call :CHECK_INSTALLER_STALE
+set "CACHED_REV="
+set "PUBLISHED_REV="
+set "REFRESH_REQUIRED=1"
+if exist "%INST%\deploy\installer-revision.txt" (
+  for /f "usebackq delims=" %%R in ("%INST%\deploy\installer-revision.txt") do set "CACHED_REV=%%R"
+)
+if not defined CACHED_REV set "CACHED_REV=none"
+set "REV_TMP=%TEMP%\otacon-installer-rev-remote.txt"
+if exist "%REV_TMP%" del /f /q "%REV_TMP%" >nul 2>&1
+where curl.exe >nul 2>&1
+if errorlevel 1 goto CHECK_REV_PS
+curl.exe -fsSL --connect-timeout 8 --max-time 15 "%RAW%/deploy/installer-revision.txt" > "%REV_TMP%" 2>nul
+if exist "%REV_TMP%" for /f "usebackq delims=" %%R in ("%REV_TMP%") do set "PUBLISHED_REV=%%R"
+goto CHECK_REV_DONE
+:CHECK_REV_PS
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12}catch{}; try{Invoke-WebRequest -Uri ($env:RAW+'/deploy/installer-revision.txt') -OutFile $env:REV_TMP -UseBasicParsing -TimeoutSec 15; exit 0}catch{exit 1}"
+if exist "%REV_TMP%" for /f "usebackq delims=" %%R in ("%REV_TMP%") do set "PUBLISHED_REV=%%R"
+:CHECK_REV_DONE
+if not defined PUBLISHED_REV set "PUBLISHED_REV=unknown"
+if /I "!CACHED_REV!"=="none" (
+  set "REFRESH_REQUIRED=1"
+  exit /b 0
+)
+if /I "!PUBLISHED_REV!"=="unknown" (
+  set "REFRESH_REQUIRED=1"
+  call :LOG "published revision unknown - refresh required (will not use unverified stale cache)"
+  exit /b 0
+)
+if /I not "!CACHED_REV!"=="!PUBLISHED_REV!" (
+  set "REFRESH_REQUIRED=1"
+  exit /b 0
+)
+set "REFRESH_REQUIRED=0"
+exit /b 0
+
+:VERIFY_CACHED_HELPERS
+set "HELPERS_OK=0"
+if not exist "%ASSISTANT%" exit /b 0
+if not exist "%INST%\deploy\repair-otacon-core.ps1" exit /b 0
+if not exist "%INST%\deploy\wsl-bash-file.ps1" exit /b 0
+findstr /C:"Invoke-OtaconWslBashFile" "%INST%\deploy\repair-otacon-core.ps1" >nul
+if errorlevel 1 exit /b 0
+findstr /C:"bash -lc $bash" "%INST%\deploy\repair-otacon-core.ps1" >nul
+if not errorlevel 1 exit /b 0
+findstr /C:"git_as_owner" "%INST%\deploy\repair-otacon-core.ps1" >nul
+if errorlevel 1 exit /b 0
+findstr /C:"runuser -u" "%INST%\deploy\repair-otacon-core.ps1" >nul
+if errorlevel 1 exit /b 0
+set "HELPERS_OK=1"
+exit /b 0
+
+:ENSURE_FETCH_HELPER
 set "RC=!ERRORLEVEL!"
 if defined DEBUG echo [DEBUG] ENSURE_FETCH_HELPER errorlevel=!RC!
 if "!RC!"=="0" goto FETCH_HELPER_OK
@@ -210,14 +285,12 @@ if /I "!CHOICE!"=="R" goto FETCH_RETRY
 exit /b 1
 
 :FETCH_FILES_OK
+call :LOG "refreshed files: bootstrap + full installer bundle (see bootstrap-fetch log)"
 if not exist "%ASSISTANT%" goto FETCH_ASSISTANT_MISSING
 if not exist "%INST%\deploy\repair-otacon-core.ps1" goto FETCH_REPAIR_MISSING
 if not exist "%INST%\deploy\wsl-bash-file.ps1" goto FETCH_WSL_MISSING
-REM Prove installed repair is the temp-.sh transport (not stale bash -lc).
-findstr /C:"Invoke-OtaconWslBashFile" "%INST%\deploy\repair-otacon-core.ps1" >nul
-if errorlevel 1 goto FETCH_REPAIR_STALE
-findstr /C:"bash -lc $bash" "%INST%\deploy\repair-otacon-core.ps1" >nul
-if not errorlevel 1 goto FETCH_REPAIR_STALE
+call :VERIFY_CACHED_HELPERS
+if not "!HELPERS_OK!"=="1" goto FETCH_REPAIR_STALE
 goto FETCH_VERIFY_OK
 :FETCH_ASSISTANT_MISSING
 call :LOG "ASSISTANT missing after fetch"
@@ -246,7 +319,7 @@ exit /b 1
 :FETCH_REPAIR_STALE
 call :LOG "repair-otacon-core.ps1 stale after fetch (missing file transport or still bash -lc)"
 set "LAST_FAIL_CMD=verify installed repair-otacon-core.ps1 uses temp .sh transport"
-set "LAST_FAIL_REASON=Cached repair helper is stale. Setup refreshed from GitHub but the installed helper still looks old."
+set "LAST_FAIL_REASON=Cached repair helper is stale (missing temp-.sh transport or repo-owner/runuser Git fix). Refetch failed to produce a current helper."
 call :CAPTURE_LAST_OUTPUT
 call :SHOW_SETUP_STOPPED 2
 if /I "!CHOICE!"=="R" goto FETCH_RETRY

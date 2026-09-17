@@ -757,6 +757,19 @@ function Invoke-OtaconCoreRepair {
         return $false
     }
 
+    # Live cache must contain the repo-owner Git fix before Linux repair starts.
+    $repairText = ""
+    try { $repairText = Get-Content -LiteralPath $ps1 -Raw -Encoding UTF8 } catch { $repairText = "" }
+    if ($repairText -notmatch 'git_as_owner' -or $repairText -notmatch 'runuser -u') {
+        Write-KeepLog "UPDATE FAILED: cached repair-otacon-core.ps1 missing git_as_owner/runuser owner-context fix" -Level "ERROR" -Stage "REPAIR"
+        Write-OtaconSay "Update helper is outdated on this PC. Re-run OtaconsKeep Setup from the website (no extra flags needed)." -Mood "alert"
+        return $false
+    }
+    if ($repairText -match 'bash -lc \$bash') {
+        Write-KeepLog "UPDATE FAILED: cached repair still uses bash -lc `$bash transport" -Level "ERROR" -Stage "REPAIR"
+        return $false
+    }
+
     # Always rewrite helper for PS 5.1 (CDN/raw may strip BOM briefly).
     [void](ConvertTo-OtaconPs51SafeFile -Path $ps1)
 

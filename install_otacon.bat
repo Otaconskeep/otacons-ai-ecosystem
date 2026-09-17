@@ -293,6 +293,10 @@ echo    %REPO_WEB%
 echo ============================================================
 echo.
 call :LOG "ENSURE_ASSISTANT downloading deploy scripts"
+set "CACHED_REV=none"
+if exist "%SCRIPT_DIR%deploy\installer-revision.txt" for /f "usebackq delims=" %%R in ("%SCRIPT_DIR%deploy\installer-revision.txt") do set "CACHED_REV=%%R"
+call :LOG "cached revision=%CACHED_REV%"
+call :LOG "refresh required=true (install_otacon always refreshes deploy helpers; --update not required)"
 
 if not exist "%SCRIPT_DIR%deploy" mkdir "%SCRIPT_DIR%deploy" >nul 2>&1
 
@@ -374,6 +378,20 @@ if not errorlevel 1 (
   call :LOG "repair helper still has bash -lc after fetch"
   exit /b 2
 )
+findstr /C:"git_as_owner" "%SCRIPT_DIR%deploy\repair-otacon-core.ps1" >nul
+if errorlevel 1 (
+  call :LOG "repair helper missing git_as_owner (repo-owner fix)"
+  exit /b 2
+)
+findstr /C:"runuser -u" "%SCRIPT_DIR%deploy\repair-otacon-core.ps1" >nul
+if errorlevel 1 (
+  call :LOG "repair helper missing runuser owner-context"
+  exit /b 2
+)
+if exist "%SCRIPT_DIR%deploy\installer-revision.txt" (
+  for /f "usebackq delims=" %%R in ("%SCRIPT_DIR%deploy\installer-revision.txt") do call :LOG "cached revision after refresh=%%R"
+)
+call :LOG "refreshed files verified (assistant + repair + wsl-bash-file + owner-git)"
 for %%A in ("%ASSISTANT%") do if %%~zA LSS 40 (
   call :LOG "assistant too small"
   exit /b 2

@@ -41,9 +41,10 @@ def main() -> int:
     must("otacon-new" in setup, "Setup uses atomic temp download for bootstrap", fails)
     must("skipping refetch" not in setup,
          "Setup no longer skips refetch via USE_PINNED_LOCAL", fails)
-    must("website Setup always refreshes installer bundle" in setup
-         or "always refreshes installer bundle" in setup,
-         "Setup always refreshes installer bundle from GitHub", fails)
+    must("CHECK_INSTALLER_STALE" in setup or "refresh required=" in setup,
+         "Setup checks cached vs published revision", fails)
+    must("no --update required" in setup.lower() or "REFRESH_REQUIRED" in setup,
+         "Setup auto-refreshes without requiring --update", fails)
 
     must("ALWAYS refresh bootstrap-fetch.ps1" in install
          or "always refreshing installer-owned" in install,
