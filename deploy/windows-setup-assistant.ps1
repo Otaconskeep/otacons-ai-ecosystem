@@ -1672,83 +1672,223 @@ function Get-OtaconExpectedWslUsername {
 function Test-WslUserExists {
     param([string]$Name, [string]$User)
     if (-not $Name -or -not $User) { return $false }
-    $esc = $User.Replace("'", "'\''")
-    $out = & wsl.exe -d $Name -u root --exec id -u $User 2>$null
-    if ($LASTEXITCODE -ne 0) { return $false }
-    return $true
+    try {
+        $raw = & wsl.exe -d $Name --exec getent passwd $User 2>$null
+        $line = (ConvertTo-OtaconWslText $raw).Trim()
+        if (-not $line) { return $false }
+        $nameField = ($line -split ':', 2)[0]
+        return ($nameField -eq $User)
+    } catch {
+        return $false
+    }
+}
+
+function ConvertTo-OtaconWslText {
+    param($Raw)
+    if ($null -eq $Raw) { return "" }
+    $s = (@($Raw) | ForEach-Object { "$_" }) -join "`n"
+    return (($s -replace "`0", "").Trim())
+}
+
+function ConvertFrom-WslPasswdRecord {
+    <#
+      Pure parser for one getent passwd line.
+      Status: VALID | INVALID | NOT_FOUND | DIAGNOSTIC_ERROR | ROOT_REJECTED
+      UNKNOWN/DIAGNOSTIC_ERROR must NEVER be treated as a confirmed broken account.
+    #>
+    param(
+        [string]$Record,
+        [string]$ExpectedUser,
+        [bool]$HomeExists = $false,
+        [bool]$HomeChecked = $false
+    )
+    $result = @{
+        Status           = "DIAGNOSTIC_ERROR"
+        Exists           = $false
+        Uid              = ""
+        Gid              = ""
+        Home             = ""
+        Shell            = ""
+        UidOk            = $false
+        HomeOk           = $false
+        ShellOk          = $false
+        Ok               = $false
+        DefectConfirmed  = $false
+        FixableHome      = $false
+        FixableShell     = $false
+        Detail           = "diagnostic_error"
+    }
+    if (-not $ExpectedUser) {
+        $result.Detail = "missing_args"
+        return $result
+    }
+    if ($ExpectedUser -eq "root") {
+        $result.Status = "ROOT_REJECTED"
+        $result.Detail = "root_rejected"
+        return $result
+    }
+    $line = ("{0}" -f $Record).Trim()
+    if (-not $line) {
+        $result.Status = "NOT_FOUND"
+        $result.Detail = "not_found"
+        return $result
+    }
+    # Reject multiline / KEY=VALUE diagnostic blobs (legacy mangled captures).
+    if ($line -match "[\r\n]" -or $line -match '^(EXISTS|UID|HOME|SHELL)=' -or ($line.Split(':').Count -lt 7)) {
+        $result.Detail = "malformed_passwd_record"
+        return $result
+    }
+    $parts = $line.Split(':')
+    if ($parts.Count -lt 7) {
+        $result.Detail = "malformed_passwd_record"
+        return $result
+    }
+    $name = $parts[0]
+    $uid = $parts[2]
+    $gid = $parts[3]
+    $home = $parts[5]
+    $shell = $parts[6]
+    if ($name -ne $ExpectedUser) {
+        $result.Detail = "username_mismatch"
+        return $result
+    }
+    $result.Exists = $true
+    $result.Uid = $uid
+    $result.Gid = $gid
+    $result.Home = $home
+    $result.Shell = $shell
+
+    $uidNum = 0
+    $uidParsed = [int]::TryParse([string]$uid, [ref]$uidNum)
+    $result.UidOk = ($uidParsed -and $uidNum -ne 0)
+    $result.ShellOk = (-not [string]::IsNullOrWhiteSpace($shell))
+    $homeNonEmpty = (-not [string]::IsNullOrWhiteSpace($home))
+    if (-not $HomeChecked) {
+        # Intermediate parse only - caller must probe home with --exec test -d.
+        $result.Status = "PARSED"
+        $result.Detail = "home_check_pending"
+        return $result
+    }
+    $result.HomeOk = ($homeNonEmpty -and $HomeExists)
+
+    if ($result.UidOk -and $result.HomeOk -and $result.ShellOk) {
+        $result.Status = "VALID"
+        $result.Ok = $true
+        $result.Detail = "ok"
+        return $result
+    }
+
+    # Positive INVALID only when fields parsed cleanly and a concrete rule failed.
+    $result.Status = "INVALID"
+    $result.DefectConfirmed = $true
+    $bits = @()
+    if (-not $result.UidOk) { $bits += "uid" }
+    if (-not $homeNonEmpty) {
+        $bits += "home_empty"
+        $result.FixableHome = $true
+    } elseif (-not $HomeExists) {
+        $bits += "home_missing"
+        $result.FixableHome = $true
+    }
+    if (-not $result.ShellOk) {
+        $bits += "shell_empty"
+        $result.FixableShell = $true
+    }
+    $result.Detail = ($bits -join ",")
+    return $result
 }
 
 function Test-WslLinuxUserValid {
     <#
-      State A - account validity only:
-        user exists, is not root, home directory and login shell are usable.
-      Does NOT check whether this account is the distro's effective default.
+      State A - account validity only.
+      True only for positively VALID diagnoses. DIAGNOSTIC_ERROR is not valid
+      and must not be treated as a confirmed broken account.
     #>
     param([string]$Name, [string]$User)
     $diag = Get-WslLinuxUserDiagnosis -Name $Name -User $User
-    return [bool]$diag.Ok
+    return [bool]($diag.Ok -and $diag.Status -eq "VALID")
 }
 
 function Get-WslLinuxUserDiagnosis {
     <#
-      Inspect account A without mutating. Returns Exists/Uid/Home/Shell flags + Detail.
+      Inspect account A without mutating.
+      Reads: wsl -d <distro> --exec getent passwd <user>
+      Home:  wsl -d <distro> --exec test -d <home>
+      NEVER uses multiline interactive shell diagnostic payloads.
+      UNKNOWN/DIAGNOSTIC_ERROR => leave account unchanged (no mutation).
     #>
     param([string]$Name, [string]$User)
-    $result = @{
-        Exists  = $false
-        Uid     = ""
-        Home    = ""
-        Shell   = ""
-        UidOk   = $false
-        HomeOk  = $false
-        ShellOk = $false
-        Ok      = $false
-        Detail  = "missing_args"
+    $result = ConvertFrom-WslPasswdRecord -Record "" -ExpectedUser $User -HomeExists:$false -HomeChecked:$false
+    if (-not $Name -or -not $User) {
+        $result.Status = "DIAGNOSTIC_ERROR"
+        $result.Detail = "missing_args"
+        return $result
     }
-    if (-not $Name -or -not $User) { return $result }
     if ($User -eq "root") {
-        $result.Detail = "root_rejected"
+        return (ConvertFrom-WslPasswdRecord -Record "" -ExpectedUser "root")
+    }
+
+    $line = ""
+    $getentCode = -1
+    try {
+        $raw = & wsl.exe -d $Name --exec getent passwd $User 2>$null
+        $getentCode = $LASTEXITCODE
+        $line = (ConvertTo-OtaconWslText $raw)
+        # getent may return one line; take the first non-empty line only.
+        if ($line -match '[\r\n]') {
+            $line = (($line -split '[\r\n]+') | Where-Object { $_ -and $_.Trim() } | Select-Object -First 1)
+            if ($null -eq $line) { $line = "" } else { $line = "$line".Trim() }
+        }
+    } catch {
+        Write-KeepLog "Get-WslLinuxUserDiagnosis: getent threw user=$User err=$($_.Exception.Message)" -Level "ERROR" -Stage "WSL_USER"
+        $result.Status = "DIAGNOSTIC_ERROR"
+        $result.Detail = "getent_exception"
         return $result
     }
-    $esc = $User.Replace("'", "'\''")
-    $check = @"
-u='$esc'
-if ! id "`$u" >/dev/null 2>&1; then echo EXISTS=0; exit 0; fi
-echo EXISTS=1
-uid=`$(id -u "`$u" 2>/dev/null || echo '')
-home=`$(getent passwd "`$u" | cut -d: -f6)
-shell=`$(getent passwd "`$u" | cut -d: -f7)
-echo UID=`$uid
-echo HOME=`$home
-echo SHELL=`$shell
-"@
-    $out = & wsl.exe -d $Name -u root -- bash -lc $check 2>$null
-    $text = ("$out" | Out-String)
-    if ($text -notmatch 'EXISTS=1') {
-        $result.Detail = "missing"
+
+    if ([string]::IsNullOrWhiteSpace($line)) {
+        # Empty output: missing user if getent failed cleanly; otherwise unknown.
+        if ($getentCode -eq 0) {
+            $result.Status = "DIAGNOSTIC_ERROR"
+            $result.Detail = "getent_empty_success"
+            return $result
+        }
+        $result.Status = "NOT_FOUND"
+        $result.Detail = "not_found"
         return $result
     }
-    $result.Exists = $true
-    if ($text -match 'UID=(\d+)') { $result.Uid = $Matches[1] }
-    if ($text -match 'HOME=([^\r\n]+)') { $result.Home = $Matches[1].Trim() }
-    if ($text -match 'SHELL=([^\r\n]+)') { $result.Shell = $Matches[1].Trim() }
-    $uidNum = 0
-    [void][int]::TryParse([string]$result.Uid, [ref]$uidNum)
-    $result.UidOk = ($uidNum -ge 1000 -and $uidNum -lt 65534)
-    $result.HomeOk = ($result.Home -and ($text -match 'HOME=') -and ((& wsl.exe -d $Name -u root -- bash -lc ("[ -d '{0}' ] && echo HOME_DIR_OK" -f ($result.Home.Replace("'", "'\''"))) 2>$null | Out-String) -match 'HOME_DIR_OK'))
-    $sh = [string]$result.Shell
-    $result.ShellOk = ($sh -match '/(bash|sh|zsh|fish)$')
-    $result.Ok = ($result.UidOk -and $result.HomeOk -and $result.ShellOk)
-    if ($result.Ok) {
-        $result.Detail = "ok"
-    } else {
-        $bits = @()
-        if (-not $result.UidOk) { $bits += "uid" }
-        if (-not $result.HomeOk) { $bits += "home" }
-        if (-not $result.ShellOk) { $bits += "shell" }
-        $result.Detail = ($bits -join ",")
+
+    # Parse fields first without home probe.
+    $parsed = ConvertFrom-WslPasswdRecord -Record $line -ExpectedUser $User -HomeExists:$false -HomeChecked:$false
+    if ($parsed.Status -eq "DIAGNOSTIC_ERROR" -or $parsed.Status -eq "ROOT_REJECTED" -or $parsed.Status -eq "NOT_FOUND") {
+        return $parsed
     }
-    return $result
+    if ($parsed.Status -ne "PARSED" -and -not $parsed.Exists) {
+        $parsed.Status = "DIAGNOSTIC_ERROR"
+        $parsed.Detail = "unexpected_parse_state"
+        $parsed.DefectConfirmed = $false
+        return $parsed
+    }
+    $home = [string]$parsed.Home
+    if ([string]::IsNullOrWhiteSpace($home)) {
+        # Empty home is a confirmed defect once passwd parsed cleanly.
+        return (ConvertFrom-WslPasswdRecord -Record $line -ExpectedUser $User -HomeExists:$false -HomeChecked:$true)
+    }
+    $homeExists = $false
+    try {
+        & wsl.exe -d $Name --exec test -d $home 2>$null | Out-Null
+        $homeExists = ($LASTEXITCODE -eq 0)
+    } catch {
+        Write-KeepLog "Get-WslLinuxUserDiagnosis: test -d failed user=$User home=$home err=$($_.Exception.Message)" -Level "ERROR" -Stage "WSL_USER"
+        $parsed.Status = "DIAGNOSTIC_ERROR"
+        $parsed.Ok = $false
+        $parsed.DefectConfirmed = $false
+        $parsed.FixableHome = $false
+        $parsed.FixableShell = $false
+        $parsed.Detail = "home_probe_exception"
+        return $parsed
+    }
+    return (ConvertFrom-WslPasswdRecord -Record $line -ExpectedUser $User -HomeExists:$homeExists -HomeChecked:$true)
 }
 
 function Get-WslEffectiveDefaultUser {
@@ -1917,8 +2057,9 @@ function New-WslLinuxUser {
 
 function Repair-WslLinuxUser {
     <#
-      Auto-repair an existing account (home/shell/groups). Never clears passwords.
-      Does not change UID (unsafe). Returns $true only when Test-WslLinuxUserValid passes.
+      Auto-repair ONLY when diagnosis positively confirmed a fixable defect
+      (missing home and/or empty shell). Never mutates on DIAGNOSTIC_ERROR.
+      Never clears passwords. Does not change UID.
     #>
     param(
         [string]$Name,
@@ -1927,11 +2068,26 @@ function Repair-WslLinuxUser {
     )
     if (-not $Name -or -not $User -or $User -eq "root") { return $false }
     $diag = Get-WslLinuxUserDiagnosis -Name $Name -User $User
-    if (-not $diag.Exists) {
+    if ($diag.Status -eq "DIAGNOSTIC_ERROR" -or $diag.Status -eq "PARSED") {
+        Write-KeepLog "Repair-WslLinuxUser: refuse mutate on diagnostic_error user=$User detail=$($diag.Detail)" -Level "WARN" -Stage "WSL_USER"
+        return $false
+    }
+    if ($diag.Status -eq "VALID" -or $diag.Ok) { return $true }
+    if ($diag.Status -eq "NOT_FOUND" -or -not $diag.Exists) {
         Write-KeepLog "Repair-WslLinuxUser: user missing user=$User" -Stage "WSL_USER"
         return $false
     }
-    if ($diag.Ok) { return $true }
+    if (-not $diag.DefectConfirmed) {
+        Write-KeepLog "Repair-WslLinuxUser: no confirmed defect user=$User status=$($diag.Status) detail=$($diag.Detail)" -Level "WARN" -Stage "WSL_USER"
+        return $false
+    }
+    if (-not $diag.FixableHome -and -not $diag.FixableShell) {
+        Write-KeepLog "Repair-WslLinuxUser: defect not auto-fixable user=$User detail=$($diag.Detail)" -Level "ERROR" -Stage "WSL_USER"
+        if (-not $Quiet) {
+            Write-OtaconSay ("I found a real account issue on {0}, but it isn't safe to auto-fix ({1})." -f $User, $diag.Detail) -Mood "warn" -NoType
+        }
+        return $false
+    }
     if (-not $diag.UidOk) {
         Write-KeepLog "Repair-WslLinuxUser: uid not repairable user=$User uid=$($diag.Uid) detail=$($diag.Detail)" -Level "ERROR" -Stage "WSL_USER"
         if (-not $Quiet) {
@@ -1941,8 +2097,8 @@ function Repair-WslLinuxUser {
     }
     if (-not $Quiet) {
         Write-OtaconSay ("Checking user {0}..." -f $User) -Mood "work" -NoType
-        if (-not $diag.HomeOk) { Write-OtaconSay "Creating/fixing home directory..." -Mood "work" -NoType }
-        if (-not $diag.ShellOk) { Write-OtaconSay "Verifying shell..." -Mood "work" -NoType }
+        if ($diag.FixableHome) { Write-OtaconSay "Creating/fixing home directory..." -Mood "work" -NoType }
+        if ($diag.FixableShell) { Write-OtaconSay "Verifying shell..." -Mood "work" -NoType }
     }
     Show-WorkingPanel -Step 5 -StepName "REPAIRING LINUX USER" -Detail ("Repairing account {0}" -f $User) -Started (Get-Date) -Typical "under a minute"
 
@@ -1953,7 +2109,7 @@ function Repair-WslLinuxUser {
         ("USER_NAME='{0}'" -f $escUser),
         'id "$USER_NAME" >/dev/null 2>&1 || { echo "OTACON_USER_REPAIR_FAIL=missing"; exit 1; }',
         'uid="$(id -u "$USER_NAME")"',
-        'if [ -z "$uid" ] || [ "$uid" -lt 1000 ] || [ "$uid" -ge 65534 ]; then',
+        'if [ -z "$uid" ] || [ "$uid" -eq 0 ]; then',
         '  echo "OTACON_USER_REPAIR_FAIL=uid:$uid"',
         '  exit 2',
         'fi',
@@ -1970,12 +2126,9 @@ function Repair-WslLinuxUser {
         'fi',
         'chown -R "$USER_NAME":"$USER_NAME" "$HOME_DIR" 2>/dev/null || chown "$USER_NAME":"$USER_NAME" "$HOME_DIR" || true',
         'shell="$(getent passwd "$USER_NAME" | cut -d: -f7)"',
-        'case "$shell" in',
-        '  */bash|*/sh|*/zsh|*/fish) ;;',
-        '  *)',
-        '    if [ -x /bin/bash ]; then chsh -s /bin/bash "$USER_NAME" >/dev/null 2>&1 || usermod -s /bin/bash "$USER_NAME"; fi',
-        '    ;;',
-        'esac',
+        'if [ -z "$shell" ]; then',
+        '  if [ -x /bin/bash ]; then chsh -s /bin/bash "$USER_NAME" >/dev/null 2>&1 || usermod -s /bin/bash "$USER_NAME"; fi',
+        'fi',
         'for g in sudo adm video render plugdev users audio cdrom dip docker; do',
         '  if getent group "$g" >/dev/null 2>&1; then usermod -aG "$g" "$USER_NAME" || true; fi',
         'done',
@@ -2003,8 +2156,10 @@ function Ensure-WslTargetUser {
       Resolve install target user with separate A/B states:
         A) account validity (exists, not root, home/shell)
         B) effective default (`wsl -d Distro --exec id -un` == target)
-      Creates the account only when missing. Auto-repairs home/shell when invalid.
-      Never clears an existing password. Does not recreate a valid account.
+      Creates the account only when NOT_FOUND.
+      Auto-repairs ONLY on DefectConfirmed fixable issues.
+      DIAGNOSTIC_ERROR / UNKNOWN => leave account unchanged (no create/repair/fallback).
+      Never clears an existing password.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -2014,7 +2169,7 @@ function Ensure-WslTargetUser {
     )
     if (-not (Ensure-WslDistroRunning -Name $Name)) {
         Write-KeepLog "Ensure-WslTargetUser: distro not running name=$Name" -Level "ERROR" -Stage "WSL_USER"
-        return @{ User = ""; AccountValid = $false; DefaultOk = $false; Error = "distro_not_running" }
+        return @{ User = ""; AccountValid = $false; DefaultOk = $false; Error = "distro_not_running"; DiagnosticError = $false }
     }
     $script:WslUserNeededRepair = $false
 
@@ -2025,78 +2180,107 @@ function Ensure-WslTargetUser {
     }
 
     $candidate = $preferred
-    if (-not (Test-WslUserExists -Name $Name -User $preferred)) {
+    $diag = Get-WslLinuxUserDiagnosis -Name $Name -User $candidate
+
+    # UNKNOWN != BROKEN: never mutate on parser/probe failure.
+    if ($diag.Status -eq "DIAGNOSTIC_ERROR") {
+        Write-KeepLog "Ensure-WslTargetUser: DIAGNOSTIC_ERROR user=$candidate detail=$($diag.Detail) - no mutation" -Level "ERROR" -Stage "WSL_USER"
+        if (-not $Quiet) {
+            Write-OtaconSay "I couldn't verify this safely." -Mood "alert"
+            Write-OtaconSay "I'm leaving your Linux account unchanged." -Mood "warn" -NoType
+        }
+        return @{
+            User             = $candidate
+            AccountValid     = $false
+            DefaultOk        = $false
+            Error            = "diagnostic_error"
+            DiagnosticError  = $true
+            Detail           = $diag.Detail
+        }
+    }
+
+    if ($diag.Status -eq "NOT_FOUND") {
+        # Preferred missing: reuse another positively VALID account if present.
         $alt = Get-WslDefaultUser -Name $Name
         if ($alt -and $alt -ne "root" -and (Test-WslLinuxUserValid -Name $Name -User $alt)) {
             Write-KeepLog "Ensure-WslTargetUser: preferred missing; reusing valid existing user=$alt" -Stage "WSL_USER"
             $candidate = $alt
+            $diag = Get-WslLinuxUserDiagnosis -Name $Name -User $candidate
         }
     }
 
-    # --- State A: account validity (create or auto-repair) ---
-    if (-not (Test-WslLinuxUserValid -Name $Name -User $candidate)) {
-        if (Test-WslUserExists -Name $Name -User $candidate) {
-            Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_INVALID user=$candidate - autopilot repair" -Level "WARN" -Stage "WSL_USER"
-            $script:WslUserNeededRepair = $true
+    if ($diag.Status -eq "DIAGNOSTIC_ERROR") {
+        Write-KeepLog "Ensure-WslTargetUser: DIAGNOSTIC_ERROR after alt resolve user=$candidate detail=$($diag.Detail)" -Level "ERROR" -Stage "WSL_USER"
+        if (-not $Quiet) {
+            Write-OtaconSay "I couldn't verify this safely." -Mood "alert"
+            Write-OtaconSay "I'm leaving your Linux account unchanged." -Mood "warn" -NoType
+        }
+        return @{
+            User             = $candidate
+            AccountValid     = $false
+            DefaultOk        = $false
+            Error            = "diagnostic_error"
+            DiagnosticError  = $true
+            Detail           = $diag.Detail
+        }
+    }
+
+    # --- State A: create only when NOT_FOUND; repair only when DefectConfirmed ---
+    if ($diag.Status -eq "VALID") {
+        Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_VALID user=$candidate uid=$($diag.Uid) home=$($diag.Home) shell=$($diag.Shell) (password untouched)" -Stage "WSL_USER"
+    } elseif ($diag.Status -eq "NOT_FOUND") {
+        Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_MISSING user=$candidate - creating" -Stage "WSL_USER"
+        $script:WslUserNeededRepair = $true
+        if (-not $Quiet) { Write-OtaconSay ("Creating Linux user '{0}'..." -f $candidate) -Mood "work" -NoType }
+        if (-not (New-WslLinuxUser -Name $Name -User $candidate)) {
+            Write-KeepLog "Ensure-WslTargetUser: create failed user=$candidate" -Level "ERROR" -Stage "WSL_USER"
+            return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_create_failed"; DiagnosticError = $false }
+        }
+        [void](Set-WslDefaultUser -Name $Name -User $candidate -EnsureGroups)
+        try { & wsl.exe --terminate $Name 2>$null | Out-Null } catch {}
+        Start-Sleep -Seconds 2
+        [void](Ensure-WslDistroRunning -Name $Name)
+        $diag = Get-WslLinuxUserDiagnosis -Name $Name -User $candidate
+        if ($diag.Status -eq "DIAGNOSTIC_ERROR") {
             if (-not $Quiet) {
-                Write-OtaconSay "Linux account setup needs attention." -Mood "warn" -NoType
-                Write-OtaconSay "I'm repairing it now..." -Mood "work"
+                Write-OtaconSay "I couldn't verify this safely." -Mood "alert"
+                Write-OtaconSay "I'm leaving your Linux account unchanged." -Mood "warn" -NoType
             }
-            $repaired = $false
-            for ($attempt = 1; $attempt -le $MaxRepairAttempts; $attempt++) {
-                Write-KeepLog "Ensure-WslTargetUser: repair attempt=$attempt/$MaxRepairAttempts user=$candidate" -Stage "WSL_USER"
-                if (Repair-WslLinuxUser -Name $Name -User $candidate -Quiet:$Quiet) {
-                    $repaired = $true
-                    break
-                }
-                Start-Sleep -Seconds 1
-            }
-            if (-not $repaired) {
-                # Preferred user unrepairable (e.g. bad uid) - try a healthy alternate or create otacon.
-                $alt = Get-WslDefaultUser -Name $Name
-                if ($alt -and $alt -ne $candidate -and $alt -ne "root" -and (Test-WslLinuxUserValid -Name $Name -User $alt)) {
-                    Write-KeepLog "Ensure-WslTargetUser: falling back to valid alternate user=$alt" -Stage "WSL_USER"
-                    if (-not $Quiet) { Write-OtaconSay ("I'll use the healthy Linux account '{0}' instead." -f $alt) -Mood "work" -NoType }
-                    $candidate = $alt
-                } elseif ($candidate -ne "otacon" -and -not (Test-WslUserExists -Name $Name -User "otacon")) {
-                    Write-KeepLog "Ensure-WslTargetUser: creating fallback user=otacon" -Stage "WSL_USER"
-                    if (-not $Quiet) { Write-OtaconSay "Creating a fresh Linux account 'otacon' so we can continue..." -Mood "work" -NoType }
-                    if (New-WslLinuxUser -Name $Name -User "otacon") {
-                        $candidate = "otacon"
-                        [void](Set-WslDefaultUser -Name $Name -User $candidate -EnsureGroups)
-                        try { & wsl.exe --terminate $Name 2>$null | Out-Null } catch {}
-                        Start-Sleep -Seconds 2
-                        [void](Ensure-WslDistroRunning -Name $Name)
-                    } else {
-                        return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid" }
-                    }
-                } else {
-                    return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid" }
-                }
-            }
-        } else {
-            Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_MISSING user=$candidate - creating" -Stage "WSL_USER"
-            $script:WslUserNeededRepair = $true
-            if (-not $Quiet) { Write-OtaconSay ("Creating Linux user '{0}'..." -f $candidate) -Mood "work" -NoType }
-            if (-not (New-WslLinuxUser -Name $Name -User $candidate)) {
-                Write-KeepLog "Ensure-WslTargetUser: create failed user=$candidate" -Level "ERROR" -Stage "WSL_USER"
-                return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_create_failed" }
-            }
-            # Groups + default for brand-new accounts only
-            [void](Set-WslDefaultUser -Name $Name -User $candidate -EnsureGroups)
-            try { & wsl.exe --terminate $Name 2>$null | Out-Null } catch {}
-            Start-Sleep -Seconds 2
-            [void](Ensure-WslDistroRunning -Name $Name)
+            return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "diagnostic_error"; DiagnosticError = $true; Detail = $diag.Detail }
         }
+    } elseif ($diag.Status -eq "INVALID" -and $diag.DefectConfirmed) {
+        Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_INVALID user=$candidate detail=$($diag.Detail) - autopilot repair" -Level "WARN" -Stage "WSL_USER"
+        $script:WslUserNeededRepair = $true
+        if (-not $Quiet) {
+            Write-OtaconSay "Linux account setup needs attention." -Mood "warn" -NoType
+            Write-OtaconSay "I'm repairing it now..." -Mood "work"
+        }
+        $repaired = $false
+        for ($attempt = 1; $attempt -le $MaxRepairAttempts; $attempt++) {
+            Write-KeepLog "Ensure-WslTargetUser: repair attempt=$attempt/$MaxRepairAttempts user=$candidate" -Stage "WSL_USER"
+            if (Repair-WslLinuxUser -Name $Name -User $candidate -Quiet:$Quiet) {
+                $repaired = $true
+                break
+            }
+            Start-Sleep -Seconds 1
+        }
+        if (-not $repaired) {
+            return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid"; DiagnosticError = $false; Detail = $diag.Detail }
+        }
+        $diag = Get-WslLinuxUserDiagnosis -Name $Name -User $candidate
     } else {
-        Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_VALID user=$candidate (not recreated; password untouched)" -Stage "WSL_USER"
+        Write-KeepLog "Ensure-WslTargetUser: unexpected status=$($diag.Status) user=$candidate detail=$($diag.Detail) - no mutation" -Level "ERROR" -Stage "WSL_USER"
+        return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "diagnostic_error"; DiagnosticError = $true; Detail = $diag.Detail }
     }
 
-    if (-not (Test-WslLinuxUserValid -Name $Name -User $candidate)) {
-        return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid" }
+    if ($diag.Status -ne "VALID") {
+        if ($diag.Status -eq "DIAGNOSTIC_ERROR") {
+            return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "diagnostic_error"; DiagnosticError = $true; Detail = $diag.Detail }
+        }
+        return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid"; DiagnosticError = $false; Detail = $diag.Detail }
     }
 
-    # --- State B: effective default-user (auto-fix) ---
+    # --- State B: effective default-user (auto-fix only after VALID account) ---
     $defaultOk = Test-WslEffectiveDefaultUser -Name $Name -User $candidate
     if (-not $defaultOk) {
         Write-KeepLog "Ensure-WslTargetUser: DEFAULT_MISMATCH want=$candidate effective=$(Get-WslEffectiveDefaultUser -Name $Name)" -Stage "WSL_USER"
@@ -2107,7 +2291,6 @@ function Ensure-WslTargetUser {
         }
         $defaultOk = Ensure-WslEffectiveDefaultUser -Name $Name -User $candidate
         if (-not $defaultOk) {
-            # Second bounded attempt
             Start-Sleep -Seconds 1
             if (-not $Quiet) { Write-OtaconSay "Verifying identity..." -Mood "work" -NoType }
             $defaultOk = Ensure-WslEffectiveDefaultUser -Name $Name -User $candidate
@@ -2118,7 +2301,7 @@ function Ensure-WslTargetUser {
 
     if (-not $defaultOk) {
         Write-KeepLog "Ensure-WslTargetUser: effective default still not $candidate" -Level "ERROR" -Stage "WSL_USER"
-        return @{ User = $candidate; AccountValid = $true; DefaultOk = $false; Error = "default_mismatch" }
+        return @{ User = $candidate; AccountValid = $true; DefaultOk = $false; Error = "default_mismatch"; DiagnosticError = $false }
     }
 
     if (-not $Quiet) {
@@ -2130,7 +2313,7 @@ function Ensure-WslTargetUser {
     if ($script:WslUserNeededRepair -and -not $Quiet) {
         Write-OtaconSay "Back on track. Continuing installation..." -Mood "ok"
     }
-    return @{ User = $candidate; AccountValid = $true; DefaultOk = $true; Error = "" }
+    return @{ User = $candidate; AccountValid = $true; DefaultOk = $true; Error = ""; DiagnosticError = $false }
 }
 
 function Format-StartProcessArgumentList {
@@ -2576,9 +2759,17 @@ function Step-InstallOtacon {
     # Stage 5 narrates; keep this call quiet to avoid duplicate dialogue.
     $prov = Ensure-WslTargetUser -Name $Name -Quiet
     $targetUser = [string]$prov.User
+    if ($prov.DiagnosticError -or $prov.Error -eq "diagnostic_error") {
+        Write-KeepLog "WSL DIAGNOSTIC_ERROR user='$targetUser' detail=$($prov.Detail) - no mutation" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        $act = Show-SetupNeedsHelp -Step "installing otacon (linux account verify)" -PlainError (
+            "I couldn't verify the Linux account safely, so I left it unchanged. Technical detail: $($prov.Detail). Log: $LogFile"
+        )
+        if ($act -eq "retry") { return 100 }
+        return 101
+    }
     if (-not $prov.AccountValid) {
         $acctErr = switch ($prov.Error) {
-            "account_invalid" { "Linux user '$targetUser' still failed account checks (home/shell/uid) after automatic repair. The password was not changed." }
+            "account_invalid" { "Linux user '$targetUser' still failed account checks after automatic repair of a confirmed defect. The password was not changed." }
             "account_create_failed" { "Could not create Linux user '$targetUser' in $Name after automatic attempts." }
             "distro_not_running" { "WSL distro '$Name' is not running, so the Linux account could not be checked." }
             default { "Linux account for OtaconsKeep is missing or invalid in '$Name' (got='$targetUser') after automatic repair." }
@@ -3029,11 +3220,12 @@ function Start-GuidedSetup {
         }
     }
     if (-not ($prov.AccountValid -and $prov.DefaultOk)) {
-        # Autopilot already exhausted create/repair/default fixes inside Ensure-WslTargetUser.
-        $plain = if (-not $prov.AccountValid) {
-            "Linux account setup could not be repaired automatically (account checks still failing for '$($prov.User)')."
+        if ($prov.DiagnosticError -or $prov.Error -eq "diagnostic_error") {
+            $plain = "I couldn't verify the Linux account safely, so I left it unchanged. Detail: $($prov.Detail)"
+        } elseif (-not $prov.AccountValid) {
+            $plain = "Linux account setup could not be repaired automatically (confirmed checks still failing for '$($prov.User)')."
         } else {
-            "Linux account '$($prov.User)' is valid, but the WSL default user still could not be set automatically."
+            $plain = "Linux account '$($prov.User)' is valid, but the WSL default user still could not be set automatically."
         }
         $act = Show-SetupNeedsHelp -Step "preparing linux user" -PlainError $plain
         if ($act -eq "retry") { return (Start-GuidedSetup) }

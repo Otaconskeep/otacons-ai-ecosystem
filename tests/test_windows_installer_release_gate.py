@@ -171,11 +171,14 @@ def test_P0_autopilot_otacon_ui():
     assert "function Show-OtaconRain" in ASSISTANT
     assert "function Write-OtaconSay" in ASSISTANT
     assert "function Repair-WslLinuxUser" in ASSISTANT
+    assert "function ConvertFrom-WslPasswdRecord" in ASSISTANT
     assert "You don't need to know Linux" in ASSISTANT or "you don't need to know Linux" in ASSISTANT
     assert "I'm handling the installation" in ASSISTANT or "I am handling the installation" in ASSISTANT
     assert "I'm repairing it now" in ASSISTANT
+    assert "I'm leaving your Linux account unchanged" in ASSISTANT
     assert "Back on track. Continuing installation" in ASSISTANT
     assert "Continuing - Stage 6 will retry" not in ASSISTANT
+    assert "creating fallback user=otacon" not in ASSISTANT
     assert "Choice [I/F/X]" not in ASSISTANT
     assert "Choice [R/L]" not in ASSISTANT
     assert "press I to continue setup" not in ASSISTANT
@@ -185,6 +188,11 @@ def test_P0_autopilot_otacon_ui():
     help_fn = ASSISTANT[help_start:help_end]
     assert "Choice [R/O/X]" not in help_fn
     assert "ENTER" in help_fn
+    diag_start = ASSISTANT.find("function Get-WslLinuxUserDiagnosis")
+    diag_end = ASSISTANT.find("function Get-WslEffectiveDefaultUser", diag_start)
+    diag_fn = ASSISTANT[diag_start:diag_end]
+    assert "--exec getent passwd" in diag_fn
+    assert "bash -lc" not in diag_fn
 
 
 def test_P1_doctor_and_uninstall_cover_tts():
