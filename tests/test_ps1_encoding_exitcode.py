@@ -41,7 +41,10 @@ def main() -> int:
     fetch = (deploy / "bootstrap-fetch.ps1").read_text(encoding="utf-8-sig")
     repair = (deploy / "repair-otacon-core.ps1").read_text(encoding="utf-8-sig")
 
-    must("function Test-OtaconPs1Parses" in assistant, "assistant has ParseFile preflight", fails)
+    must("function ConvertTo-OtaconPs51SafeFile" in assistant, "assistant can rewrite helpers to PS 5.1-safe encoding", fails)
+    must("ConvertTo-OtaconPs51SafeFile -Path \$ps1" in assistant
+         or 'ConvertTo-OtaconPs51SafeFile -Path $ps1' in assistant,
+         "repair path rewrites helper before parse", fails)
     must("Parser]::ParseFile" in assistant, "assistant calls Language.Parser.ParseFile", fails)
     must("Start-Process -FilePath \"powershell.exe\"" in assistant
          or "Start-Process -FilePath 'powershell.exe'" in assistant,
