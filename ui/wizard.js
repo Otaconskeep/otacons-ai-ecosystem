@@ -311,6 +311,7 @@ async function showHome(){
   state.scan=scanPack.data;
   state.scanStatus=scanPack;
   const chatOk=capReady('chat'), ttsOk=capReady('tts'), sttOk=capReady('stt');
+  const vtOk=capStatus('voice_trainer')==='ready';
   const model=(state.capabilities&&state.capabilities.llm_model)||'—';
   const hwHome=scanPack.hardware||{};
   const gpuDet=scanPack.gpu_detection||{};
@@ -478,10 +479,10 @@ async function showHome(){
         <p class="svc-desc">Model ${escapeHtml(String(model))} · STT ${sttOk?'ready':'off'} · GPU ${escapeHtml(gpuHomeLine)}${expOn?' · Expansion on':''}</p>
         <span class="svc-pill ${chatOk&&ttsOk?'ok':'warn'}">${chatOk&&ttsOk?'HEALTHY':'CHECK SERVICES'}</span>
       </button>
-      <button type="button" class="svc svc-off" disabled>
+      <button type="button" class="svc ${vtOk?'':'svc-off'}" ${vtOk?'onclick="openVoiceTrainer()"':'disabled'}>
         <div class="svc-top"><div class="svc-ico">VT</div><div class="svc-name">Voice Trainer</div></div>
-        <p class="svc-desc">${escapeHtml((state.capabilities&&state.capabilities.voice_trainer_note)||'Genome Voice Trainer is Keep-only — not in public Expansion. Piper TTS does not need it.')}</p>
-        <span class="svc-pill warn">KEEP ONLY</span>
+        <p class="svc-desc">${escapeHtml((state.capabilities&&state.capabilities.voice_trainer_note)||(vtOk?'Genome Voice Trainer (premium) on :8765.':'Genome is a premium feature — not running here. Piper TTS does not need it.'))}</p>
+        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtOk?'OPEN GENOME':'PREMIUM'}</span>
       </button>
       <button type="button" class="svc svc-off" disabled>
         <div class="svc-top"><div class="svc-ico">IMG</div><div class="svc-name">Images / Video</div></div>
@@ -832,6 +833,7 @@ async function showChat(){
   const voiceOk=chatOk&&ttsOk;
   const model=(state.capabilities&&state.capabilities.llm_model)||state.lastModel||'—';
   const gpuLine=formatGpuLine(scanPack);
+  const vtOk=capStatus('voice_trainer')==='ready';
   const voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
   const roster=state.roster&&state.roster.length?state.roster:[{id:aid,display_name:currentAgentName()}];
   const agentBtns=roster.map(a=>{
@@ -945,8 +947,8 @@ async function showChat(){
       </div>
       <div class="cc-panel">
         <h2>Voice Trainer</h2>
-        <p class=muted style="font-size:10px;margin:0 0 8px">Genome Voice Trainer is Keep-only — not part of public Expansion. Piper TTS on :10200 does not need it.</p>
-        <p class=muted style="font-size:10px;margin:0"><span class="svc-pill warn">KEEP ONLY</span></p>
+        <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Genome Voice Trainer (premium) — training on :8765, not inside Codec chat.':'Genome is a premium feature. Not running on this install — Piper TTS on :10200 does not need it.'}</p>
+        ${vtOk?'<button type=button class="cc-btn" onclick="openVoiceTrainer()">Open Genome (8765)</button>':'<p class=muted style="font-size:10px;margin:0"><span class="svc-pill warn">PREMIUM</span></p>'}
       </div>
       <div class="cc-panel">
         <h2>How to run</h2>
@@ -998,7 +1000,16 @@ async function openCurrentAgentRoom(){
 }
 
 async function openVoiceTrainer(){
-  alert('Genome Voice Trainer is Keep-only — not part of public Expansion/Lite. Piper TTS does not need it.');
+  const url=(state.capabilities&&state.capabilities.voice_trainer_url)||'';
+  if(!url || capStatus('voice_trainer')!=='ready'){
+    alert('Genome Voice Trainer is a premium feature and is not running on this install (:8765). Piper TTS does not need it.');
+    return;
+  }
+  try{
+    const probe=await fetch(url,{mode:'no-cors',cache:'no-store'});
+    void probe;
+  }catch(_e){}
+  window.open(url,'_blank','noopener');
 }
 
 async function assignVoice(vid){

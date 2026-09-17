@@ -410,9 +410,8 @@ def _capability_snapshot() -> dict:
     caps['image'] = 'not_configured'
     caps['video'] = 'not_configured'
 
-    # Genome Voice Trainer is Keep-only (Hal product split). Public Expansion/Lite
-    # must never advertise Open Genome — leftover dirs or accidental :8765 listeners
-    # are not part of this build's offered surface.
+    # Genome Voice Trainer is a premium feature (not Lite). Offer Open Genome only
+    # when :8765 is actually listening — never from a leftover folder alone.
     vt_home = Path.home() / 'otacon-voice-trainer'
     vt_dir = vt_home.is_dir() and any(vt_home.iterdir()) if vt_home.is_dir() else False
     vt_live = False
@@ -422,13 +421,14 @@ def _capability_snapshot() -> dict:
             vt_live = True
     except OSError:
         vt_live = False
-    caps['voice_trainer'] = 'keep_only'
+    caps['voice_trainer'] = 'ready' if vt_live else 'premium'
     caps['voice_trainer_path'] = str(vt_home) if vt_dir else ''
     caps['voice_trainer_listening'] = vt_live
-    caps['voice_trainer_url'] = ''
+    caps['voice_trainer_url'] = 'http://127.0.0.1:8765/' if vt_live else ''
     caps['voice_trainer_note'] = (
-        'Genome Voice Trainer is Keep-only — not part of public Expansion/Lite. '
-        'Piper TTS on :10200 does not need it.'
+        'Genome Voice Trainer is a premium feature. '
+        + ('Open on :8765 for Piper cloning/training.' if vt_live
+           else 'Not running on this install — Piper TTS on :10200 does not need it.')
     )
     caps['llm_model'] = ''
     try:
