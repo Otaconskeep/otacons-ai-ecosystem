@@ -27,6 +27,11 @@ def test_expansion_windows_installer_contracts():
     must(b"NOT ready yet" not in BAT and b"PLACEHOLDER" not in BAT, "Setup bat is not a placeholder", fails)
     must(b"install-otacon-expansion.ps1" in BAT, "Setup bat launches Expansion PS1", fails)
     must(b"bootstrap-fetch.ps1" in BAT, "Setup bat refreshes versioned bundle", fails)
+    must(b'-DestRoot "%INST%"' in BAT, "Setup bat passes DestRoot to bootstrap-fetch", fails)
+    must(b'-LogFile "%LOGFILE%"' in BAT, "Setup bat passes LogFile to bootstrap-fetch", fails)
+    must(b'-RawBase "%RAW%"' in BAT, "Setup bat passes RawBase to bootstrap-fetch", fails)
+    must(b"-InstallRoot" not in BAT, "Setup bat does not pass invalid InstallRoot", fails)
+    must(b'-Branch "%BRANCH%"' not in BAT, "Setup bat does not pass invalid Branch to fetch", fails)
     must(b"pause >nul" in BAT and b"exit /b" in BAT, "Setup bat stays open on failure", fails)
 
     must(PS1.startswith(b"\xef\xbb\xbf"), "Expansion PS1 has UTF-8 BOM", fails)

@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "5b1f52afd870b4354f71416d265a850a8caac79a",
+  "commit": "96c858e0e67566655613bda3bba341b8536bc07f",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -24,8 +24,8 @@
     },
     {
       "path": "OtaconExpansion-Setup.bat",
-      "sha256": "b9778c6062f0bb29ef36f715435ec38c29ab5dc559f011a925313a0874ee4330",
-      "bytes": 5629
+      "sha256": "7ca52cde2f1d895b43451787b6c705451e1887d5b0732ea7f97acac14c816635",
+      "bytes": 6730
     },
     {
       "path": "Reinstall-Otacon.bat",
