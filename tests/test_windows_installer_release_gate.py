@@ -67,6 +67,8 @@ def test_C3_honest_exit_code_never_blank_success():
     assert "pinned local installer" in setup
     fetch = (ROOT / "deploy" / "bootstrap-fetch.ps1").read_text(encoding="utf-8", errors="replace")
     assert "installer-revision.txt" in fetch
+    assert "repair-otacon-core.ps1" in fetch
+    assert "MISSING REQUIRED" in fetch or "required helpers present" in fetch
 
 
 def test_C2_wsl_phase_uses_file_script_and_exit_marker():

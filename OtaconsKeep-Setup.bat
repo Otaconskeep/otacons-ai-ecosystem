@@ -165,6 +165,15 @@ goto USE_PINNED_LOCAL
 :USE_PINNED_LOCAL
 call :LOG "pinned local installer present; skipping refetch - pass --update to refresh from GitHub"
 for /f "usebackq delims=" %%R in ("%INST%\deploy\installer-revision.txt") do call :LOG "pinned revision=%%R"
+REM Stale pin without repair helper must not skip fetch (update-path defect).
+if not exist "%INST%\deploy\repair-otacon-core.ps1" (
+  call :LOG "pinned tree missing repair-otacon-core.ps1 - forcing refetch"
+  goto NEED_FETCH_FORCE
+)
+if not exist "%ASSISTANT%" (
+  call :LOG "pinned tree missing assistant - forcing refetch"
+  goto NEED_FETCH_FORCE
+)
 goto FETCH_VERIFY_OK
 :NEED_FETCH_FORCE
 echo.
@@ -225,10 +234,21 @@ if /I "!CHOICE!"=="R" goto FETCH_RETRY
 exit /b 1
 
 :FETCH_FILES_OK
-if exist "%ASSISTANT%" goto FETCH_VERIFY_OK
+if not exist "%ASSISTANT%" goto FETCH_ASSISTANT_MISSING
+if not exist "%INST%\deploy\repair-otacon-core.ps1" goto FETCH_REPAIR_MISSING
+goto FETCH_VERIFY_OK
+:FETCH_ASSISTANT_MISSING
 call :LOG "ASSISTANT missing after fetch"
 set "LAST_FAIL_CMD=verify deploy\windows-setup-assistant.ps1 exists"
 set "LAST_FAIL_REASON=Download finished without the setup assistant file."
+call :CAPTURE_LAST_OUTPUT
+call :SHOW_SETUP_STOPPED 2
+if /I "!CHOICE!"=="R" goto FETCH_RETRY
+exit /b 1
+:FETCH_REPAIR_MISSING
+call :LOG "repair-otacon-core.ps1 missing after fetch"
+set "LAST_FAIL_CMD=verify deploy\repair-otacon-core.ps1 exists"
+set "LAST_FAIL_REASON=Download finished without the Linux app update helper. Update cannot succeed without it."
 call :CAPTURE_LAST_OUTPUT
 call :SHOW_SETUP_STOPPED 2
 if /I "!CHOICE!"=="R" goto FETCH_RETRY

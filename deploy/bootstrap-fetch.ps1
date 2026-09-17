@@ -93,6 +93,7 @@ $deployOnly = @(
     "deploy/installer-revision.txt",
     "deploy/windows-setup-assistant.ps1",
     "deploy/repair-otacon-core.ps1",
+    "deploy/fix-otacon-gpu.ps1",
     "deploy/get-fix-codec.cmd",
     "deploy/find-ubuntu.ps1",
     "deploy/install-wake-task.ps1",
@@ -247,4 +248,30 @@ if ($failures.Count -gt 0) {
 Write-Log "FETCH OK all requested files"
 Write-Host ""
 Write-Host "  All setup files downloaded." -ForegroundColor Green
+
+# Required helpers — missing these caused "Windows updated, Linux app did not".
+$required = @(
+    "deploy/windows-setup-assistant.ps1",
+    "deploy/repair-otacon-core.ps1",
+    "deploy/installer-revision.txt",
+    "install_otacon.bat",
+    "install_otacon.sh"
+)
+$missingReq = New-Object System.Collections.Generic.List[string]
+foreach ($rel in $required) {
+    $p = Join-Path $DestRoot ($rel -replace "/", [IO.Path]::DirectorySeparatorChar)
+    if (-not (Test-Path -LiteralPath $p) -or ((Get-Item -LiteralPath $p).Length -lt 40)) {
+        $missingReq.Add($rel)
+        Write-Host "  MISSING REQUIRED: $rel" -ForegroundColor Red
+    }
+}
+if ($missingReq.Count -gt 0) {
+    Write-Log "FETCH FAILED required missing=$($missingReq -join ',')" "ERROR"
+    Write-Host "OTACON_FETCH_FAILED"
+    Write-Host "FAILED_COMMAND=verify required installer helpers present"
+    Write-Host "EXIT_CODE=1"
+    Write-Host ("LAST_ERROR=missing required files: " + ($missingReq -join ", "))
+    exit 1
+}
+Write-Log "required helpers present including repair-otacon-core.ps1"
 exit 0

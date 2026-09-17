@@ -633,8 +633,9 @@ function Get-OtaconOpenUrl {
 
 function Invoke-OtaconCoreRepair {
     <#
-      Revive Core when connection refused / Codec dud / scan hang.
-      Prefer deploy/repair-otacon-core.ps1; falls back to inline wake.
+      Update + revive Linux Otacon app inside WSL.
+      Requires deploy/repair-otacon-core.ps1 (fetched by bootstrap).
+      NEVER treats restart-only / branding-only as update success.
     #>
     param(
         [string]$Name = "",
@@ -643,36 +644,51 @@ function Invoke-OtaconCoreRepair {
     )
     if (-not $Name) { $Name = Get-UbuntuDistroName }
     $ps1 = Join-Path $RepoRoot "deploy\repair-otacon-core.ps1"
-    if (Test-Path -LiteralPath $ps1) {
-        Write-KeepLog "Invoke-OtaconCoreRepair via repair-otacon-core.ps1 distro=$Name" -Stage "REPAIR"
-        $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $ps1, "-Port", "$Port", "-TimeoutSeconds", "45")
-        if ($Name) { $argList += @("-DistroName", $Name) }
-        if ($OpenBrowser) { $argList += "-OpenBrowser" }
-        if ($Codec) { $argList += "-Codec" }
-        & powershell @argList
-        $ok = ($LASTEXITCODE -eq 0)
-        if ($ok) {
-            try {
-                $f = Join-Path $KeepDir "last-otacon-url.txt"
-                if (Test-Path -LiteralPath $f) {
-                    $script:OtaconOpenBase = (Get-Content -LiteralPath $f -TotalCount 1).Trim()
-                }
-            } catch {}
-            # Refresh identity against whatever answered
-            [void](Test-OtaconIdentity)
+    if (-not (Test-Path -LiteralPath $ps1)) {
+        # Last chance: fetch the helper from GitHub raw into place.
+        $raw = if ($RawBase) { "$RawBase/deploy/repair-otacon-core.ps1" } else {
+            "https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/deploy/repair-otacon-core.ps1"
         }
-        return $ok
+        $destDir = Split-Path -Parent $ps1
+        try {
+            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            Write-KeepLog "repair-otacon-core.ps1 missing - downloading $raw" -Level "WARN" -Stage "REPAIR"
+            Invoke-WebRequest -Uri $raw -OutFile $ps1 -UseBasicParsing -TimeoutSec 60
+        } catch {
+            Write-KeepLog "repair-otacon-core.ps1 download failed: $($_.Exception.Message)" -Level "ERROR" -Stage "REPAIR"
+        }
     }
-    Write-KeepLog "repair-otacon-core.ps1 missing - inline wake" -Level "WARN" -Stage "REPAIR"
-    if ($Name) {
-        & wsl.exe -d $Name -u root -- bash -lc "systemctl restart otacon-tts.service 2>/dev/null; systemctl restart otacon.service 2>/dev/null; true" 2>$null | Out-Null
-        Start-Sleep -Seconds 3
+    if (-not (Test-Path -LiteralPath $ps1) -or ((Get-Item -LiteralPath $ps1).Length -lt 200)) {
+        Write-KeepLog "UPDATE FAILED: repair-otacon-core.ps1 missing after fetch attempt" -Level "ERROR" -Stage "REPAIR"
+        Write-OtaconSay "Update helper missing — cannot update the Linux Otacon app. Re-download Setup from the website." -Mood "alert"
+        return $false
     }
-    $id = Test-OtaconIdentity
-    if ($id.ok -and ($OpenBrowser -or $Codec)) {
-        Start-Process (Get-OtaconOpenUrl -Codec:$Codec)
+    Write-KeepLog "Invoke-OtaconCoreRepair via repair-otacon-core.ps1 distro=$Name" -Stage "REPAIR"
+    $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $ps1, "-Port", "$Port", "-TimeoutSeconds", "90")
+    if ($Name) { $argList += @("-DistroName", $Name) }
+    if ($OpenBrowser) { $argList += "-OpenBrowser" }
+    if ($Codec) { $argList += "-Codec" }
+    $targetFile = Join-Path $RepoRoot "deploy\installer-revision.txt"
+    if (Test-Path -LiteralPath $targetFile) {
+        $t = (Get-Content -LiteralPath $targetFile -TotalCount 1 -ErrorAction SilentlyContinue)
+        if ($t) { $argList += @("-TargetRevision", $t.Trim()) }
     }
-    return [bool]$id.ok
+    & powershell @argList
+    $code = [int]$LASTEXITCODE
+    $ok = ($code -eq 0)
+    Write-KeepLog "repair-otacon-core.ps1 exit=$code ok=$ok" -Stage "REPAIR"
+    if ($ok) {
+        try {
+            $f = Join-Path $KeepDir "last-otacon-url.txt"
+            if (Test-Path -LiteralPath $f) {
+                $script:OtaconOpenBase = (Get-Content -LiteralPath $f -TotalCount 1).Trim()
+            }
+        } catch {}
+        [void](Test-OtaconIdentity)
+        return $true
+    }
+    Write-KeepLog "UPDATE FAILED: Linux application revision not proven (exit $code)" -Level "ERROR" -Stage "REPAIR"
+    return $false
 }
 
 function Test-OtaconIdentity {
@@ -3177,17 +3193,34 @@ function Start-GuidedSetup {
     if ($snap.web_health -and -not $script:ForceInstall) {
         $ttsOk = [bool]$snap.tts_ok
         if ($ttsOk) {
-            Save-InstallerComplete
-            Write-OtaconSay "You're already online. Pulling the latest Codec fixes, then opening..." -Mood "ok"
+            Write-OtaconSay "You're already online. Updating the Linux Otacon app to the latest revision..." -Mood "ok"
             $ubuntuOpen = Get-UbuntuDistroName
-            # Soft refresh: git pull + undo GPU-skip patches (no full reinstall needed).
-            if ($ubuntuOpen) { [void](Invoke-OtaconCoreRepair -Name $ubuntuOpen -Codec) }
+            # Soft refresh must PROVE Linux app revision — never brand-only success.
+            $updated = $false
+            if ($ubuntuOpen) {
+                $updated = [bool](Invoke-OtaconCoreRepair -Name $ubuntuOpen -Codec)
+            }
+            if (-not $updated) {
+                Write-KeepLog "READY path: Linux app update failed — not reporting success" -Level "ERROR" -Stage "REPAIR"
+                Write-OtaconSay "Installer scripts were present, but the Linux Otacon application did not update. That is a failed update — not READY." -Mood "alert"
+                Show-Box "UPDATE FAILED" @(
+                    "Windows Setup files may be new,",
+                    "but the Linux Otacon app revision did not change.",
+                    "",
+                    "Download Fix-Otacon-GPU.bat or Reinstall-Otacon.bat",
+                    "from the Otaconskeep website, then try again.",
+                    "",
+                    "Log: $LogFile"
+                ) -Color Red
+                return 1
+            }
+            Save-InstallerComplete
             try { Start-Process (Get-OtaconOpenUrl -Codec) } catch {}
             Show-Box "LINK ESTABLISHED" @(
-                "Otacon is ready.",
+                "Otacon app updated and verified.",
                 (Get-OtaconOpenUrl -Codec),
                 "",
-                "Hard-refresh the browser (Ctrl+Shift+R) if GPU/chat looks stale.",
+                "Hard-refresh the browser (Ctrl+Shift+R).",
                 "You can close this window."
             ) -Color Green
             return 0
