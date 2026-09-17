@@ -574,7 +574,22 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json({'error': 'not found'}, 404)
             except Exception as exc:
                 self.send_json({'error': {'code': 'EVENT_FAILED', 'message': str(exc)}}, 400)
-        elif self.path in ('/api/expansion/jobs/create', '/api/expansion/pages/register'):
+        elif self.path in (
+            '/api/expansion/jobs/create',
+            '/api/expansion/pages/register',
+            '/api/expansion/rex/transition',
+            '/api/expansion/rex/queue',
+            '/api/expansion/rex/discover',
+            '/api/expansion/rex/plan',
+            '/api/expansion/rex/peer-review',
+            '/api/expansion/policy/check',
+            '/api/expansion/rex/tick',
+            '/api/expansion/tools/invoke',
+            '/api/expansion/learning/observe',
+            '/api/expansion/learning/reinforce',
+            '/api/expansion/learning/contradict',
+            '/api/expansion/learning/revise',
+        ):
             try:
                 from expansion.api import handle_expansion_post
                 if not handle_expansion_post(self.path, data, self.send_json):

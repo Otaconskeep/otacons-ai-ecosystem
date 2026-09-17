@@ -129,6 +129,11 @@ async function showHome(){
         <p class="svc-desc">Active jobs, failures, decision queue — Vector ops / Aria command.</p>
         <span class="svc-pill ok">JOBS</span>
       </button>
+      <button type="button" class="svc" onclick="showExpansionSurface('rex')">
+        <div class="svc-top"><div class="svc-ico">REX</div><div class="svc-name">Project REX</div></div>
+        <p class="svc-desc">Autonomous work substrate — discover→verify→close under policy, not approvals.</p>
+        <span class="svc-pill ok">AUTONOMY</span>
+      </button>
       <button type="button" class="svc" onclick="showExpansionSurface('intel')">
         <div class="svc-top"><div class="svc-ico">INT</div><div class="svc-name">Intel / Continuity</div></div>
         <p class="svc-desc">Memories, journals, living dossiers, relationship evidence — Ledger.</p>
@@ -148,6 +153,11 @@ async function showHome(){
         <div class="svc-top"><div class="svc-ico">RPT</div><div class="svc-name">Agent Reports</div></div>
         <p class="svc-desc">Emotion, jobs, journal, diary, living observations with provenance.</p>
         <span class="svc-pill ok">LIVE STATE</span>
+      </button>
+      <button type="button" class="svc" onclick="showExpansionSurface('learning')">
+        <div class="svc-top"><div class="svc-ico">LRN</div><div class="svc-name">Learning Engine</div></div>
+        <p class="svc-desc">Evidence-backed claims — private + shared Keep. Not memory. WHY provenance.</p>
+        <span class="svc-pill ok">LEARNED</span>
       </button>
       <button type="button" class="svc" onclick="showExpansionSurface('rooms')">
         <div class="svc-top"><div class="svc-ico">RM</div><div class="svc-name">Rooms / Pages</div></div>
@@ -770,6 +780,10 @@ async function showExpansionSurface(kind){
   setBodyMode('home');
   let body='';
   try{
+    if(kind==='rex'){
+      await showRexBoard();
+      return;
+    }
     if(kind==='war-room'){
       const d=await apiGet('/api/expansion/war-room');
       const rows=(d.active||[]).concat(d.failed||[]).slice(0,30);
@@ -802,16 +816,49 @@ async function showExpansionSurface(kind){
         const emo=Object.entries(r.emotion||{}).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([k,v])=>`${k}=${v}`).join(', ');
         const j=(r.recent_journal||[])[0];
         const diary=r.latest_diary;
+        const learn=r.learning||{};
+        const priv=(learn.private||[]).slice(0,4);
+        const shared=(learn.shared_keep||[]).slice(0,4);
+        const learnHtml=`<h4>WHAT I'VE LEARNED</h4>`+
+          (priv.length||shared.length
+            ? `<div class="learn-mini">${priv.concat(shared).map(c=>
+                `<div class="learn-claim"><b>${escapeHtml(c.claim)}</b><br><span class="muted">conf ${escapeHtml(String(c.confidence))} · ${escapeHtml(c.scope_label||c.scope)} · ev ${escapeHtml(String(c.evidence_count||0))}</span>
+                <button type=button class="cc-btn ghost" onclick="showLearningWhy('${escapeHtml(c.claim_id)}')">WHY?</button></div>`
+              ).join('')}</div>`
+            : '<p class=muted>No graduated claims yet (observations need repetition).</p>');
         return `<div class=card>
           <b>${escapeHtml(r.display_name)}</b> — ${escapeHtml(r.role)} · ${escapeHtml(r.archetype||'')}
           <p class=muted>Emotion: ${escapeHtml(emo||'—')}</p>
           <p class=muted>Jobs active: ${(r.active_jobs||[]).length} · success ${(r.metrics&&r.metrics.success_rate!=null)?(r.metrics.success_rate*100).toFixed(0)+'%':'n/a'}</p>
           <p><b>JOURNAL</b> ${escapeHtml((j&&j.summary)||'—')}</p>
           <p><b>DIARY</b> ${escapeHtml((diary&&diary.text)||'—')}</p>
+          ${learnHtml}
           <button type=button class="cc-btn ghost" onclick="showEmotionWhy('${escapeHtml(r.agent_id)}','jealousy')">Emotion WHY</button>
           <button type=button class="cc-btn ghost" onclick="showRelWhy('${escapeHtml(r.agent_id)}','muse')">Rel → Muse WHY</button>
         </div>`;
       }).join('')||'<p class=muted>No reports.</p>';
+    } else if(kind==='learning'){
+      const d=await apiGet('/api/expansion/learning');
+      const sum=d.summary||{};
+      const card=(c)=>`<div class="learn-claim card">
+        <div class="svc-top"><div class="svc-name">LEARNED CLAIM</div><span class="svc-pill ok">${escapeHtml(String(c.confidence))}</span></div>
+        <p><b>${escapeHtml(c.claim)}</b></p>
+        <p class=muted>scope: ${escapeHtml(c.scope_label||c.scope)} · type ${escapeHtml(c.learning_type)} · status ${escapeHtml(c.status)}</p>
+        <p class=muted>evidence ${escapeHtml(String(c.evidence_count||0))} (+${escapeHtml(String(c.positive_evidence_count||0))} / −${escapeHtml(String(c.negative_evidence_count||0))}) · contradictions ${escapeHtml(String(c.contradictions||0))}</p>
+        <p class=muted>last updated ${escapeHtml(c.last_updated?new Date(c.last_updated*1000).toISOString():'—')}</p>
+        <button type=button class="cc-btn" onclick="showLearningWhy('${escapeHtml(c.claim_id)}')">WHY?</button>
+      </div>`;
+      const shared=(d.shared_keep||[]).map(card).join('')||'<p class=muted>No shared Keep claims yet.</p>';
+      const privBlocks=Object.entries(d.private_by_agent||{}).map(([aid,rows])=>
+        `<h3>${escapeHtml(aid)} — private</h3>${(rows||[]).map(card).join('')||'<p class=muted>None</p>'}`
+      ).join('')||'<p class=muted>No private agent claims yet.</p>';
+      body=`<h2>Learning Engine</h2>
+        <p class=muted>${escapeHtml(sum.note||'')}</p>
+        <p class=muted>memory ≠ learning · living dossier ≠ learning · emotion ≠ learning · threshold ${escapeHtml(String(sum.pattern_threshold||3))}</p>
+        <p class=muted>shared claims: ${escapeHtml(String(sum.shared_claims||0))} · private: ${escapeHtml(String(sum.private_claims||0))} · curator: ${escapeHtml(sum.curator||'ledger')}</p>
+        <h3>Shared Keep learning</h3>${shared}
+        <h3>Private agent learning</h3>${privBlocks}
+        <div id="learn-why" class="card" style="display:none;margin-top:16px"></div>`;
     } else if(kind==='rooms'){
       const d=await apiGet('/api/expansion/rooms');
       body=`<h2>Room / Page Registry</h2>`+(d.rooms||[]).map(r=>
@@ -861,10 +908,336 @@ async function showRelWhy(src, dst){
   const el=document.getElementById('exp-why');
   if(el){ el.style.display='block'; el.innerHTML=`<b>${escapeHtml(src)} → ${escapeHtml(dst)}</b><pre style="font-size:11px;white-space:pre-wrap">${escapeHtml(JSON.stringify(d,null,2))}</pre>`; }
 }
+async function showLearningWhy(claimId){
+  const d=await apiGet('/api/expansion/learning/why/'+encodeURIComponent(claimId));
+  const html=`<h3>WHY — ${escapeHtml(d.claim||claimId)}</h3>
+    <p class=muted>confidence ${escapeHtml(String(d.confidence))} · status ${escapeHtml(d.status||'')} · contradictions ${escapeHtml(String(d.contradiction_count||0))}</p>
+    <p><b>Supporting observations</b></p>
+    <pre style="font-size:11px;white-space:pre-wrap">${escapeHtml(JSON.stringify(d.supporting_observations||[],null,2))}</pre>
+    <p><b>Contradicting observations</b></p>
+    <pre style="font-size:11px;white-space:pre-wrap">${escapeHtml(JSON.stringify(d.contradicting_observations||[],null,2))}</pre>
+    <p><b>Source events / jobs</b></p>
+    <pre style="font-size:11px;white-space:pre-wrap">${escapeHtml(JSON.stringify(d.source_events_jobs||[],null,2))}</pre>
+    <p><b>Confidence history</b></p>
+    <pre style="font-size:11px;white-space:pre-wrap">${escapeHtml(JSON.stringify(d.confidence_history||[],null,2))}</pre>
+    <p><b>Revision history</b></p>
+    <pre style="font-size:11px;white-space:pre-wrap">${escapeHtml(JSON.stringify(d.revision_history||[],null,2))}</pre>
+    <p class=muted>${escapeHtml((d.separations&&JSON.stringify(d.separations))||d.rule||'')}</p>`;
+  let el=document.getElementById('learn-why')||document.getElementById('exp-why');
+  if(!el){
+    // Reports surface uses exp-why container
+    el=document.getElementById('exp-why');
+  }
+  if(el){ el.style.display='block'; el.innerHTML=html; el.scrollIntoView({behavior:'smooth',block:'nearest'}); }
+  else window.alert('WHY: '+ (d.claim||claimId));
+}
+
+/* —— Project REX (autonomous coordination substrate) —— */
+const REX_STATE={board:null, filter:'ACTIVE', archiveOpen:false, byId:{}, actor:'aria'};
+
+function rexIndex(board){
+  REX_STATE.byId={};
+  (board.columns||[]).forEach(col=>{
+    (col.cards||[]).forEach(c=>{ if(c&&c.job_id) REX_STATE.byId[c.job_id]=c; });
+  });
+}
+
+function rexCardMatches(card, filter){
+  if(!filter || filter==='ALL') return true;
+  if(filter==='ACTIVE') return !card.archived && card.stage!=='CANCELLED';
+  if(filter==='ARCHIVE') return !!card.archived || card.stage==='DONE';
+  return (card.stage||card.status)===filter;
+}
+
+function rexRenderColumns(board){
+  const filter=REX_STATE.filter||'ACTIVE';
+  const cols=(board.columns||[]).filter(c=>!c.archived);
+  return `<div class="rex-cork" role="list">${cols.map(col=>{
+    const cards=(col.cards||[]).filter(c=>rexCardMatches(c, filter));
+    const body=cards.length
+      ? cards.map(c=>`<button type="button" class="rex-card tone-${escapeHtml(c.tone||'muted')}" data-job="${escapeHtml(c.job_id)}" role="listitem">
+          <div class="rex-card-title">${escapeHtml(c.title||c.job_id)}</div>
+          <div class="rex-card-meta">${escapeHtml(c.owner||'unassigned')} · ${escapeHtml(c.domain||'')}${c.attempt?` · try ${c.attempt}/${c.retry_budget}`:''}</div>
+        </button>`).join('')
+      : `<div class="rex-empty">Empty — ${escapeHtml(col.label)}</div>`;
+    const oversight=col.oversight_only?' oversight':'';
+    return `<div class="rex-col${oversight}" data-status="${escapeHtml(col.status)}">
+      <div class="rex-col-h"><span class="label">${escapeHtml(col.label)}</span><span class="count">${cards.length}</span></div>
+      ${body}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function rexRenderArchive(board){
+  const archived=(board.columns||[]).filter(c=>c.archived);
+  const cards=archived.flatMap(c=>c.cards||[]).filter(c=>rexCardMatches(c, REX_STATE.filter==='ACTIVE'?'ARCHIVE':REX_STATE.filter));
+  const collapsed=REX_STATE.archiveOpen?'':' collapsed';
+  return `<section class="rex-archive${collapsed}" id="rex-archive">
+    <button type="button" class="rex-archive-h" onclick="rexToggleArchive()">
+      <span>Done · closed work</span>
+      <span class="muted">${cards.length} · ${REX_STATE.archiveOpen?'collapse':'expand'}</span>
+    </button>
+    <div class="rex-archive-body">${cards.length
+      ? cards.map(c=>`<button type="button" class="rex-card tone-${escapeHtml(c.tone||'muted')}" data-job="${escapeHtml(c.job_id)}">
+          <div class="rex-card-title">${escapeHtml(c.title||c.job_id)}</div>
+          <div class="rex-card-meta">${escapeHtml(c.stage||c.status)} · ${escapeHtml(c.owner||'')}</div>
+        </button>`).join('')
+      : '<div class="rex-empty">No closed work yet.</div>'}</div>
+  </section>`;
+}
+
+function rexRenderSignals(board){
+  const vs=board.value_signals||{};
+  const block=(title, rows)=>`<div class="rex-signal"><h3>${escapeHtml(title)}</h3><ul>${
+    (rows||[]).length
+      ? rows.map(c=>`<li data-job="${escapeHtml(c.job_id)}">${escapeHtml(c.title||c.job_id)} · ${escapeHtml(c.owner||'')}</li>`).join('')
+      : '<li class="muted">None</li>'
+  }</ul></div>`;
+  return `<div class="rex-signals">${block('Hard blockers (oversight)', vs.hard_blockers)}${block('Rework / retry', vs.rework)}${block('Verifying (peer)', vs.verifying)}${block('Newly discovered', vs.discovered)}</div>`;
+}
+
+function rexRenderAutonomy(board){
+  const m=(board.autonomy&&board.autonomy.metrics)||board.metrics||{};
+  return `<section class="rex-autonomy">
+    <h2>Keep Autonomy</h2>
+    <p class="rex-autonomy-note">Observe outcomes — agents move cards under policy. No routine approve queue.</p>
+    <div class="rex-metrics">
+      <div class="rex-metric"><span class="n">${m.completed_overnight||m.completed_today||0}</span><span class="l">Completed overnight</span></div>
+      <div class="rex-metric"><span class="n">${m.in_progress||0}</span><span class="l">In progress</span></div>
+      <div class="rex-metric"><span class="n">${m.blocked||m.hard_blockers||0}</span><span class="l">Hard blocked</span></div>
+      <div class="rex-metric"><span class="n">${m.newly_discovered||0}</span><span class="l">Newly discovered</span></div>
+      <div class="rex-metric"><span class="n">${m.failed_retrying||0}</span><span class="l">Failed / retrying</span></div>
+      <div class="rex-metric"><span class="n">${m.agents_working||0}</span><span class="l">Agents working</span></div>
+      <div class="rex-metric"><span class="n">${m.jobs_active||0}</span><span class="l">Jobs active</span></div>
+      <div class="rex-metric"><span class="n">${m.research_sessions||0}</span><span class="l">Researching</span></div>
+    </div>
+  </section>`;
+}
+
+function rexWireBoard(){
+  document.querySelectorAll('.rex-card[data-job], .rex-signal li[data-job]').forEach(el=>{
+    el.addEventListener('click', ()=>rexOpenJob(el.getAttribute('data-job')));
+  });
+  document.querySelectorAll('.rex-fb').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      REX_STATE.filter=btn.getAttribute('data-filter')||'ACTIVE';
+      showRexBoard({keepFilter:true});
+    });
+  });
+  const actor=document.getElementById('rex-actor');
+  if(actor) actor.addEventListener('change', ()=>{ REX_STATE.actor=actor.value; });
+}
+
+function rexToggleArchive(){
+  REX_STATE.archiveOpen=!REX_STATE.archiveOpen;
+  const el=document.getElementById('rex-archive');
+  if(el) el.classList.toggle('collapsed', !REX_STATE.archiveOpen);
+}
+
+function rexCloseModal(){
+  const m=document.getElementById('rex-modal');
+  if(m) m.hidden=true;
+  if(document.onkeydown) document.onkeydown=null;
+}
+
+function rexOpenJob(jobId){
+  const c=REX_STATE.byId[jobId];
+  const m=document.getElementById('rex-modal');
+  if(!c||!m) return;
+  const transitions=(c.allowed_transitions||[]).map(st=>{
+    const cls=st==='CANCELLED'||st==='HARD_BLOCKED'?'danger':(st==='REWORK'?'warn':'');
+    return `<button type="button" class="${cls}" onclick="rexTransition('${escapeHtml(c.job_id)}','${escapeHtml(st)}')">${escapeHtml(st)}</button>`;
+  }).join('')||'<span class="muted">Terminal</span>';
+  const plan=(c.coordination_plan||[]).length
+    ? `<ol class="rex-plan">${c.coordination_plan.map(s=>`<li>${escapeHtml(typeof s==='string'?s:JSON.stringify(s))}</li>`).join('')}</ol>`
+    : '<p class="muted">No Aria coordination plan yet.</p>';
+  const reviews=(c.peer_reviews||[]).slice(-5).map(r=>
+    `<div class="muted">${escapeHtml(r.reviewer)} · ${escapeHtml(r.verdict)} — ${escapeHtml(r.note||'')}</div>`
+  ).join('')||'<p class="muted">No peer reviews yet.</p>';
+  const trace=(c.decision_trace||[]).slice(-8).map(t=>
+    `<div class="muted">${escapeHtml(t.actor)} · ${escapeHtml(t.action)} — ${escapeHtml(t.detail||'')}</div>`
+  ).join('')||'<p class="muted">No decision trace.</p>';
+  m.hidden=false;
+  m.innerHTML=`<div class="rex-modal-panel" role="dialog" aria-modal="true">
+    <h3>${escapeHtml(c.title||c.job_id)}</h3>
+    <p class="rex-modal-meta">${escapeHtml(c.job_id)} · stage ${escapeHtml(c.stage||c.status)} · job ${escapeHtml(c.job_status||'')} · owner ${escapeHtml(c.owner||'—')} · ${escapeHtml(c.domain||'')}${c.discovered_by?` · discovered by ${escapeHtml(c.discovered_by)}`:''}</p>
+    <p class="rex-modal-meta">Actor moving as: <b>${escapeHtml(REX_STATE.actor||'aria')}</b> (policy-gated)</p>
+    <div class="rex-actions">${transitions}</div>
+    <h4>Coordination plan</h4>${plan}
+    <h4>Peer review</h4>${reviews}
+    <div class="rex-actions">
+      <button type="button" onclick="rexPeerReview('${escapeHtml(c.job_id)}','pass')">Peer pass</button>
+      <button type="button" class="warn" onclick="rexPeerReview('${escapeHtml(c.job_id)}','fail')">Peer fail</button>
+    </div>
+    <h4>Decision trace</h4>${trace}
+    <pre>${escapeHtml(JSON.stringify({
+      result:c.result, error:c.error, evidence:c.evidence, research_refs:c.research_refs,
+      attempt:c.attempt, retry_budget:c.retry_budget, follow_ups:c.follow_ups,
+      awaiting_user_approval:c.awaiting_user_approval
+    },null,2))}</pre>
+    <button type="button" class="cc-btn ghost" data-close onclick="rexCloseModal()">Close</button>
+  </div>`;
+  m.onclick=(e)=>{ if(e.target===m) rexCloseModal(); };
+  document.onkeydown=(e)=>{ if(e.key==='Escape') rexCloseModal(); };
+  m.querySelector('[data-close]')?.focus();
+}
+
+async function rexTransition(jobId, stage){
+  let note='';
+  if(stage==='REWORK'||stage==='HARD_BLOCKED'||stage==='DONE'){
+    note=window.prompt(stage==='DONE'?'Close note / result (optional):':'Note (optional):')||'';
+  }
+  const r=await api('/api/expansion/rex/transition',{
+    job_id:jobId, stage, status:stage, note, actor:REX_STATE.actor||'aria'
+  });
+  if(!r.ok){
+    window.alert((r.data&&r.data.error&&r.data.error.message)||'Transition failed');
+    return;
+  }
+  rexCloseModal();
+  await showRexBoard({keepFilter:true});
+}
+
+async function rexPeerReview(jobId, verdict){
+  const note=window.prompt('Peer review note (optional):')||'';
+  const r=await api('/api/expansion/rex/peer-review',{
+    job_id:jobId, reviewer:REX_STATE.actor||'ledger', verdict, note
+  });
+  if(!r.ok){
+    window.alert((r.data&&r.data.error&&r.data.error.message)||'Review failed');
+    return;
+  }
+  await showRexBoard({keepFilter:true});
+  rexOpenJob(jobId);
+}
+
+async function rexCreateJob(){
+  const input=document.getElementById('rex-new-request');
+  const domainEl=document.getElementById('rex-new-domain');
+  const request=(input&&input.value||'').trim();
+  if(!request){ window.alert('Describe the work first.'); return; }
+  const domain=(domainEl&&domainEl.value)||'coordination';
+  const actor=REX_STATE.actor||'aria';
+  const r=await api('/api/expansion/rex/discover',{actor, request, domain});
+  if(!r.ok){
+    // Oversight inject: queue without discover grant
+    const q=await api('/api/expansion/rex/queue',{request, domain, discovered_by:actor, stage:'BACKLOG'});
+    if(!q.ok){
+      window.alert((r.data&&r.data.error&&r.data.error.message)||'Create failed');
+      return;
+    }
+  }
+  if(input) input.value='';
+  await showRexBoard({keepFilter:true});
+}
+
+async function rexAutonomyTick(){
+  const btn=[...document.querySelectorAll('button')].find(b=>b.textContent&&b.textContent.includes('autonomy tick'));
+  if(btn) btn.disabled=true;
+  try{
+    const r=await api('/api/expansion/rex/tick',{max_jobs:5, detect:true});
+    if(!r.ok){
+      window.alert((r.data&&r.data.error&&r.data.error.message)||'Autonomy tick failed');
+      return;
+    }
+    const m=(r.data&&r.data.metrics)||{};
+    window.alert(
+      'Autonomy tick '+((r.data&&r.data.elapsed_ms)||'?')+'ms\\n'+
+      'Discovered: '+((r.data&&r.data.discovered)||[]).length+'\\n'+
+      'Processed: '+((r.data&&r.data.processed)||[]).length+'\\n'+
+      'Completed today: '+(m.completed_today||0)+' · Active: '+(m.jobs_active||0)+' · Hard blocked: '+(m.hard_blockers||0)
+    );
+    await showRexBoard({keepFilter:true});
+  } finally {
+    if(btn) btn.disabled=false;
+  }
+}
+
+async function showRexBoard(opts){
+  opts=opts||{};
+  state.view='expansion';
+  setBodyMode('home');
+  if(!opts.keepFilter){
+    const params=new URLSearchParams(location.search);
+    REX_STATE.filter=params.get('rex_filter')||'ACTIVE';
+  }
+  let board;
+  try{
+    board=await apiGet('/api/expansion/rex');
+  }catch(e){
+    appRoot().innerHTML=`<div class="home"><header class="home-header"><div>
+      <p class="home-kicker">Keep Expansion</p><h1 class="home-greeting">Project REX</h1></div>
+      <div class="home-meta"><button type=button class="cc-btn ghost" onclick="showHome()">Home</button></div></header>
+      <p class=muted>Failed to load: ${escapeHtml(String(e))}</p></div>`;
+    return;
+  }
+  if(board&&board.enabled===false){
+    appRoot().innerHTML=`<div class="home"><header class="home-header"><div>
+      <p class="home-kicker">Keep Expansion</p><h1 class="home-greeting">Project REX</h1></div>
+      <div class="home-meta"><button type=button class="cc-btn ghost" onclick="showHome()">Home</button></div></header>
+      <p class=muted>${escapeHtml(board.message||'Expansion not entitled')}</p></div>`;
+    return;
+  }
+  REX_STATE.board=board;
+  rexIndex(board);
+  if(['ARCHIVE','DONE','CANCELLED'].includes(REX_STATE.filter)) REX_STATE.archiveOpen=true;
+  const filters=['ALL','ACTIVE','ARCHIVE','BACKLOG','READY','RESEARCHING','PLANNING','ASSIGNED','IN_PROGRESS','VERIFYING','REWORK','DONE','HARD_BLOCKED'];
+  const filterBar=filters.map(f=>`<button type="button" class="rex-fb${REX_STATE.filter===f?' on':''}" data-filter="${f}">${f}</button>`).join('');
+  const loop=(board.loop||[]).join(' → ');
+  appRoot().innerHTML=`<div class="home rex-page"><header class="home-header"><div>
+    <p class="home-kicker">Keep Expansion · Autonomous substrate</p>
+    <h1 class="home-greeting">Project REX</h1></div>
+    <div class="home-meta">
+      <button type=button class="cc-btn ghost" onclick="showHome()">Home</button>
+      <button type=button class="cc-btn ghost" onclick="showExpansionSurface('war-room')">War Room</button>
+      <button type=button class="cc-btn" onclick="showChat()">Codec</button>
+    </div></header>
+    <div class="rex">
+      ${rexRenderAutonomy(board)}
+      <section class="rex-guide">
+        <h2>Autonomous work loop</h2>
+        <p>${escapeHtml(board.note||'')}</p>
+        <p class="muted" style="margin-top:.5rem">${escapeHtml(loop)}</p>
+      </section>
+      <div class="rex-compose">
+        <select id="rex-actor" title="Acting agent (policy)">
+          <option value="aria">Aria (coordinator)</option>
+          <option value="vector">Vector</option>
+          <option value="ledger">Ledger</option>
+          <option value="muse">Muse</option>
+          <option value="sentry">Sentry</option>
+        </select>
+        <input id="rex-new-request" type="text" placeholder="Discovered work / inject backlog…" maxlength="240" />
+        <select id="rex-new-domain">
+          <option value="coordination">coordination</option>
+          <option value="infrastructure">infrastructure</option>
+          <option value="records">records</option>
+          <option value="creative">creative</option>
+          <option value="security">security</option>
+        </select>
+        <button type="button" class="cc-btn" onclick="rexCreateJob()">Discover / queue</button>
+        <button type="button" class="cc-btn" onclick="rexAutonomyTick()">Run autonomy tick</button>
+      </div>
+      <div class="rex-filters">${filterBar}</div>
+      ${rexRenderColumns(board)}
+      ${rexRenderArchive(board)}
+      ${rexRenderSignals(board)}
+    </div>
+    <div id="rex-modal" class="rex-modal" hidden></div>
+  </div>`;
+  const actorEl=document.getElementById('rex-actor');
+  if(actorEl){ actorEl.value=REX_STATE.actor||'aria'; }
+  rexWireBoard();
+  const focus=new URLSearchParams(location.search).get('focus');
+  if(focus && REX_STATE.byId[focus]){
+    setTimeout(()=>rexOpenJob(focus), 200);
+  }
+}
 
 (async()=>{
   await loadCapabilities(); await loadPrefs(); await loadVoices(); await loadExpansion();
   if(location.search.includes('setup=1')) render();
   else if(location.search.includes('codec=1') || location.hash==='#codec') showChat();
+  else if(location.search.includes('rex=1') || location.hash==='#rex') showRexBoard();
   else showHome();
 })();

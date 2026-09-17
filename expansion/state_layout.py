@@ -45,6 +45,7 @@ class StateLayout:
     user_living_dossiers: Path
     user_jobs: Path
     user_events: Path
+    user_learning: Path
     user_preferences: Path
     user_migrations: Path
     user_pages: Path
@@ -64,6 +65,7 @@ class StateLayout:
             self.user_living_dossiers,
             self.user_jobs,
             self.user_events,
+            self.user_learning,
             self.user_preferences,
             self.user_migrations,
             self.user_pages,
@@ -146,6 +148,7 @@ def resolve_layout(product_root: Path | None = None) -> StateLayout:
         user_living_dossiers=data / 'living_dossiers',
         user_jobs=data / 'jobs',
         user_events=data / 'events',
+        user_learning=data / 'learning',
         user_preferences=cfg / 'preferences',
         user_migrations=cfg / 'migrations',
         user_pages=cfg / 'pages',

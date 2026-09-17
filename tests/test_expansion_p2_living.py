@@ -289,7 +289,7 @@ class TestJobsRoutingRooms(P2LayoutCase):
         rooms = reg.seed_defaults()
         ids = {r.page_id for r in rooms}
         self.assertTrue({
-            'aria_command', 'war_room', 'intel', 'creative', 'ops',
+            'aria_command', 'war_room', 'project_rex', 'intel', 'creative', 'ops',
         }.issubset(ids))
         with self.assertRaises(ValueError):
             reg.register_page(RoomPage(

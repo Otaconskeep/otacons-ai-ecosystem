@@ -73,6 +73,7 @@ class LivingPipeline:
 
         # Living dossier observations for operational patterns
         self._maybe_living_observations(event, result)
+        learning_obs = self._maybe_learning(event)
 
         # Follow-on bus events
         if result.emotion_updates:
@@ -106,6 +107,7 @@ class LivingPipeline:
             'relationship_updates': result.relationship_updates,
             'journal_ids': journal_ids,
             'diary_ids': diary_ids,
+            'learning_observation_id': learning_obs,
         }
 
     def create_and_run_job(
@@ -278,3 +280,46 @@ class LivingPipeline:
                 job_ids=(event.payload.get('job_id') or '',) if event.payload.get('job_id') else (),
                 persistence='decaying',
             )
+
+    def _maybe_learning(self, event: Event) -> Optional[str]:
+        """Feed Learning Engine — distinct from living-dossier observations."""
+        try:
+            from expansion.learning import LearningEngine, ingest_owner_message, ingest_operational_success
+            engine = LearningEngine(self.layout)
+            text = (
+                (event.payload or {}).get('text')
+                or (event.payload or {}).get('message')
+                or (event.payload or {}).get('request')
+                or ''
+            )
+            if event.event_type in (
+                'agent.message', 'user.message', 'user.praised_agent', 'user.feedback',
+            ) and text:
+                obs = ingest_owner_message(
+                    engine, text=str(text), event_id=event.event_id, actor='ledger',
+                )
+                return obs.observation_id if obs else None
+            if event.event_type == 'job.completed':
+                domain = (event.payload or {}).get('domain') or 'coordination'
+                method = (event.payload or {}).get('method') or (event.payload or {}).get('result') or 'standard'
+                job_id = (event.payload or {}).get('job_id') or event.event_id
+                obs = ingest_operational_success(
+                    engine,
+                    method=str(method)[:80],
+                    domain=str(domain),
+                    job_id=str(job_id),
+                    actor=event.subject if event.subject in (
+                        'vector', 'sentry', 'aria', 'ledger',
+                    ) else 'vector',
+                )
+                return obs.observation_id
+            if event.event_type == 'job.failed' and (event.payload or {}).get('job_id'):
+                # Contradict matching operational claims if present
+                job_id = event.payload['job_id']
+                for claim in engine.store.list_claims(scope='shared', learning_type='operational'):
+                    if job_id in (claim.positive_evidence or []):
+                        engine.contradict(claim.claim_id, event.event_id, actor='ledger')
+                return None
+        except Exception:
+            return None
+        return None

@@ -183,16 +183,100 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'note': 'War Room = jobs/decisions; Infra Dashboard is separate telemetry.',
         })
         return True
+    if path == '/api/expansion/rex':
+        from expansion.entitlement import EntitlementGate
+        from expansion.rex import build_rex_board
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'})
+            return True
+        send_json(build_rex_board())
+        return True
+    if path == '/api/expansion/rex/autonomy':
+        from expansion.entitlement import EntitlementGate
+        from expansion.rex import build_autonomy_dashboard
+        from expansion.tools import ToolGateway
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'})
+            return True
+        payload = build_autonomy_dashboard()
+        payload['recent_tool_actions'] = ToolGateway().recent(limit=25)
+        send_json(payload)
+        return True
+    if path == '/api/expansion/policy':
+        from expansion.entitlement import EntitlementGate
+        from expansion.policy import PolicyEngine
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'})
+            return True
+        send_json(PolicyEngine().summary())
+        return True
+    if path == '/api/expansion/learning':
+        from expansion.entitlement import EntitlementGate
+        from expansion.learning import LearningEngine
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'})
+            return True
+        send_json(LearningEngine().board_payload())
+        return True
+    if path == '/api/expansion/learning/shared':
+        from expansion.entitlement import EntitlementGate
+        from expansion.learning import LearningEngine
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'})
+            return True
+        eng = LearningEngine()
+        claims = [eng.claim_card(c) for c in eng.store.list_claims(scope='shared') if c.status != 'retired']
+        send_json({'scope': 'shared', 'curator': 'ledger', 'claims': claims})
+        return True
+    if path.startswith('/api/expansion/learning/agent/'):
+        from expansion.entitlement import EntitlementGate
+        from expansion.learning import LearningEngine
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'})
+            return True
+        agent_id = path.rsplit('/', 1)[-1]
+        send_json(LearningEngine().agent_learning_surface(agent_id))
+        return True
+    if path.startswith('/api/expansion/learning/why/'):
+        from expansion.entitlement import EntitlementGate
+        from expansion.learning import LearningEngine
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'})
+            return True
+        claim_id = path.rsplit('/', 1)[-1]
+        try:
+            send_json(LearningEngine().why(claim_id))
+        except KeyError:
+            send_json({'error': 'claim not found'}, 404)
+        return True
+    if path.startswith('/api/expansion/learning/observations'):
+        from expansion.entitlement import EntitlementGate
+        from expansion.learning import LearningEngine
+        from dataclasses import asdict as _asdict
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'})
+            return True
+        # /api/expansion/learning/observations or .../observations/{agent_id}
+        parts = path.strip('/').split('/')
+        agent_id = parts[4] if len(parts) > 4 else None
+        eng = LearningEngine()
+        obs = eng.store.list_observations(agent_id=agent_id, limit=80)
+        send_json({'observations': [_asdict(o) for o in obs]})
+        return True
     if path == '/api/expansion/reports':
         from expansion.reports import build_agent_report
         from expansion.runtime import ExpansionRuntime
+        from expansion.learning import LearningEngine
         rt = ExpansionRuntime()
         if not rt.expansion_enabled():
             send_json({'enabled': False, 'reports': []})
             return True
+        eng = LearningEngine()
         reports = []
         for a in rt.load_roster():
-            reports.append(build_agent_report(a.agent_id))
+            rep = build_agent_report(a.agent_id)
+            rep['learning'] = eng.agent_learning_surface(a.agent_id)
+            reports.append(rep)
         send_json({'enabled': True, 'reports': reports})
         return True
     if path.startswith('/api/expansion/reports/'):
@@ -353,5 +437,259 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             send_json({'ok': True, 'page': asdict(registered)})
         except ValueError as exc:
             send_json({'error': {'code': 'PAGE_REJECTED', 'message': str(exc)}}, 400)
+        return True
+    if path == '/api/expansion/rex/transition':
+        from dataclasses import asdict as _asdict
+        from expansion.entitlement import EntitlementGate
+        from expansion.rex import transition_rex_job
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        job_id = (data.get('job_id') or '').strip()
+        new_status = (data.get('status') or data.get('stage') or '').strip()
+        note = (data.get('note') or '').strip()
+        actor = (data.get('actor') or 'aria').strip() or 'aria'
+        assign_to = (data.get('assign_to') or '').strip() or None
+        if not job_id or not new_status:
+            send_json({'error': {'code': 'REX_BAD_REQUEST', 'message': 'job_id and status/stage required'}}, 400)
+            return True
+        try:
+            from expansion.rex import advance_stage
+            if data.get('stage') or new_status in (
+                'BACKLOG', 'READY', 'RESEARCHING', 'PLANNING', 'ASSIGNED',
+                'IN_PROGRESS', 'VERIFYING', 'REWORK', 'DONE', 'HARD_BLOCKED', 'CANCELLED',
+            ):
+                job = advance_stage(
+                    job_id, new_status, actor=actor, note=note, assign_to=assign_to,
+                )
+            else:
+                job = transition_rex_job(job_id, new_status, note=note, actor=actor)
+            send_json({'ok': True, 'job': _asdict(job)})
+        except KeyError:
+            send_json({'error': {'code': 'REX_NOT_FOUND', 'message': f'unknown job {job_id}'}}, 404)
+        except PermissionError as exc:
+            send_json({'error': {'code': 'REX_POLICY_DENIED', 'message': str(exc)}}, 403)
+        except ValueError as exc:
+            send_json({'error': {'code': 'REX_INVALID_TRANSITION', 'message': str(exc)}}, 400)
+        return True
+    if path == '/api/expansion/rex/queue':
+        from dataclasses import asdict as _asdict
+        from expansion.entitlement import EntitlementGate
+        from expansion.rex import queue_rex_job
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        request = (data.get('request') or '').strip()
+        if not request:
+            send_json({'error': {'code': 'REX_BAD_REQUEST', 'message': 'request required'}}, 400)
+            return True
+        try:
+            job = queue_rex_job(
+                request,
+                domain=(data.get('domain') or 'coordination').strip() or 'coordination',
+                assigned_agent=(data.get('assigned_agent') or None) or None,
+                discovered_by=(data.get('discovered_by') or data.get('actor') or '') or '',
+                stage=(data.get('stage') or 'BACKLOG'),
+                priority=int(data.get('priority') or 5),
+                coordination_plan=list(data.get('coordination_plan') or []),
+            )
+            send_json({'ok': True, 'job': _asdict(job)})
+        except ValueError as exc:
+            send_json({'error': {'code': 'REX_QUEUE_REJECTED', 'message': str(exc)}}, 400)
+        return True
+    if path == '/api/expansion/rex/discover':
+        from dataclasses import asdict as _asdict
+        from expansion.entitlement import EntitlementGate
+        from expansion.rex import discover_work
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        actor = (data.get('actor') or '').strip()
+        request = (data.get('request') or '').strip()
+        if not actor or not request:
+            send_json({'error': {'code': 'REX_BAD_REQUEST', 'message': 'actor and request required'}}, 400)
+            return True
+        try:
+            job = discover_work(
+                actor, request,
+                domain=(data.get('domain') or ''),
+                priority=int(data.get('priority') or 5),
+                assigned_agent=(data.get('assigned_agent') or None) or None,
+            )
+            send_json({'ok': True, 'job': _asdict(job)})
+        except PermissionError as exc:
+            send_json({'error': {'code': 'REX_POLICY_DENIED', 'message': str(exc)}}, 403)
+        except ValueError as exc:
+            send_json({'error': {'code': 'REX_DISCOVER_REJECTED', 'message': str(exc)}}, 400)
+        return True
+    if path == '/api/expansion/rex/plan':
+        from expansion.entitlement import EntitlementGate
+        from expansion.rex import set_coordination_plan
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        job_id = (data.get('job_id') or '').strip()
+        actor = (data.get('actor') or 'aria').strip() or 'aria'
+        plan = list(data.get('plan') or data.get('coordination_plan') or [])
+        if not job_id or not plan:
+            send_json({'error': {'code': 'REX_BAD_REQUEST', 'message': 'job_id and plan required'}}, 400)
+            return True
+        try:
+            item = set_coordination_plan(job_id, plan, actor=actor)
+            send_json({'ok': True, 'item': item})
+        except PermissionError as exc:
+            send_json({'error': {'code': 'REX_POLICY_DENIED', 'message': str(exc)}}, 403)
+        return True
+    if path == '/api/expansion/rex/peer-review':
+        from expansion.entitlement import EntitlementGate
+        from expansion.rex import add_peer_review
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        job_id = (data.get('job_id') or '').strip()
+        reviewer = (data.get('reviewer') or data.get('actor') or '').strip()
+        verdict = (data.get('verdict') or '').strip()
+        if not job_id or not reviewer or verdict not in ('pass', 'fail', 'abstain'):
+            send_json({
+                'error': {
+                    'code': 'REX_BAD_REQUEST',
+                    'message': 'job_id, reviewer, verdict(pass|fail|abstain) required',
+                }
+            }, 400)
+            return True
+        try:
+            item = add_peer_review(
+                job_id, reviewer=reviewer, verdict=verdict,
+                note=(data.get('note') or ''),
+            )
+            send_json({'ok': True, 'item': item})
+        except PermissionError as exc:
+            send_json({'error': {'code': 'REX_POLICY_DENIED', 'message': str(exc)}}, 403)
+        return True
+    if path == '/api/expansion/policy/check':
+        from dataclasses import asdict as _asdict
+        from expansion.policy import PolicyEngine
+        decision = PolicyEngine().check(
+            (data.get('agent_id') or data.get('actor') or '').strip(),
+            (data.get('capability') or '').strip(),
+        )
+        send_json({'ok': True, 'decision': _asdict(decision)})
+        return True
+    if path == '/api/expansion/rex/tick':
+        from expansion.entitlement import EntitlementGate
+        from expansion.autonomy_loop import autonomy_tick
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        try:
+            out = autonomy_tick(
+                max_jobs=int(data.get('max_jobs') or 5),
+                detect=bool(data.get('detect', True)),
+            )
+            send_json(out)
+        except Exception as exc:
+            send_json({'error': {'code': 'AUTONOMY_TICK_FAILED', 'message': str(exc)}}, 500)
+        return True
+    if path == '/api/expansion/tools/invoke':
+        from dataclasses import asdict as _asdict
+        from expansion.entitlement import EntitlementGate
+        from expansion.tools import ToolGateway
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        agent_id = (data.get('agent_id') or data.get('actor') or '').strip()
+        capability = (data.get('capability') or '').strip()
+        if not agent_id or not capability:
+            send_json({'error': {'code': 'TOOL_BAD_REQUEST', 'message': 'agent_id and capability required'}}, 400)
+            return True
+        kwargs = dict(data.get('args') or {})
+        for k in ('query', 'q', 'url', 'path', 'content', 'command', 'cmd', 'unit', 'container', 'name', 'action', 'message'):
+            if k in data and k not in kwargs:
+                kwargs[k] = data[k]
+        result = ToolGateway().invoke(agent_id, capability, **kwargs)
+        send_json({'ok': result.ok, 'result': _asdict(result)}, 200 if result.ok else 403)
+        return True
+    # Learning mutations — runtime/tests only (protected). UI is read-only + WHY.
+    if path == '/api/expansion/learning/observe':
+        from dataclasses import asdict as _asdict
+        from expansion.entitlement import EntitlementGate
+        from expansion.learning import LearningEngine
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        try:
+            obs = LearningEngine().observe(
+                (data.get('agent_id') or '').strip(),
+                (data.get('text') or '').strip(),
+                learning_type=(data.get('learning_type') or 'owner_preference').strip(),
+                evidence_ids=list(data.get('evidence_ids') or []),
+                scope=(data.get('scope') or 'private').strip(),
+                actor=(data.get('actor') or data.get('agent_id') or '').strip(),
+            )
+            send_json({'ok': True, 'observation': _asdict(obs)})
+        except PermissionError as exc:
+            send_json({'error': {'code': 'LEARN_POLICY', 'message': str(exc)}}, 403)
+        except ValueError as exc:
+            send_json({'error': {'code': 'LEARN_BAD', 'message': str(exc)}}, 400)
+        return True
+    if path == '/api/expansion/learning/reinforce':
+        from dataclasses import asdict as _asdict
+        from expansion.entitlement import EntitlementGate
+        from expansion.learning import LearningEngine
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        try:
+            claim = LearningEngine().reinforce(
+                (data.get('claim_id') or '').strip(),
+                (data.get('evidence_id') or '').strip(),
+                actor=(data.get('actor') or 'ledger').strip(),
+            )
+            send_json({'ok': True, 'claim': _asdict(claim)})
+        except PermissionError as exc:
+            send_json({'error': {'code': 'LEARN_POLICY', 'message': str(exc)}}, 403)
+        except KeyError:
+            send_json({'error': {'code': 'LEARN_NOT_FOUND', 'message': 'claim not found'}}, 404)
+        return True
+    if path == '/api/expansion/learning/contradict':
+        from dataclasses import asdict as _asdict
+        from expansion.entitlement import EntitlementGate
+        from expansion.learning import LearningEngine
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        try:
+            claim = LearningEngine().contradict(
+                (data.get('claim_id') or '').strip(),
+                (data.get('evidence_id') or '').strip(),
+                actor=(data.get('actor') or 'ledger').strip(),
+            )
+            send_json({'ok': True, 'claim': _asdict(claim)})
+        except PermissionError as exc:
+            send_json({'error': {'code': 'LEARN_POLICY', 'message': str(exc)}}, 403)
+        except KeyError:
+            send_json({'error': {'code': 'LEARN_NOT_FOUND', 'message': 'claim not found'}}, 404)
+        return True
+    if path == '/api/expansion/learning/revise':
+        from dataclasses import asdict as _asdict
+        from expansion.entitlement import EntitlementGate
+        from expansion.learning import LearningEngine
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        try:
+            claim = LearningEngine().revise(
+                (data.get('claim_id') or '').strip(),
+                (data.get('claim') or data.get('new_claim') or '').strip(),
+                actor=(data.get('actor') or 'ledger').strip(),
+                evidence_id=(data.get('evidence_id') or '').strip(),
+            )
+            send_json({'ok': True, 'claim': _asdict(claim)})
+        except PermissionError as exc:
+            send_json({'error': {'code': 'LEARN_POLICY', 'message': str(exc)}}, 403)
+        except KeyError:
+            send_json({'error': {'code': 'LEARN_NOT_FOUND', 'message': 'claim not found'}}, 404)
+        except ValueError as exc:
+            send_json({'error': {'code': 'LEARN_BAD', 'message': str(exc)}}, 400)
         return True
     return False

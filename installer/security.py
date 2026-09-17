@@ -104,6 +104,18 @@ PROTECTED_PATHS = frozenset({
     '/api/expansion/bootstrap',
     '/api/expansion/jobs/create',
     '/api/expansion/pages/register',
+    '/api/expansion/rex/transition',
+    '/api/expansion/rex/queue',
+    '/api/expansion/rex/discover',
+    '/api/expansion/rex/plan',
+    '/api/expansion/rex/peer-review',
+    '/api/expansion/policy/check',
+    '/api/expansion/rex/tick',
+    '/api/expansion/tools/invoke',
+    '/api/expansion/learning/observe',
+    '/api/expansion/learning/reinforce',
+    '/api/expansion/learning/contradict',
+    '/api/expansion/learning/revise',
 })
 
 

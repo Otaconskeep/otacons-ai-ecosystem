@@ -137,6 +137,13 @@ class ExpansionRuntime:
                 living_lines.append(f"- {o.category}: {o.value} (conf={o.confidence:.2f})")
         except Exception:
             living_lines = []
+        # Learning engine (private + shared claims) — not the same as memory
+        learn_lines = []
+        try:
+            from expansion.learning import LearningEngine
+            learn_lines = LearningEngine(self.layout).context_lines(agent_id, limit=6)
+        except Exception:
+            learn_lines = []
         # Active jobs (bounded)
         job_lines = []
         try:
@@ -192,6 +199,7 @@ class ExpansionRuntime:
             f"Active vulnerability pressure:\n" + '\n'.join(vuln_act_lines or ['- none elevated']) + '\n'
             f"Directional relationships:\n" + '\n'.join(rel_lines or ['- (none)']) + '\n'
             f"Living observations:\n" + '\n'.join(living_lines or ['- none yet']) + '\n'
+            f"Learned claims (evidence-backed; revisable):\n" + '\n'.join(learn_lines or ['- none yet']) + '\n'
             f"Active jobs:\n" + '\n'.join(job_lines or ['- none']) + '\n'
             f"Recent journal facts:\n" + '\n'.join(journal_lines or ['- none']) + '\n'
             f"Relevant memory:\n" + '\n'.join(mem_lines) + '\n'
@@ -221,6 +229,7 @@ class ExpansionRuntime:
                 'archetype': dossier.character.archetype,
                 'values': list(dossier.character.values),
                 'living_observations': living_lines,
+                'learned_claims': learn_lines,
             },
             system_prompt=system_prompt,
             provenance_hints=provenance_hints,
