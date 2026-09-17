@@ -1,10 +1,10 @@
-# Windows batch/cmd installers: store exact UTF-8 BOM + CRLF bytes.
-# Do not let Git renormalize line endings or strip the BOM.
+# Windows batch/cmd installers: store exact published bytes.
+# *.bat / *.cmd = UTF-8 WITHOUT BOM + CRLF (BOM before @echo off breaks cmd.exe).
 *.bat binary
 *.cmd binary
 
-# PowerShell helpers for the Windows installer must stay PowerShell 5.1-safe:
-# UTF-8 BOM in the blob + CRLF in the working tree. Avoid Unicode punctuation
-# in these scripts (em dash / not-equal / smart quotes break PS 5.1 without BOM).
-deploy/*.ps1 text eol=crlf
-*.ps1 text eol=crlf
+# PowerShell helpers: store exact published bytes (UTF-8 BOM + CRLF in the blob).
+# Do NOT use "text eol=crlf" - that stores LF in git while the working tree has CRLF,
+# so release.json hashes (working tree) disagree with GitHub raw (blob) downloads.
+deploy/*.ps1 binary
+*.ps1 binary

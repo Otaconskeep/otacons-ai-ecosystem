@@ -24,3 +24,15 @@ Installer-owned files under `%LOCALAPPDATA%\OtaconsKeep\installer` are **not** v
 - `bootstrap-fetch.ps1` must always replace the current installer bundle (assistant, repair, `wsl-bash-file.ps1`, revision pin, etc.). Never “if exists, skip”.
 - After refresh, prove the **installed** `repair-otacon-core.ps1` uses `Invoke-OtaconWslBashFile` and does **not** still contain `bash -lc $bash`.
 - Rebuild bundle metadata with `python3 deploy/build-release-manifest.py` when cutting an installer change.
+
+## Packaging rule: hash published bytes only
+
+`release.json` SHA256 values must be computed from the **exact bytes** GitHub raw serves (and Setup downloads).
+
+1. Finalize artifact encoding on disk (`.bat` = UTF-8 **without** BOM + CRLF; `deploy/*.ps1` = UTF-8 **with** BOM + CRLF).
+2. Store those exact bytes in git (`binary` in `.gitattributes` — never `text eol=crlf` for installer scripts).
+3. Hash those bytes into `release.json`.
+4. Downloader verifies **raw** downloaded bytes against the manifest.
+5. Only after verification may optional local normalization run (its hash may differ without failing).
+
+Never hash a post-normalization representation and verify a pre-normalization download.

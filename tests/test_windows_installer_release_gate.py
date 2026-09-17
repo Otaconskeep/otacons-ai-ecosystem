@@ -142,6 +142,10 @@ def test_I_encoding_rejects_bare_lf():
     assert "exit 5" in CHECK_ENC
     assert "bare LF" in INSTALL_BAT or "Unix line endings" in INSTALL_BAT
     assert "Unix line endings" in SETUP_BAT
+    # BAT must reject UTF-8 BOM (breaks @echo off); must not require BOM.
+    assert "not allowed" in CHECK_ENC.lower() and "BOM" in CHECK_ENC
+    assert "missing UTF-8 BOM" not in CHECK_ENC
+    assert "UTF-8 BOM is not allowed" in SETUP_BAT or "BOM is not allowed" in SETUP_BAT
 
 
 def test_J_ready_requires_identity_and_no_fatal_error():

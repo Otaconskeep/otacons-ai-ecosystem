@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 REM ============================================================
 REM  Fix-Otacon-GPU.bat
 REM  Double-click only. Fixes false "no GPU detected" on WSL.

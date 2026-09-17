@@ -334,10 +334,12 @@ foreach ($rel in $files) {
     Write-Log ("ok $rel bytes=$len method={0} sha256={1} replaced=1" -f $result.Method, $result.Sha256)
     Write-Host ("  OK: {0} ({1} bytes) sha={2} via {3}" -f $rel, $len, $result.Sha256.Substring(0, [Math]::Min(12, $result.Sha256.Length)), $result.Method) -ForegroundColor Green
 
-    # PowerShell 5.1-safe: ensure UTF-8 BOM + CRLF on shipped .ps1 helpers (after hash check).
+    # ONLY AFTER successful hash verification may local encoding normalization occur.
+    # Manifest sha256 describes exact published/download bytes; post-normalize hash may differ.
     if ($rel -like "*.ps1") {
         try {
             $bytes = [System.IO.File]::ReadAllBytes($out)
+            $preHash = Get-FileSha256Hex -Path $out
             $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
             $text = if ($hasBom) {
                 [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
@@ -348,7 +350,8 @@ foreach ($rel in $files) {
             $text = $text -replace "`n", "`r`n"
             $utf8Bom = New-Object System.Text.UTF8Encoding $true
             [System.IO.File]::WriteAllText($out, $text, $utf8Bom)
-            Write-Log "normalized encoding BOM+CRLF $rel"
+            $postHash = Get-FileSha256Hex -Path $out
+            Write-Log "normalized encoding BOM+CRLF $rel (post-verify; pre=$preHash post=$postHash)"
         } catch {
             Write-Log "encoding normalize skipped $rel : $($_.Exception.Message)" "WARN"
         }

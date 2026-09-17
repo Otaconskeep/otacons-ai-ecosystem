@@ -1,7 +1,11 @@
-﻿# Validate a .bat file is UTF-8 with BOM and CRLF line endings.
+﻿# Validate a .bat file is UTF-8 WITHOUT BOM and CRLF line endings.
 # Invoked ONLY via: powershell -File check-bat-encoding.ps1 -Path <bat>
 # Never pass the bat path after -Command - Windows PowerShell appends those
 # tokens into the command text (breaks on "OtaconsKeep-Setup (1).bat").
+#
+# Policy:
+#   *.bat  -> UTF-8/ASCII, no BOM, CRLF, no UTF-16
+#   (BOM before @echo off is misread by cmd.exe and echoes every command.)
 
 [CmdletBinding()]
 param(
@@ -32,8 +36,9 @@ if ($b[0] -eq 0xFE -and $b[1] -eq 0xFF) {
     Write-Host "ERROR: this installer was saved as UTF-16. Re-download from the Otaconskeep website."
     exit 3
 }
-if (-not ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)) {
-    Write-Host "ERROR: missing UTF-8 BOM. Do not save raw GitHub source manually. Re-download OtaconsKeep-Setup.bat from the Otaconskeep website."
+# Reject UTF-8 BOM - cmd.exe treats BOM as part of the first line and breaks @echo off.
+if ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) {
+    Write-Host "ERROR: UTF-8 BOM is not allowed in .bat files (breaks @echo off). Re-download OtaconsKeep-Setup.bat from the Otaconskeep website."
     exit 4
 }
 

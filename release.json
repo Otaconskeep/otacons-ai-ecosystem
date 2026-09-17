@@ -1,6 +1,6 @@
 {
   "product": "Otacon",
-  "installer_version": "1.1.0",
+  "installer_version": "1.1.1",
   "commit": "ada099f1745762a997cf830aceaceb71cfb891af",
   "channel": "public",
   "ecosystem_ref": "main",
@@ -8,27 +8,28 @@
   "ai9_ref": "main",
   "python_requires": ">=3.10,<3.14",
   "python_preferred": "3.12",
+  "hash_rule": "Each sha256 is the exact published/download bytes (GitHub raw). Downloader verifies raw bytes before any local normalization.",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
   "files": [
     {
       "path": "install_otacon.bat",
-      "sha256": "bf2362f839f90bb881cc8ab2896e85c00340513fb8c852df724c41c9303a2e12",
-      "bytes": 13589
+      "sha256": "7bf4dc677bafc72129fefe31f3f0ae2b8946a18ea8d8c675763bf3949b911eaa",
+      "bytes": 13619
     },
     {
       "path": "OtaconsKeep-Setup.bat",
-      "sha256": "000f9372a7ee8c146c6977dee0d6f88fb643ef4eed3f7ad546d055b40c069315",
-      "bytes": 16674
+      "sha256": "e1026e584518ef5944a2ed17283939e45b59103d43277a793820eb5a2ed35a3f",
+      "bytes": 16702
     },
     {
       "path": "Reinstall-Otacon.bat",
-      "sha256": "29f4ef1edb11e62acfe43be62137420f8804b7d746c7985b2c4eeb879175c861",
-      "bytes": 2305
+      "sha256": "87032676a4839017945a84d04ea452e8ed33843b71d74fbca8b08dac5f8be14a",
+      "bytes": 2302
     },
     {
       "path": "Fix-Otacon-GPU.bat",
-      "sha256": "a54b279ef314e1e377ff705332ad05a1369a53bdec2cc957105a450a61cce241",
-      "bytes": 1848
+      "sha256": "edcd802e4492fcb49ac678afdd49c11a6ea61dabda246c4abebbfa9364acfa17",
+      "bytes": 1845
     },
     {
       "path": "install_otacon.sh",
@@ -42,8 +43,8 @@
     },
     {
       "path": "deploy/bootstrap-fetch.ps1",
-      "sha256": "8beeec6f4b2722593bdcb695a9dbc43a8cecb117e31b1422a6cd2523e5060945",
-      "bytes": 21680
+      "sha256": "6c45549811ae137f716208308219c861e2a71dad7d8b23c5395f3a7b36dd08ae",
+      "bytes": 21918
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
@@ -67,8 +68,8 @@
     },
     {
       "path": "deploy/get-fix-codec.cmd",
-      "sha256": "e46b2c9d17e4da7ebb6732f5d2a19c9e2d654c91ed961b88944f2d9825c2a095",
-      "bytes": 1778
+      "sha256": "4e147720222514f48dc18c0f5385e3f73ff58dd9a7b45a1e097de58b305ec4af",
+      "bytes": 1775
     },
     {
       "path": "deploy/find-ubuntu.ps1",
@@ -97,8 +98,8 @@
     },
     {
       "path": "deploy/check-bat-encoding.ps1",
-      "sha256": "e77d8bc773bb3c36dc3c2e297ad7bc64d7ed598103c4686f6b1b7fe6a67dab3a",
-      "bytes": 1754
+      "sha256": "a00cc1e4ebf5df9ef42969edbe1be99a2c41a7fd6390184a2acc14070ccee015",
+      "bytes": 1981
     }
   ],
   "notes": "Windows Setup always refreshes bootstrap-fetch.ps1, then refreshes this bundle. Pin ecosystem_ref to a tag/commit for production cutovers."

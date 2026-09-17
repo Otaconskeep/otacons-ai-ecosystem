@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 REM ============================================================
 REM  Reinstall-Otacon.bat
 REM  Double-click only. No flags. No PowerShell knowledge needed.

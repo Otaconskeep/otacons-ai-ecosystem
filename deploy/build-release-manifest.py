@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Build release.json installer bundle metadata (version + commit + SHA256)."""
+"""Build release.json from FINAL published artifact bytes.
+
+Canonical rule:
+  SHA256(manifest) == SHA256(exact bytes served by GitHub raw / downloaded by Setup)
+
+Never hash a post-normalization representation that differs from the published blob.
+Optional local normalization may happen ONLY AFTER download verification.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -10,14 +17,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Installer-owned files that must match GitHub on every Setup launch.
 BUNDLE_FILES = [
     "install_otacon.bat",
     "OtaconsKeep-Setup.bat",
     "Reinstall-Otacon.bat",
     "Fix-Otacon-GPU.bat",
     "install_otacon.sh",
-    "release.json",  # placeholder; hashed after write without self
+    "release.json",  # excluded from files[] self-hash
     "deploy/installer-revision.txt",
     "deploy/bootstrap-fetch.ps1",
     "deploy/windows-setup-assistant.ps1",
@@ -33,15 +39,16 @@ BUNDLE_FILES = [
     "deploy/check-bat-encoding.ps1",
 ]
 
-INSTALLER_VERSION = "1.1.0"
+INSTALLER_VERSION = "1.1.1"
+BOM = b"\xef\xbb\xbf"
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return sha256_bytes(path.read_bytes())
 
 
 def git_head() -> str:
@@ -52,6 +59,47 @@ def git_head() -> str:
     except Exception:
         rev = (ROOT / "deploy" / "installer-revision.txt").read_text(encoding="utf-8").strip()
         return rev or "unknown"
+
+
+def git_blob_bytes(rel: str) -> bytes | None:
+    """Return committed blob bytes for rel (what GitHub raw serves), if present."""
+    try:
+        return subprocess.check_output(
+            ["git", "show", f"HEAD:{rel}"], cwd=ROOT
+        )
+    except subprocess.CalledProcessError:
+        return None
+
+
+def ensure_published_encoding(rel: str, path: Path) -> None:
+    """Apply final packaging transforms BEFORE hashing (in place)."""
+    data = path.read_bytes()
+    if rel.endswith(".bat") or rel.endswith(".cmd"):
+        if data.startswith(BOM):
+            data = data[3:]
+        text = data.decode("utf-8")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        if any(ord(c) > 127 for c in text):
+            raise SystemExit(f"{rel}: non-ASCII content not allowed in bat/cmd")
+        out = text.replace("\n", "\r\n").encode("ascii")
+        if not out.endswith(b"\r\n"):
+            out += b"\r\n"
+        path.write_bytes(out)
+        return
+    if rel.endswith(".ps1"):
+        if data.startswith(BOM):
+            body = data[3:]
+        else:
+            body = data
+        text = body.decode("utf-8")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        if any(ord(c) > 127 for c in text):
+            # Keep ASCII for PS 5.1 safety in installer helpers.
+            raise SystemExit(f"{rel}: non-ASCII content not allowed in deploy ps1 helpers")
+        out = BOM + text.replace("\n", "\r\n").encode("ascii")
+        if not out.endswith(b"\r\n"):
+            out += b"\r\n"
+        path.write_bytes(out)
 
 
 def main() -> int:
@@ -66,8 +114,7 @@ def main() -> int:
             if pinned:
                 commit = pinned
 
-
-    files_meta = []
+    # Finalize on-disk published bytes, then hash those exact bytes.
     for rel in BUNDLE_FILES:
         if rel == "release.json":
             continue
@@ -75,7 +122,25 @@ def main() -> int:
         if not path.is_file():
             print(f"MISSING {rel}", file=sys.stderr)
             return 1
-        files_meta.append({"path": rel, "sha256": sha256_file(path), "bytes": path.stat().st_size})
+        if rel.endswith((".bat", ".cmd", ".ps1")):
+            ensure_published_encoding(rel, path)
+
+    files_meta = []
+    for rel in BUNDLE_FILES:
+        if rel == "release.json":
+            continue
+        path = ROOT / rel
+        data = path.read_bytes()
+        digest = sha256_bytes(data)
+        # Warn if HEAD blob already differs (would mean previous commit != working tree publish form).
+        blob = git_blob_bytes(rel)
+        if blob is not None and sha256_bytes(blob) != digest:
+            print(
+                f"WARN {rel}: working-tree publish bytes differ from HEAD blob "
+                f"(commit the finalized bytes so GitHub raw matches the manifest)",
+                file=sys.stderr,
+            )
+        files_meta.append({"path": rel, "sha256": digest, "bytes": len(data)})
 
     doc = {
         "product": "Otacon",
@@ -87,6 +152,10 @@ def main() -> int:
         "ai9_ref": "main",
         "python_requires": ">=3.10,<3.14",
         "python_preferred": "3.12",
+        "hash_rule": (
+            "Each sha256 is the exact published/download bytes (GitHub raw). "
+            "Downloader verifies raw bytes before any local normalization."
+        ),
         "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
         "files": files_meta,
         "notes": (
@@ -98,7 +167,6 @@ def main() -> int:
     out = ROOT / "release.json"
     text = json.dumps(doc, indent=2) + "\n"
     out.write_text(text, encoding="utf-8")
-    # Re-hash release.json itself is optional; bootstrap verifies listed files.
     print(f"wrote {out} installer_version={INSTALLER_VERSION} commit={commit} files={len(files_meta)}")
     return 0
 

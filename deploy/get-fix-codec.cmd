@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 REM ============================================================
 REM  get-fix-codec.cmd
 REM  Double-click this file. Do NOT paste it into CMD.
