@@ -44,6 +44,9 @@ $script:ChosenDistroMode = ""   # dedicated | reuse | ""
 $script:ReinstallRequested = [bool]$Reinstall
 # Last base URL that answered /api/branding (localhost or WSL IP).
 $script:OtaconOpenBase = "http://127.0.0.1:$Port"
+# AutoPilot: no I/R/C menus on the happy path - Otacon runs the install.
+$script:AutoPilot = $true
+$script:OtaconUiReady = $false
 
 New-Item -ItemType Directory -Force -Path $KeepDir, $LogDir, $DiagDir | Out-Null
 
@@ -111,36 +114,144 @@ function Save-InstallerComplete {
 }
 
 # ---------------------------------------------------------------------------
-# UI helpers
+# UI helpers - Otacon sci-fi console (CMD/PowerShell constrained)
 # ---------------------------------------------------------------------------
+function Initialize-OtaconConsole {
+    if ($script:OtaconUiReady) { return }
+    try {
+        $Host.UI.RawUI.WindowTitle = "OTACON // OTACONSKEEP LINK"
+        # Dark console when we can (ignore failures under redirected hosts).
+        try { [Console]::BackgroundColor = "Black" } catch {}
+        try { [Console]::ForegroundColor = "Cyan" } catch {}
+        try { Clear-Host } catch {}
+    } catch {}
+    $script:OtaconUiReady = $true
+}
+
+function Get-OtaconGlyphs {
+    return @(
+        "0","1","7","A","C","E","F","X","|",":","+","*","#","@",
+        "01","AF","7F","::","[]","<>","/\"
+    )
+}
+
+function Show-OtaconRain {
+    param([int]$Frames = 14, [int]$DelayMs = 45)
+    Initialize-OtaconConsole
+    $glyphs = Get-OtaconGlyphs
+    $width = 72
+    try {
+        $w = [Console]::WindowWidth
+        if ($w -gt 40) { $width = [Math]::Min(96, $w - 1) }
+    } catch {}
+    $height = 12
+    $cols = New-Object int[] $width
+    $rnd = New-Object System.Random
+    for ($i = 0; $i -lt $width; $i++) { $cols[$i] = $rnd.Next(-$height, $height) }
+    for ($f = 0; $f -lt $Frames; $f++) {
+        try { [Console]::SetCursorPosition(0, 0) } catch { Clear-Host }
+        Write-Host ""
+        Write-Host ("  " + ("=" * ($width - 4))) -ForegroundColor DarkCyan
+        Write-Host ("  OTACON UPLINK  //  MATRIX CHANNEL  //  FRAME {0:D2}" -f $f) -ForegroundColor Cyan
+        Write-Host ("  " + ("=" * ($width - 4))) -ForegroundColor DarkCyan
+        for ($row = 0; $row -lt $height; $row++) {
+            $line = New-Object System.Text.StringBuilder ($width)
+            for ($c = 0; $c -lt $width; $c++) {
+                $head = $cols[$c]
+                if ($row -eq $head) {
+                    [void]$line.Append($glyphs[$rnd.Next(0, $glyphs.Count)])
+                } elseif ($row -lt $head -and $row -gt ($head - 4)) {
+                    [void]$line.Append($glyphs[$rnd.Next(0, [Math]::Min(8, $glyphs.Count))])
+                } else {
+                    [void]$line.Append(" ")
+                }
+            }
+            $color = if (($row % 3) -eq 0) { "Green" } elseif (($row % 3) -eq 1) { "DarkGreen" } else { "DarkCyan" }
+            Write-Host ("  " + $line.ToString()) -ForegroundColor $color
+        }
+        for ($c = 0; $c -lt $width; $c++) {
+            $cols[$c]++
+            if ($cols[$c] -gt ($height + 2)) { $cols[$c] = $rnd.Next(-$height, 0) }
+        }
+        Start-Sleep -Milliseconds $DelayMs
+    }
+}
+
+function Write-OtaconSay {
+    param(
+        [Parameter(Mandatory = $true)][string]$Message,
+        [string]$Mood = "info",  # info | ok | warn | alert | work
+        [switch]$NoType
+    )
+    Initialize-OtaconConsole
+    $tagColor = switch ($Mood) {
+        "ok"    { "Green" }
+        "warn"  { "Yellow" }
+        "alert" { "Red" }
+        "work"  { "DarkCyan" }
+        default { "Cyan" }
+    }
+    $msgColor = switch ($Mood) {
+        "ok"    { "Green" }
+        "warn"  { "Yellow" }
+        "alert" { "Magenta" }
+        "work"  { "Gray" }
+        default { "White" }
+    }
+    Write-Host ""
+    Write-Host -NoNewline "  [" -ForegroundColor DarkCyan
+    Write-Host -NoNewline "OTACON" -ForegroundColor $tagColor
+    Write-Host -NoNewline "] " -ForegroundColor DarkCyan
+    if ($NoType -or $Message.Length -gt 140) {
+        Write-Host $Message -ForegroundColor $msgColor
+    } else {
+        foreach ($ch in $Message.ToCharArray()) {
+            Write-Host -NoNewline $ch -ForegroundColor $msgColor
+            Start-Sleep -Milliseconds 8
+        }
+        Write-Host ""
+    }
+    Write-KeepLog "OTACON: $Message" -Stage "OTACON"
+}
+
+function Show-OtaconRule {
+    param([ConsoleColor]$Color = "DarkCyan")
+    Write-Host ("  " + ("-" * 62)) -ForegroundColor $Color
+}
+
 function Show-Banner {
+    Initialize-OtaconConsole
+    Clear-Host
+    Show-OtaconRain -Frames 10 -DelayMs 35
     Clear-Host
     Write-Host ""
-    Write-Host "============================================================" -ForegroundColor DarkYellow
-    Write-Host "                 OTACONSKEEP SETUP" -ForegroundColor Yellow
-    Write-Host "============================================================" -ForegroundColor DarkYellow
+    Show-OtaconRule -Color Cyan
+    Write-Host "   ####    #####    #    ####    ####   #   #" -ForegroundColor Cyan
+    Write-Host "  #    #     #     # #  #    #  #    #  ##  #" -ForegroundColor Cyan
+    Write-Host "  #    #     #    #   #  #      #    #  # # #" -ForegroundColor Green
+    Write-Host "  #    #     #    #####  #      #    #  #  ##" -ForegroundColor Green
+    Write-Host "   ####      #    #   #   ####   ####   #   #" -ForegroundColor Yellow
+    Show-OtaconRule -Color Cyan
+    Write-Host "   OTACONSKEEP  //  WINDOWS LINK  //  AUTO-INSTALL" -ForegroundColor Yellow
+    Write-Host "   You do not need Linux. I am handling the installation." -ForegroundColor DarkCyan
+    Show-OtaconRule -Color Cyan
     Write-Host ""
-    Write-Host "                 O T A C O N" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "          WINDOWS INSTALLATION ASSISTANT" -ForegroundColor White
-    Write-Host ""
-    Write-Host "============================================================" -ForegroundColor DarkYellow
-    Write-Host ""
+    Write-OtaconSay "Hi. I'm Otacon. Sit tight - I'll set everything up for you." -Mood "info"
+    Write-OtaconSay "No menus. No Linux homework. Just leave this window open." -Mood "work" -NoType
 }
 
 function Show-Box {
-    param([string]$Title, [string[]]$Lines, [ConsoleColor]$Color = "Yellow")
+    param([string]$Title, [string[]]$Lines, [ConsoleColor]$Color = "Cyan")
+    Initialize-OtaconConsole
     Write-Host ""
-    Write-Host ("=" * 60) -ForegroundColor $Color
-    Write-Host ("  {0}" -f $Title) -ForegroundColor $Color
-    Write-Host ("=" * 60) -ForegroundColor $Color
-    Write-Host ""
+    Show-OtaconRule -Color $Color
+    Write-Host ("  >> {0}" -f $Title.ToUpperInvariant()) -ForegroundColor $Color
+    Show-OtaconRule -Color DarkCyan
     foreach ($ln in $Lines) {
         if ($null -eq $ln) { Write-Host ""; continue }
-        Write-Host ("  {0}" -f $ln)
+        Write-Host ("     {0}" -f $ln) -ForegroundColor Gray
     }
-    Write-Host ""
-    Write-Host ("=" * 60) -ForegroundColor $Color
+    Show-OtaconRule -Color $Color
     Write-Host ""
 }
 
@@ -152,39 +263,26 @@ function Show-WorkingPanel {
         [datetime]$Started,
         [string]$Typical = "a few minutes"
     )
+    Initialize-OtaconConsole
     $elapsed = (Get-Date) - $Started
     $em = "{0:00}m {1:00}s" -f [int]$elapsed.TotalMinutes, $elapsed.Seconds
     Clear-Host
     Write-Host ""
-    # Plain ASCII panel only -- CMD/console code pages break box-drawing glyphs.
-    Write-Host ("+" + ("-" * 60) + "+") -ForegroundColor DarkYellow
-    Write-Host ("|{0}|" -f ("OTACONSKEEP".PadLeft(35).PadRight(60))) -ForegroundColor Yellow
-    Write-Host ("|{0}|" -f ("WINDOWS SETUP ASSISTANT".PadLeft(41).PadRight(60))) -ForegroundColor Yellow
-    Write-Host ("+" + ("-" * 60) + "+") -ForegroundColor DarkYellow
-    Write-Host ("|{0}|" -f ("").PadRight(60))
-    $stepLabel = ("[{0}/{1}] {2}" -f $Step, $TotalSteps, $StepName.ToUpper())
-    if ($stepLabel.Length -gt 58) { $stepLabel = $stepLabel.Substring(0, 58) }
-    Write-Host ("|  {0}{1}|" -f $stepLabel, (" " * [Math]::Max(0, 58 - $stepLabel.Length))) -ForegroundColor Cyan
-    Write-Host ("|{0}|" -f ("").PadRight(60))
-    Write-Host ("|  Otacon is NOT ready yet{0}|" -f (" " * 35)) -ForegroundColor White
-    Write-Host ("|{0}|" -f ("").PadRight(60))
-    $detail = $Detail
+    Show-OtaconRule -Color Cyan
+    Write-Host ("  OTACON  //  LINK ACTIVE  //  STEP {0}/{1}" -f $Step, $TotalSteps) -ForegroundColor Cyan
+    Write-Host ("  MISSION : {0}" -f $StepName.ToUpperInvariant()) -ForegroundColor Yellow
+    Show-OtaconRule -Color DarkCyan
+    Write-Host ("  STATUS  : WORKING - do not close this window") -ForegroundColor Green
+    $detail = "$Detail"
     if ($detail.Length -gt 58) { $detail = $detail.Substring(0, 58) }
-    Write-Host ("|  {0}{1}|" -f $detail, (" " * [Math]::Max(0, 58 - $detail.Length)))
-    Write-Host ("|{0}|" -f ("").PadRight(60))
-    Write-Host ("|  This is normal{0}|" -f (" " * 44))
-    Write-Host ("|  Nothing has crashed{0}|" -f (" " * 39))
-    Write-Host ("|  Do not close this window{0}|" -f (" " * 34)) -ForegroundColor Green
-    Write-Host ("|{0}|" -f ("").PadRight(60))
-    Write-Host ("|  Elapsed time     {0}{1}|" -f $em, (" " * [Math]::Max(0, 41 - $em.Length)))
-    Write-Host ("|  Typical time     {0}{1}|" -f $Typical, (" " * [Math]::Max(0, 41 - $Typical.Length)))
-    Write-Host ("|{0}|" -f ("").PadRight(60))
-    Write-Host ("|  Your Ubuntu VM in Proxmox is separate{0}|" -f (" " * 21))
-    Write-Host ("|  We prepare Ubuntu inside Windows automatically{0}|" -f (" " * 12))
-    Write-Host ("|{0}|" -f ("").PadRight(60))
-    Write-Host ("|{0}|" -f ("[ STILL WORKING ]".PadLeft(38).PadRight(60))) -ForegroundColor Green
-    Write-Host ("|{0}|" -f ("").PadRight(60))
-    Write-Host ("+" + ("-" * 60) + "+") -ForegroundColor DarkYellow
+    Write-Host ("  DETAIL  : {0}" -f $detail) -ForegroundColor White
+    Write-Host ("  ELAPSED : {0}   typical {1}" -f $em, $Typical) -ForegroundColor DarkCyan
+    Show-OtaconRule -Color Cyan
+    # Mini rain strip
+    $glyphs = Get-OtaconGlyphs
+    $rnd = New-Object System.Random
+    $strip = -join (0..61 | ForEach-Object { $glyphs[$rnd.Next(0, 8)] })
+    Write-Host ("  {0}" -f $strip) -ForegroundColor DarkGreen
     Write-Host ""
 }
 
@@ -281,7 +379,7 @@ function Ensure-WslDistroRunning {
 
     Write-KeepLog "starting WSL distro=$Name (was $state)" -Stage "WSL"
     try {
-        # Cheap boot probe as root — works even when default user has no shell yet.
+        # Cheap boot probe as root - works even when default user has no shell yet.
         & wsl.exe -d $Name -u root -- echo ok 1>$null 2>$null
     } catch {}
     Start-Sleep -Seconds 2
@@ -388,7 +486,7 @@ function Get-WslUbuntuFamilyNames {
 function Get-UbuntuDistroName {
     # Prefer dedicated OtaconsKeep / versioned distros.
     # Stock "Ubuntu" is OK when it is the only available distro and it actually boots
-    # (virgin wsl --install -d Ubuntu creates that name — ignoring it caused reboot loops).
+    # (virgin wsl --install -d Ubuntu creates that name - ignoring it caused reboot loops).
     $st = Get-InstallerState
     $stated = [string]$st["ubuntu_name"]
     $mode = [string]$st["ubuntu_mode"]
@@ -439,27 +537,37 @@ function Get-UbuntuDistroName {
 
 function Resolve-OtaconDistroInteractive {
     <#
-      Gate E: existing Ubuntu is NOT silently mutated.
-      Returns chosen distro name, or $null if aborted.
+      AutoPilot: never ask R/C/A. Prefer Ubuntu-Otacon, else create it.
+      Existing Ubuntu is not silently mutated when other distros exist -
+      we create dedicated Ubuntu-Otacon beside them.
     #>
     Write-WslListVerbose
     $existing = Get-UbuntuDistroName
     if ($existing) {
-        Write-KeepLog "using dedicated/known distro=$existing" -Stage "WSL"
+        Write-OtaconSay "Found your Linux environment: $existing. I'll use that." -Mood "ok" -NoType
+        Write-KeepLog "autopilot using dedicated/known distro=$existing" -Stage "WSL"
         return $existing
     }
 
     $family = Get-WslUbuntuFamilyNames
-    # Prefer non-stock versioned distros for the picker, but do not pretend
-    # the machine is virgin when only stock "Ubuntu" exists (that caused reboot loops).
+    $preferredHit = $family | Where-Object {
+        $n = $_
+        [bool]($PreferredDistroAliases | Where-Object { $n.Equals($_, [System.StringComparison]::OrdinalIgnoreCase) })
+    } | Select-Object -First 1
+    if ($preferredHit) {
+        $script:ChosenDistroMode = "dedicated"
+        Write-OtaconSay "Linked to $preferredHit." -Mood "ok" -NoType
+        return $preferredHit
+    }
+
     $others = @($family | Where-Object {
             $n = $_
             -not ($PreferredDistroAliases | Where-Object { $n.Equals($_, [System.StringComparison]::OrdinalIgnoreCase) })
         })
 
     if ($others.Count -eq 0) {
-        # Truly virgin — create dedicated Ubuntu-Otacon
         $script:ChosenDistroMode = "dedicated"
+        Write-OtaconSay "No Otacon Linux yet. I'll create $PreferredDistro for you - you don't need to know Linux." -Mood "work" -NoType
         return $PreferredDistro
     }
 
@@ -469,74 +577,16 @@ function Resolve-OtaconDistroInteractive {
     if ($nonStock.Count -eq 0 -and $onlyStock.Count -ge 1) {
         $script:ChosenDistroMode = "reuse"
         Save-InstallerState @{ ubuntu_name = "Ubuntu"; ubuntu_mode = "reuse" }
-        Write-KeepLog "only stock Ubuntu present - reusing" -Stage "WSL"
+        Write-OtaconSay "I'll use the Ubuntu already on this PC." -Mood "ok" -NoType
+        Write-KeepLog "autopilot only stock Ubuntu present - reusing" -Stage "WSL"
         return "Ubuntu"
     }
 
-    # Power-user PC with other Ubuntu* - require explicit choice
-    $lines = @(
-        "This PC already has Windows Linux (WSL) distributions:",
-        ""
-    )
-    $idx = 1
-    foreach ($d in $nonStock) {
-        $st = Get-WslDistroState -Name $d
-        $mark = if ($st -eq "Running") { "RUNNING - prefer this" } else { $st.ToUpperInvariant() }
-        $lines += ("  [{0}] {1}  ({2})" -f $idx, $d, $mark)
-        $idx++
-    }
-    if ($onlyStock.Count -gt 0) {
-        $stU = Get-WslDistroState -Name "Ubuntu"
-        $lines += ("  [U] Ubuntu  ({0}) - Store default" -f $stU.ToUpperInvariant())
-    }
-    $lines += ""
-    $lines += "Tip: pick a RUNNING Ubuntu if you have one (Stopped distros often fail)."
-    $lines += "OtaconsKeep prefers a dedicated distro named $PreferredDistro"
-    $lines += "so your existing Ubuntu is not silently changed."
-    $lines += ""
-    $lines += "[ R ] Reuse an existing distro (you choose which)"
-    $lines += "[ C ] Create dedicated $PreferredDistro (side-by-side)"
-    $lines += "[ A ] Abort setup"
-    Show-Box "WSL DISTRIBUTION CHOICE" $lines -Color Yellow
-
-    $c = Read-Choice "  Choice [R/C/A]: " @("R","C","A")
-    if ($c -eq "A") {
-        Write-KeepLog "user aborted WSL distro selection" -Stage "WSL"
-        return $null
-    }
-    if ($c -eq "C") {
-        $script:ChosenDistroMode = "dedicated"
-        Write-KeepLog "user chose create dedicated $PreferredDistro" -Stage "WSL"
-        return $PreferredDistro
-    }
-
-    # Reuse - pick which (numbered non-stock list, or U for stock Ubuntu)
-    $pickList = @($nonStock)
-    if ($pickList.Count -eq 1 -and $onlyStock.Count -eq 0) {
-        $script:ChosenDistroMode = "reuse"
-        Save-InstallerState @{ ubuntu_name = $pickList[0]; ubuntu_mode = "reuse" }
-        Write-KeepLog "user reused sole distro=$($pickList[0])" -Stage "WSL"
-        return $pickList[0]
-    }
-    Write-Host "  Enter the number of the distro to reuse (or U for stock Ubuntu):" -ForegroundColor Cyan
-    while ($true) {
-        $raw = Read-Host "  Number"
-        if ($onlyStock.Count -gt 0 -and $raw -and $raw.Trim().Equals("U", [StringComparison]::OrdinalIgnoreCase)) {
-            $script:ChosenDistroMode = "reuse"
-            Save-InstallerState @{ ubuntu_name = "Ubuntu"; ubuntu_mode = "reuse" }
-            Write-KeepLog "user reused stock Ubuntu" -Stage "WSL"
-            return "Ubuntu"
-        }
-        $n = 0
-        if ([int]::TryParse($raw, [ref]$n) -and $n -ge 1 -and $n -le $pickList.Count) {
-            $pick = $pickList[$n - 1]
-            $script:ChosenDistroMode = "reuse"
-            Save-InstallerState @{ ubuntu_name = $pick; ubuntu_mode = "reuse" }
-            Write-KeepLog "user reused distro=$pick" -Stage "WSL"
-            return $pick
-        }
-        Write-Host "  Invalid number." -ForegroundColor DarkYellow
-    }
+    # Other Ubuntu* present - do not mutate them; create dedicated side-by-side.
+    $script:ChosenDistroMode = "dedicated"
+    Write-OtaconSay "You already have Linux on Windows. I'll add $PreferredDistro beside it so nothing else is changed." -Mood "work" -NoType
+    Write-KeepLog "autopilot creating dedicated $PreferredDistro beside existing=$($nonStock -join ',')" -Stage "WSL"
+    return $PreferredDistro
 }
 
 function Get-WslPrimaryIp {
@@ -1149,7 +1199,7 @@ function Show-ComponentStoreCorruptHelp {
         "If Otacon was already installed on this PC:",
         "press F to wake Codec only (skip Windows repair)",
         "",
-        "STOP pressing I — that only repeats 14098.",
+        "STOP pressing I - that only repeats 14098.",
         "",
         "Otherwise fix Windows first (Admin Command Prompt):",
         "",
@@ -1193,9 +1243,7 @@ function Show-SetupNeedsHelp {
         return (Show-ComponentStoreCorruptHelp -Detail $PlainError)
     }
     Show-Box "SETUP NEEDS HELP" @(
-        "otacon could not finish this step",
-        "",
-        "nothing was deleted",
+        "[OTACON] I hit a snag - nothing was deleted.",
         "",
         "step",
         $Step,
@@ -1203,14 +1251,12 @@ function Show-SetupNeedsHelp {
         "error",
         $PlainError,
         "",
-        "technical details were saved here",
-        "",
+        "log",
         $LogFile,
         "",
-        "press R to retry this step",
-        "press O to open the log folder",
-        "press X to exit setup"
+        "[ R ] Retry    [ O ] Open logs    [ X ] Exit"
     ) -Color Red
+    Write-OtaconSay "I need a decision here. Press R to retry, O for logs, or X to exit." -Mood "alert" -NoType
     Write-KeepLog "FAILED step=$Step err=$PlainError" -Level "ERROR" -Stage "FAILED"
     Save-InstallerState @{ stage = "failed"; last_error = $PlainError; last_step = $Step }
     while ($true) {
@@ -1244,41 +1290,21 @@ function Clear-ResumeMarkers {
 }
 
 function Request-RestartConfirmation {
-    Show-Box "RESTART REQUIRED" @(
-        "GOOD NEWS",
-        "",
-        "Everything is working normally",
-        "",
-        "Windows needs one restart before setup can continue",
-        "",
-        "OTACON IS NOT INSTALLED YET",
-        "",
-        "After you sign back into Windows",
-        "this installer will automatically continue",
-        "where it left off",
-        "",
-        "Save anything you are working on before restarting",
-        "",
-        "Your Proxmox Ubuntu VM is separate and will not be changed",
-        "",
-        "[ R ] RESTART NOW        [ L ] RESTART LATER"
-    ) -Color Yellow
     Register-ResumeAfterReboot
-    $c = Read-Choice "  Choice [R/L]: " @("R","L")
-    if ($c -eq "R") {
-        Write-KeepLog "user chose restart now" -Stage "WAITING_FOR_REBOOT"
-        Write-Host "  Restarting Windows in a few seconds..." -ForegroundColor Yellow
-        Start-Sleep -Seconds 2
-        shutdown.exe /r /t 5 /c "OtaconsKeep setup needs one restart to finish Windows Linux support."
-        return
+    Write-OtaconSay "Windows needs one restart before I can continue. I'll reopen setup after you sign in." -Mood "warn"
+    Show-Box "RESTART REQUIRED" @(
+        "Otacon is NOT installed yet - this restart unlocks Linux support.",
+        "Setup will auto-continue after sign-in.",
+        "Your Proxmox Ubuntu VM is separate and will not be changed.",
+        "",
+        "Restarting in 8 seconds... (close this window to cancel)"
+    ) -Color Yellow
+    Write-KeepLog "autopilot scheduling restart" -Stage "WAITING_FOR_REBOOT"
+    for ($i = 8; $i -ge 1; $i--) {
+        Write-Host ("  [OTACON] restart in {0}..." -f $i) -ForegroundColor Cyan
+        Start-Sleep -Seconds 1
     }
-    Write-Host ""
-    Write-Host "  OK - restart later when you can." -ForegroundColor Green
-    Write-Host "  After you restart and sign in, setup should reopen by itself." -ForegroundColor Green
-    Write-Host "  If it does not, double-click OtaconsKeep-Setup.bat again." -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  Press any letter key to close this window (setup is paused, not failed)." -ForegroundColor DarkYellow
-    [void][Console]::ReadKey($true)
+    shutdown.exe /r /t 3 /c "OtaconsKeep setup needs one restart to finish Windows Linux support."
 }
 
 # ---------------------------------------------------------------------------
@@ -1286,41 +1312,30 @@ function Request-RestartConfirmation {
 # ---------------------------------------------------------------------------
 function Open-OtaconIfReady {
     $ubuntu = Get-UbuntuDistroName
-    # Always attempt core repair first — fixes connection refused / wedged scan / dead unit.
+    # Always attempt core repair first - fixes connection refused / wedged scan / dead unit.
     if ($ubuntu) {
-        Write-Host "  Making sure Otacon is awake..." -ForegroundColor Cyan
+        Write-OtaconSay "Making sure Otacon is awake..." -Mood "work" -NoType
         [void](Invoke-OtaconCoreRepair -Name $ubuntu -Codec)
     }
     $s = Get-WhereYouAre
     if ($s.web_health -or (Test-OtaconHealth)) {
         $url = Get-OtaconOpenUrl -Codec
-        Write-Host "  Opening $url" -ForegroundColor Green
+        Write-OtaconSay "You're online. Opening Codec." -Mood "ok"
         Start-Process $url
         return $true
     }
-    Show-Box "HANG ON" @(
-        "otacon isnt ready yet",
-        "",
-        "installation is currently at",
+    # AutoPilot: not ready yet - continue install without I/F/X menu.
+    Write-OtaconSay "Not ready to open yet (state: $($s.overall)). I'll finish the installation." -Mood "warn" -NoType
+    Show-Box "LINK PENDING" @(
+        "Otacon isn't answering yet.",
         "",
         "state: $($s.overall)",
         $(if ($s.ubuntu_ready) { "ubuntu: ready" } else { "ubuntu: not ready" }),
         $(if ($s.otacon_files) { "otacon files: present" } else { "otacon files: not installed" }),
         "",
-        "launching the website now would not work",
-        "",
-        "continue installation instead",
-        "",
-        "press I to continue setup",
-        "press F to retry fix/wake",
-        "press X to exit"
+        "Continuing setup automatically..."
     ) -Color Yellow
-    $c = Read-Choice "  Choice [I/F/X]: " @("I","F","X")
-    if ($c -eq "F") {
-        if ($ubuntu -and (Invoke-OtaconCoreRepair -Name $ubuntu -Codec)) { return $true }
-        return (Open-OtaconIfReady)
-    }
-    return ($c -eq "I")
+    return $true
 }
 
 # ---------------------------------------------------------------------------
@@ -1341,11 +1356,9 @@ function Ensure-Admin {
     $elevateArgs = @("--resume")
     if ($script:ForceInstall) { $elevateArgs += "--force" }
     Start-Process -FilePath $bat -ArgumentList $elevateArgs -WorkingDirectory (Split-Path -Parent $bat) -Verb RunAs
-    Write-Host ""
-    Write-Host "  A new elevated Setup window should open after you click Yes." -ForegroundColor Green
-    Write-Host "  You can close THIS window now - setup continues in the new one." -ForegroundColor Green
-    Write-Host "  If you clicked No on the Windows popup, press X to exit, or R to try again." -ForegroundColor DarkYellow
-    Write-Host ""
+    Write-OtaconSay "Windows will show a permission popup - click Yes. Setup continues in the new elevated window." -Mood "warn"
+    Write-Host "  You can close THIS window once the elevated one appears." -ForegroundColor DarkCyan
+    Write-Host "  If you clicked No, press R to try again or X to exit." -ForegroundColor DarkYellow
     while ($true) {
         $c = Read-Choice "  Choice [R/X]: " @("R","X")
         if ($c -eq "X") { return $false }
@@ -1410,7 +1423,7 @@ function Step-EnableWsl {
         return 0
     }
 
-    # If WSL is already enabled, NEVER call `wsl --install` again — that re-touches
+    # If WSL is already enabled, NEVER call `wsl --install` again - that re-touches
     # Windows optional features and hits error 14098 (corrupt component store) in a loop.
     # Import a rootfs instead (no DISM feature enable).
     if (Test-WslPresent) {
@@ -1446,7 +1459,7 @@ function Step-EnableWsl {
             $rc2 = Install-DedicatedUbuntuOtacon
             if ($rc2 -eq 0) { return 0 }
         }
-        $act = Show-ComponentStoreCorruptHelp -Detail "wsl --install exit=14098 — do NOT press I again; Windows must be repaired OR use import"
+        $act = Show-ComponentStoreCorruptHelp -Detail "wsl --install exit=14098 - do NOT press I again; Windows must be repaired OR use import"
         if ($act -eq "fixed") { return 0 }
         if ($act -eq "retry") { return (Install-DedicatedUbuntuOtacon) }
         return 14098
@@ -1504,7 +1517,7 @@ function Install-DedicatedUbuntuOtacon {
     $code = $p.ExitCode
     if ($code -eq 0) {
         Save-InstallerState @{ ubuntu_name = $PreferredDistro; ubuntu_mode = "dedicated" }
-        # Imported rootfs has only root — provision the expected non-root user now.
+        # Imported rootfs has only root - provision the expected non-root user now.
         [void](Ensure-WslDistroRunning -Name $PreferredDistro)
         $prov = Ensure-WslTargetUser -Name $PreferredDistro
         if (-not $prov.AccountValid -or -not $prov.DefaultOk) {
@@ -1572,6 +1585,7 @@ function Show-Stage6Panel {
         [string]$GpuWin = "unknown",
         [string]$GpuWsl = "unknown"
     )
+    Initialize-OtaconConsole
     $elapsed = (Get-Date) - $Started
     $em = "{0:00}m {1:00}s" -f [int]$elapsed.TotalMinutes, $elapsed.Seconds
     $since = "n/a"
@@ -1581,31 +1595,39 @@ function Show-Stage6Panel {
     }
     Clear-Host
     Write-Host ""
-    Write-Host ("+" + ("-" * 62) + "+") -ForegroundColor DarkYellow
-    Write-Host ("|{0}|" -f ("OTACONSKEEP".PadLeft(36).PadRight(62))) -ForegroundColor Yellow
-    Write-Host ("|{0}|" -f ("[6/8] INSTALLING OTACON".PadLeft(40).PadRight(62))) -ForegroundColor Cyan
-    Write-Host ("+" + ("-" * 62) + "+") -ForegroundColor DarkYellow
-    Write-Host ("|  Otacon is NOT ready yet{0}|" -f (" " * 37))
-    Write-Host ("|  Do not close this window{0}|" -f (" " * 36)) -ForegroundColor Green
-    Write-Host ("|{0}|" -f ("").PadRight(62))
-    Write-Host ("|  Current substep:{0}|" -f (" " * 44))
-    $sub = $Substep
+    Show-OtaconRule -Color Cyan
+    Write-Host "  OTACON  //  DEEP INSTALL  //  [6/8] LINUX PAYLOAD" -ForegroundColor Cyan
+    Show-OtaconRule -Color DarkCyan
+    Write-Host "  LINK    : ACTIVE - leave this window open" -ForegroundColor Green
+    $sub = "$Substep"
     if ($sub.Length -gt 58) { $sub = $sub.Substring(0, 58) }
-    Write-Host ("|    {0}{1}|" -f $sub, (" " * [Math]::Max(0, 58 - $sub.Length))) -ForegroundColor White
-    Write-Host ("|{0}|" -f ("").PadRight(62))
-    Write-Host ("|  Windows GPU : {0}{1}|" -f $GpuWin, (" " * [Math]::Max(0, 45 - $GpuWin.Length)))
-    Write-Host ("|  WSL GPU     : {0}{1}|" -f $GpuWsl, (" " * [Math]::Max(0, 45 - $GpuWsl.Length)))
-    Write-Host ("|  Elapsed     : {0}{1}|" -f $em, (" " * [Math]::Max(0, 45 - $em.Length)))
-    Write-Host ("|  Last progress: {0}{1}|" -f $since, (" " * [Math]::Max(0, 44 - $since.Length)))
-    Write-Host ("|{0}|" -f ("").PadRight(62))
-    Write-Host ("|  Live log (tail):{0}|" -f (" " * 43))
+    Write-Host ("  CURRENT : {0}" -f $sub) -ForegroundColor Yellow
+    Write-Host ("  GPU WIN : {0}" -f $GpuWin) -ForegroundColor DarkCyan
+    Write-Host ("  GPU WSL : {0}" -f $GpuWsl) -ForegroundColor DarkCyan
+    Write-Host ("  ELAPSED : {0}   last pulse {1}" -f $em, $since) -ForegroundColor Gray
+    Write-Host "  OTACON  : Installing Core - you don't need to touch anything." -ForegroundColor Cyan
+    Show-OtaconRule -Color Cyan
+    Write-Host "  LIVE FEED / FALLING CODE:" -ForegroundColor DarkCyan
+    $shown = 0
     foreach ($t in $RecentLines) {
         if (-not $t) { continue }
         $line = $t.Trim()
         if ($line.Length -gt 58) { $line = $line.Substring(0, 58) }
-        Write-Host ("|  > {0}{1}|" -f $line, (" " * [Math]::Max(0, 58 - $line.Length))) -ForegroundColor DarkGray
+        Write-Host ("    > {0}" -f $line) -ForegroundColor DarkGreen
+        $shown++
+        if ($shown -ge 6) { break }
     }
-    Write-Host ("+" + ("-" * 62) + "+") -ForegroundColor DarkYellow
+    if ($shown -eq 0) {
+        Write-Host "    (awaiting Linux output...)" -ForegroundColor DarkGreen
+    }
+    $glyphs = Get-OtaconGlyphs
+    $rnd = New-Object System.Random
+    for ($r = 0; $r -lt 3; $r++) {
+        $strip = -join (0..61 | ForEach-Object { $glyphs[$rnd.Next(0, $glyphs.Count)] })
+        $c = if ($r -eq 0) { "Green" } elseif ($r -eq 1) { "DarkGreen" } else { "DarkCyan" }
+        Write-Host ("  {0}" -f $strip) -ForegroundColor $c
+    }
+    Show-OtaconRule -Color Cyan
 }
 
 function Get-WindowsNvidiaName {
@@ -1662,7 +1684,7 @@ function Test-WslUserExists {
 
 function Test-WslLinuxUserValid {
     <#
-      State A — account validity only:
+      State A - account validity only:
         user exists, is not root, home directory and login shell are usable.
       Does NOT check whether this account is the distro's effective default.
     #>
@@ -1687,7 +1709,7 @@ echo ACCOUNT_VALID
 
 function Get-WslEffectiveDefaultUser {
     <#
-      State B — effective default-user verification.
+      State B - effective default-user verification.
       Uses: wsl -d <distro> --exec id -un
     #>
     param([string]$Name)
@@ -1887,7 +1909,7 @@ function Ensure-WslTargetUser {
             Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_INVALID user=$candidate (exists but home/shell/uid failed)" -Level "ERROR" -Stage "WSL_USER"
             return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid" }
         }
-        Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_MISSING user=$candidate — creating" -Stage "WSL_USER"
+        Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_MISSING user=$candidate - creating" -Stage "WSL_USER"
         Write-Host "  Creating Linux user '$candidate' in $Name..." -ForegroundColor Cyan
         if (-not (New-WslLinuxUser -Name $Name -User $candidate)) {
             Write-KeepLog "Ensure-WslTargetUser: create failed user=$candidate" -Level "ERROR" -Stage "WSL_USER"
@@ -1989,7 +2011,7 @@ function Start-OtaconWslBashCProcess {
     }
 
     $rawArgs = @("-d", $Distro) + @($UserArg) + @("--", "bash", "-c", $BashCommand)
-    # CRITICAL: pass one pre-quoted string — never a bare string[] — to Start-Process.
+    # CRITICAL: pass one pre-quoted string - never a bare string[] - to Start-Process.
     $argString = Format-StartProcessArgumentList -Arguments $rawArgs
     $proc = Start-Process -FilePath "wsl.exe" -ArgumentList $argString `
         -NoNewWindow -PassThru `
@@ -2362,7 +2384,7 @@ function Step-InstallOtacon {
 
     # Elevation architecture: never configure NOPASSWD:ALL.
     # privileged + finalize run as WSL root via wsl.exe -u root; user phase runs as the normal account.
-    # Dedicated Ubuntu-Otacon imports start with only root — auto-provision the expected user.
+    # Dedicated Ubuntu-Otacon imports start with only root - auto-provision the expected user.
     # Keep account validity (A) and effective default-user (B) as separate failure states.
     $prov = Ensure-WslTargetUser -Name $Name
     $targetUser = [string]$prov.User
@@ -2633,189 +2655,107 @@ function Step-Verify {
 # ---------------------------------------------------------------------------
 function Start-GuidedSetup {
     Show-Banner
-    Write-KeepLog "installer launch Resume=$Resume Force=$($script:ForceInstall)" -Stage "READY"
+    Write-KeepLog "installer launch Resume=$Resume Force=$($script:ForceInstall) AutoPilot=$($script:AutoPilot)" -Stage "READY"
 
     $st = Get-InstallerState
     if ($Resume -or $st["stage"] -eq "waiting_for_reboot" -or $st["resume_registered"]) {
-        Show-Box "WELCOME BACK" @(
-            "windows restarted successfully",
-            "",
-            "continuing otaconskeep installation",
-            "",
-            "you do not need to start over"
-        ) -Color Green
+        Write-OtaconSay "Welcome back. Windows restarted cleanly - picking up right where we left off." -Mood "ok"
         Clear-ResumeMarkers
-        Start-Sleep -Seconds 2
+        Start-Sleep -Seconds 1
     }
 
     $snap = Get-WhereYouAre
-    Show-WhereYouAre $snap
+    # Quiet status strip (no interactive menu)
+    Write-OtaconSay ("Scan complete. Overall: {0}" -f $snap.overall) -Mood "work" -NoType
 
     # Gate B: foreign HTTP on 5757 must never look like READY
     if ($snap.occupied_non_otacon) {
+        Write-OtaconSay "Port $Port is occupied by something that isn't me. I can't safely continue." -Mood "alert"
         Show-NonOtaconPortDiagnostic (Test-OtaconIdentity)
         return 1
     }
 
-    # Gate A: healthy existing install -> Open / Repair / Reinstall (never silent exit)
-    # P0-2 / P1-4: do NOT claim COMPLETE / clear errors if TTS is down.
+    # Gate A: healthy existing install - AutoPilot opens Codec; no O/F/P/R menu.
     if ($snap.web_health -and -not $script:ForceInstall) {
         $ttsOk = [bool]$snap.tts_ok
-        $title = if ($ttsOk) { "OTACON IS READY" } else { "OTACON NEEDS REPAIR" }
-        $color = if ($ttsOk) { [ConsoleColor]::Green } else { [ConsoleColor]::Yellow }
-        $openHint = Get-OtaconOpenUrl
-        $lines = @(
-            $(if ($ttsOk) { "otacon is already installed and responding" } else { "chat may be up, but the voice engine is not healthy" }),
-            "",
-            $(if ($ttsOk) { "identity check passed" } else { "voice reason: $($snap.tts_reason)" }),
-            "",
-            $openHint,
-            "",
-            "[ O ] Open Codec",
-            "[ F ] Fix connection  (wake service, skip hung GPU scan, open Codec)",
-            "[ P ] Repair voice  (TTS unit + wake + spoken preview)",
-            "[ R ] Reinstall  (force reinstall path)",
-            "[ X ] Exit"
-        )
-        Show-Box $title $lines -Color $color
         if ($ttsOk) {
             Save-InstallerComplete
-        } else {
-            Save-InstallerState @{ stage = "degraded"; last_error = "TTS down: $($snap.tts_reason)" }
-        }
-        $c = Read-Choice "  Choice [O/F/P/R/X]: " @("O","F","P","R","X")
-        if ($c -eq "O") {
+            Write-OtaconSay "You're already online. Opening Codec now." -Mood "ok"
             $ubuntuOpen = Get-UbuntuDistroName
             if ($ubuntuOpen) { [void](Invoke-OtaconCoreRepair -Name $ubuntuOpen) }
-            Start-Process (Get-OtaconOpenUrl -Codec)
-            return $(if ($ttsOk) { 0 } else { 2 })
+            try { Start-Process (Get-OtaconOpenUrl -Codec) } catch {}
+            Show-Box "LINK ESTABLISHED" @(
+                "Otacon is ready.",
+                (Get-OtaconOpenUrl -Codec),
+                "",
+                "You can close this window."
+            ) -Color Green
+            return 0
         }
-        if ($c -eq "F") {
-            $ubuntuFix = Get-UbuntuDistroName
-            if ($ubuntuFix -and (Invoke-OtaconCoreRepair -Name $ubuntuFix -Codec)) {
-                Save-InstallerComplete
-                return 0
-            }
-            Write-Host "  Fix did not bring Otacon up - continuing into guided setup." -ForegroundColor DarkYellow
-            $script:ForceInstall = $true
+        # TTS down - auto-repair without asking
+        Save-InstallerState @{ stage = "degraded"; last_error = "TTS down: $($snap.tts_reason)" }
+        Write-OtaconSay "Chat is up, but voice needs a tune-up. I'll repair that automatically." -Mood "warn"
+        $script:ForceInstall = $true
+        $ubuntu = Get-UbuntuDistroName
+        if ($ubuntu -and (Invoke-RepairTtsAndWake -Name $ubuntu)) {
+            Save-InstallerComplete
+            Write-OtaconSay "Voice restored. Opening Codec." -Mood "ok"
+            try { Start-Process (Get-OtaconOpenUrl -Codec) } catch {}
+            return 0
         }
-        if ($c -eq "X") { return $(if ($ttsOk) { 0 } else { 2 }) }
-        if ($c -eq "P") {
-            $script:ForceInstall = $true
-            Write-KeepLog "user chose Repair" -Stage "READY"
-            $ubuntu = Get-UbuntuDistroName
-            if ($ubuntu) {
-                if (Invoke-RepairTtsAndWake -Name $ubuntu) {
-                    Save-InstallerComplete
-                    Show-Box "REPAIR COMPLETE" @(
-                        "voice engine and wake task restored",
-                        "",
-                        "http://localhost:$Port",
-                        "",
-                        "press O to open, X to finish"
-                    ) -Color Green
-                    $c2 = Read-Choice "  Choice [O/X]: " @("O","X")
-                    if ($c2 -eq "O") { Start-Process (Get-OtaconOpenUrl -Codec) }
-                    return 0
-                }
-                Write-Host "  Repair did not fully restore TTS - continuing into guided setup." -ForegroundColor DarkYellow
-            }
-        }
-        if ($c -eq "R") {
-            $script:ForceInstall = $true
-            $script:ReinstallRequested = $true
-            Write-KeepLog "user chose Reinstall" -Stage "READY"
-        }
-        # Fall through into guided install (do not return)
+        Write-OtaconSay "Quick repair wasn't enough - continuing full setup." -Mood "work" -NoType
     } elseif ($snap.web_health -and $script:ForceInstall) {
         Write-KeepLog "Force/Repair/Reinstall bypass of READY short-circuit" -Stage "READY"
+        Write-OtaconSay "Force/repair mode engaged. I'll handle it." -Mood "work" -NoType
         if ($Repair -or ($script:ForceInstall -and -not $script:ReinstallRequested)) {
             $ubuntu = Get-UbuntuDistroName
             if ($ubuntu -and (Invoke-RepairTtsAndWake -Name $ubuntu)) {
                 Save-InstallerComplete
-                Show-Box "REPAIR COMPLETE" @(
-                    "voice engine and wake task restored (--repair/--force)",
-                    "",
-                    "http://localhost:$Port",
-                    "",
-                    "press O to open, X to finish"
-                ) -Color Green
-                $c2 = Read-Choice "  Choice [O/X]: " @("O","X")
-                if ($c2 -eq "O") { Start-Process (Get-OtaconOpenUrl -Codec) }
+                Write-OtaconSay "Repair complete. Opening Codec." -Mood "ok"
+                try { Start-Process (Get-OtaconOpenUrl -Codec) } catch {}
                 return 0
             }
         }
     } elseif (-not $snap.web_health) {
         $ubuntuDead = Get-UbuntuDistroName
         if ($ubuntuDead -and (Test-OtaconFiles $ubuntuDead)) {
-            Write-Host "  Otacon files found but web is down - running core repair..." -ForegroundColor Cyan
+            Write-OtaconSay "I found Otacon files, but the service is asleep. Waking it..." -Mood "work"
             Write-KeepLog "auto core repair (web down, files present) distro=$ubuntuDead" -Stage "REPAIR"
             if (Invoke-OtaconCoreRepair -Name $ubuntuDead -Codec) {
                 Save-InstallerComplete
-                Show-Box "OTACON RESTORED" @(
-                    "core service was down; it is back online",
-                    "",
-                    (Get-OtaconOpenUrl),
-                    "",
-                    "press O to open Codec, X to finish"
-                ) -Color Green
-                $cR = Read-Choice "  Choice [O/X]: " @("O","X")
-                if ($cR -eq "O") { Start-Process (Get-OtaconOpenUrl -Codec) }
+                Write-OtaconSay "Back online. Opening Codec." -Mood "ok"
+                try { Start-Process (Get-OtaconOpenUrl -Codec) } catch {}
                 return 0
             }
-            Write-Host "  Core repair did not restore the site - continuing setup." -ForegroundColor DarkYellow
+            Write-OtaconSay "Wake attempt failed - continuing full install path." -Mood "warn" -NoType
         }
     }
 
-    Show-Box "BEFORE WE START" @(
-        "otaconskeep uses windows subsystem for linux",
-        "",
-        "you do NOT need to already have ubuntu",
-        "you do NOT need to know linux",
-        "you do NOT need a separate linux computer",
-        "",
-        "if you already run ubuntu inside proxmox",
-        "that is separate and will not be modified",
-        "",
-        "setup may require ONE windows restart",
-        "",
-        "typical setup time",
-        "10 to 30 minutes",
-        "",
-        "your computer may appear busy during installation",
-        "that is normal",
-        "",
-        "dont worry if you have never used linux before",
-        "this installer will guide you through everything",
-        "do not close this window unless we tell you to"
-    ) -Color Yellow
-
-    $go = Read-Choice "  Press I to install, X to cancel: " @("I","X")
-    if ($go -eq "X") {
-        Write-Host "  Cancelled. Nothing was changed." -ForegroundColor DarkYellow
-        return 0
-    }
+    Write-OtaconSay "You don't need to know Linux. I'm handling the installation." -Mood "info"
+    Write-OtaconSay "This can take 10-30 minutes. Your PC may look busy - that's normal. Don't close this window." -Mood "work" -NoType
+    Start-Sleep -Milliseconds 800
 
     # [1/8] checking windows
-    Write-Host "  [1/$TotalSteps] checking windows" -ForegroundColor Cyan
+    Write-OtaconSay "[1/$TotalSteps] Checking Windows..." -Mood "work" -NoType
     Write-KeepLog "step1 windows ok" -Stage "WORKING"
     Write-Host "  [ok] Windows session detected" -ForegroundColor Green
 
     # [2/8] virtualization / admin for feature enable
-    Write-Host "  [2/$TotalSteps] checking virtualization / permissions" -ForegroundColor Cyan
+    Write-OtaconSay "[2/$TotalSteps] Checking permissions / virtualization..." -Mood "work" -NoType
 
-    # [3/8] WSL - Gate E: explicit distro choice
-    Write-Host "  [3/$TotalSteps] checking wsl" -ForegroundColor Cyan
+    # [3/8] WSL - AutoPilot distro selection (no R/C/A menu)
+    Write-OtaconSay "[3/$TotalSteps] Checking Windows Linux (WSL)..." -Mood "work" -NoType
     Write-WslListVerbose
     $ubuntu = Resolve-OtaconDistroInteractive
     if ($null -eq $ubuntu) {
-        Write-Host "  Aborted. Existing WSL distributions were not changed." -ForegroundColor DarkYellow
+        Write-OtaconSay "I couldn't choose a Linux environment. Existing installs were left alone." -Mood "alert"
         return 1
     }
     $needCreate = -not (Get-WslUbuntuFamilyNames | Where-Object { $_.Equals($ubuntu, [System.StringComparison]::OrdinalIgnoreCase) })
     if (-not (Test-WslPresent) -or $needCreate) {
+        Write-OtaconSay "Windows may ask for administrator permission - click Yes when prompted." -Mood "warn"
         if (-not (Ensure-Admin)) { return 0 }
-        Write-Host "  [ OTACON ] preparing linux environment ($ubuntu)" -ForegroundColor Cyan
+        Write-OtaconSay "Preparing Linux environment ($ubuntu)..." -Mood "work" -NoType
         $code = Step-EnableWsl -DistroName $ubuntu
         $ubuntu = Get-UbuntuDistroName
         if (-not $ubuntu) {
@@ -2828,8 +2768,9 @@ function Start-GuidedSetup {
         if (-not (Test-UbuntuReady $ubuntu)) {
             $fam2 = Get-WslUbuntuFamilyNames
             if ($fam2.Count -gt 0) {
-                # Distro listed but not ready — finish first-time Ubuntu setup (no more reboot loop).
+                # Distro listed but not ready - finish first-time Ubuntu setup (no more reboot loop).
                 Write-KeepLog "distro present but not ready - waiting for Ubuntu init ($ubuntu)" -Stage "WAITING_FOR_UBUNTU_SETUP"
+                Write-OtaconSay "Finishing first-time Linux boot. You shouldn't need to type anything." -Mood "work" -NoType
                 [void](Step-WaitUbuntuInit -Name $ubuntu)
             } else {
                 $s2 = Get-WhereYouAre
@@ -2840,14 +2781,15 @@ function Start-GuidedSetup {
             }
         }
     } else {
-        Write-Host "  [ok] wsl already installed (distro=$ubuntu)" -ForegroundColor Green
+        Write-OtaconSay "WSL already online (distro=$ubuntu)." -Mood "ok" -NoType
         Save-InstallerState @{ ubuntu_name = $ubuntu }
     }
 
     # [4/8] ubuntu
-    Write-Host "  [4/$TotalSteps] installing / checking ubuntu (inside Windows)" -ForegroundColor Cyan
+    Write-OtaconSay "[4/$TotalSteps] Checking Ubuntu inside Windows..." -Mood "work" -NoType
     $ubuntu = Get-UbuntuDistroName
     if (-not $ubuntu) {
+        Write-OtaconSay "Windows may ask for administrator permission - click Yes." -Mood "warn"
         if (-not (Ensure-Admin)) { return 0 }
         Step-EnableWsl -DistroName $PreferredDistro | Out-Null
         $ubuntu = Get-UbuntuDistroName
@@ -2857,40 +2799,47 @@ function Start-GuidedSetup {
             return 1
         }
     } else {
-        Write-Host "  [ok] ubuntu distro present: $ubuntu" -ForegroundColor Green
+        Write-OtaconSay "Ubuntu environment present: $ubuntu" -Mood "ok" -NoType
     }
 
-    # [5/8] prepare ubuntu
-    Write-Host "  [5/$TotalSteps] preparing ubuntu" -ForegroundColor Cyan
+    # [5/8] prepare ubuntu - AutoPilot provisions user; no password prompts
+    Write-OtaconSay "[5/$TotalSteps] Preparing your Linux user (no password needed)..." -Mood "work" -NoType
     if (-not (Test-UbuntuReady $ubuntu)) {
-        $ok = Step-WaitUbuntuInit -Name $ubuntu
+        Write-OtaconSay "Bringing the Linux environment online..." -Mood "work" -NoType
+        [void](Ensure-WslDistroRunning -Name $ubuntu)
         $ubuntu = Get-UbuntuDistroName
-        if (-not $ok) {
-            # Register resume so user can finish ubuntu and come back
-            Register-ResumeAfterReboot
-            Show-Box "ALMOST THERE" @(
-                "Ubuntu inside Windows still needs its first-time username/password.",
-                "",
-                "Open the Ubuntu app from the Start menu, finish those prompts,",
-                "then restart this installer (or wait for it to reopen).",
-                "",
-                "This is NOT your Proxmox Ubuntu VM."
-            ) -Color Yellow
-            Write-Host "  Press any letter key to close (paused - not failed)." -ForegroundColor DarkYellow
-            [void][Console]::ReadKey($true)
-            return 0
+    }
+    $prov = Ensure-WslTargetUser -Name $ubuntu
+    if (-not $prov.AccountValid -or -not $prov.DefaultOk) {
+        if (-not (Test-UbuntuReady $ubuntu)) {
+            $ok = Step-WaitUbuntuInit -Name $ubuntu
+            $ubuntu = Get-UbuntuDistroName
+            if (-not $ok) {
+                Register-ResumeAfterReboot
+                Write-OtaconSay "Almost there - Windows may need one restart. I'll reopen setup after you sign back in." -Mood "warn"
+                Show-Box "RESTART PENDING" @(
+                    "Leave the rest to me after reboot.",
+                    "This is NOT your Proxmox Ubuntu VM."
+                ) -Color Yellow
+                Request-RestartConfirmation
+                return 0
+            }
+            $prov = Ensure-WslTargetUser -Name $ubuntu
         }
+    }
+    if ($prov.AccountValid -and $prov.DefaultOk) {
+        Write-OtaconSay "Linux user ready: $($prov.User)" -Mood "ok" -NoType
     } else {
-        Write-Host "  [ok] ubuntu already initialized" -ForegroundColor Green
+        Write-OtaconSay "Linux account setup incomplete (account=$($prov.AccountValid) default=$($prov.DefaultOk)). Continuing - Stage 6 will retry." -Mood "warn" -NoType
     }
 
     Clear-ResumeMarkers
 
     # [6/8] install otacon
-    Write-Host "  [6/$TotalSteps] installing otacon" -ForegroundColor Cyan
+    Write-OtaconSay "[6/$TotalSteps] Installing Otacon Core into Linux. This is the long part - falling code means I'm working." -Mood "work"
     $preTts = Test-OtaconTts
     if ((-not $script:ForceInstall) -and (Test-OtaconFiles $ubuntu) -and (Test-OtaconHealth) -and $preTts.ok) {
-        Write-Host "  [ok] otaconskeep already installed and healthy (incl. voice)" -ForegroundColor Green
+        Write-OtaconSay "Otacon is already installed and healthy." -Mood "ok" -NoType
     } else {
         $rc = Step-InstallOtacon -Name $ubuntu
         if ($rc -ne 0 -and $rc -ne 2) {
@@ -2903,24 +2852,23 @@ function Start-GuidedSetup {
             return (ConvertTo-InstallerExitCode $rc)
         }
         if ($rc -eq 2) {
-            Write-Host "  [warn] Otacon installed DEGRADED (core up, optional piece failed - not green READY yet)" -ForegroundColor DarkYellow
+            Write-OtaconSay "Core is up, but an optional piece failed - not fully green yet." -Mood "warn" -NoType
             Save-InstallerState @{ stage = "degraded"; last_error = "Linux installer returned DEGRADED (exit 2)" }
         }
     }
 
     # [7/8] starting services
-    Write-Host "  [7/$TotalSteps] starting services" -ForegroundColor Cyan
+    Write-OtaconSay "[7/$TotalSteps] Starting services and wake task..." -Mood "work" -NoType
     $wakeOk = Step-RegisterWakeTask -Name $ubuntu
     if (-not $wakeOk) {
-        Write-Host "  [warn] logon wake task not registered (Access Denied or missing) - voice may not survive reboot" -ForegroundColor DarkYellow
+        Write-OtaconSay "Wake task didn't register (permissions). Voice may need a manual start after reboot." -Mood "warn" -NoType
         Write-KeepLog "wake task missing before READY" -Level "WARN" -Stage "STARTING"
     }
     & wsl.exe -d $ubuntu -u root -- bash -lc "systemctl start otacon-tts.service 2>/dev/null; systemctl start otacon.service 2>/dev/null; true" 2>$null | Out-Null
-    Write-Host "  [ OTACON ] bringing the keep online" -ForegroundColor Cyan
+    Write-OtaconSay "Bringing the Keep online..." -Mood "work" -NoType
 
     # [8/8] verify - identity + TTS health required for green READY
-    Write-Host "  [8/$TotalSteps] verifying otacon" -ForegroundColor Cyan
-    Write-Host "  [ OTACON ] performing final systems check" -ForegroundColor Cyan
+    Write-OtaconSay "[8/$TotalSteps] Final systems check..." -Mood "work" -NoType
     if (-not (Step-Verify -Name $ubuntu)) {
         $id = Test-OtaconIdentity
         if ($id.occupied_non_otacon) {
@@ -2931,29 +2879,14 @@ function Start-GuidedSetup {
         $tts = Test-OtaconTts
         if ((Test-OtaconHealth) -and -not $tts.ok) {
             Save-InstallerState @{ stage = "degraded"; last_error = "TTS down after verify: $($tts.reason)" }
-            Show-Box "OTACON DEGRADED" @(
-                "chat interface responded, but the voice engine did not",
-                "",
-                "reason: $($tts.reason)",
-                "",
-                "press P to repair voice now, X to finish (not green READY)"
-            ) -Color Yellow
-            $c = Read-Choice "  Choice [P/X]: " @("P","X")
-            if ($c -eq "P") {
-                if (Invoke-RepairTtsAndWake -Name $ubuntu) {
-                    Save-InstallerComplete
-                    Show-Box "OTACON IS READY" @(
-                        "voice restored",
-                        "",
-                        "http://localhost:$Port",
-                        "",
-                        "press O to open, X to finish"
-                    ) -Color Green
-                    $c2 = Read-Choice "  Choice [O/X]: " @("O","X")
-                    if ($c2 -eq "O") { Start-Process (Get-OtaconOpenUrl -Codec) }
-                    return 0
-                }
+            Write-OtaconSay "Chat answered, but voice needs repair. Fixing automatically..." -Mood "warn"
+            if (Invoke-RepairTtsAndWake -Name $ubuntu) {
+                Save-InstallerComplete
+                Write-OtaconSay "Voice restored. Opening Codec." -Mood "ok"
+                try { Start-Process (Get-OtaconOpenUrl -Codec) } catch {}
+                return 0
             }
+            Write-OtaconSay "Voice still degraded. You can rerun Setup with --repair later." -Mood "warn"
             return 2
         }
         $act = Show-SetupNeedsHelp -Step "starting otacon" -PlainError "Otacon did not answer http://localhost:$Port/api/branding yet. The install may still be finishing - retry in a minute."
@@ -2962,40 +2895,26 @@ function Start-GuidedSetup {
     }
 
     if (-not (Test-WakeTaskRegistered)) {
-        Write-Host "  [warn] OtaconAutoStart wake task still missing - registering once more" -ForegroundColor DarkYellow
+        Write-OtaconSay "Wake task still missing - registering once more." -Mood "warn" -NoType
         [void](Step-RegisterWakeTask -Name $ubuntu)
     }
 
     Save-InstallerComplete
     Clear-ResumeMarkers
     $ttsFinal = Test-OtaconTts
-    $sttNote = "mic/STT: not installed by default (set OTACON_INSTALL_STT=1 to enable)"
-    $readyUrl = Get-OtaconOpenUrl
-    $readyLines = @(
-        "installation completed successfully",
-        "",
-        "otacon identity check passed",
-        "voice engine: $($ttsFinal.reason)",
-        "wake task: $(if (Test-WakeTaskRegistered) { 'registered' } else { 'MISSING - reboot may not auto-start' })",
-        $sttNote,
-        "",
-        "open otacon codec",
+    $readyUrl = Get-OtaconOpenUrl -Codec
+    Write-OtaconSay "Installation complete. Identity OK. Voice: $($ttsFinal.reason)." -Mood "ok"
+    Show-OtaconRain -Frames 8 -DelayMs 30
+    Show-Box "LINK ESTABLISHED" @(
+        "Otacon is ready.",
         "",
         $readyUrl,
         "",
-        "if the site ever says connection refused, double-click:",
-        "%LOCALAPPDATA%\OtaconsKeep\Fix-Otacon-Codec.bat",
-        "or run OtaconsKeep-Setup.bat --fix-codec",
-        "",
-        "you can close this setup window now",
-        "",
-        "press O to open Codec",
-        "press X to finish"
-    )
-    Show-Box "OTACON IS READY" $readyLines -Color Green
+        "Opening Codec automatically.",
+        "You can close this window."
+    ) -Color Green
     Write-KeepLog "COMPLETE identity+tts health ok wake=$(Test-WakeTaskRegistered)" -Stage "COMPLETE"
-    $c = Read-Choice "  Choice [O/X]: " @("O","X")
-    if ($c -eq "O") { Start-Process (Get-OtaconOpenUrl -Codec) }
+    try { Start-Process $readyUrl } catch {}
     return 0
 }
 

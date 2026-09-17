@@ -26,9 +26,10 @@ def test_A_ready_choice_panel_and_force():
     assert "[switch]$Force" in ASSISTANT
     assert "[switch]$Repair" in ASSISTANT
     assert "[switch]$Reinstall" in ASSISTANT
-    assert "Choice [O/P/R/X]" in ASSISTANT
-    assert "[ P ] Repair" in ASSISTANT
-    assert "[ R ] Reinstall" in ASSISTANT
+    # AutoPilot: happy-path READY opens Codec — no O/P/R/X menu.
+    assert "$script:AutoPilot = $true" in ASSISTANT or "AutoPilot = $true" in ASSISTANT
+    assert "no O/F/P/R menu" in ASSISTANT or "no O/P/R/X" in ASSISTANT.lower() or "AutoPilot opens Codec" in ASSISTANT
+    assert "Choice [O/P/R/X]" not in ASSISTANT
     assert "Force/Repair/Reinstall bypass of READY short-circuit" in ASSISTANT
     assert re.search(r"if \(\$snap\.web_health\) \{\s*Show-Box \"OTACON IS READY\".*press O to open otacon\s*.*press X to finish\s*\).*return 0", ASSISTANT, re.S) is None
     assert "-Force" in INSTALL_BAT
@@ -93,7 +94,10 @@ def test_D_success_clears_last_error():
 def test_E_dedicated_wsl_no_silent_first_ubuntu():
     assert "Ubuntu-Otacon" in ASSISTANT
     assert "Resolve-OtaconDistroInteractive" in ASSISTANT
-    assert "WSL DISTRIBUTION CHOICE" in ASSISTANT
+    # AutoPilot: no R/C/A distro menu; create dedicated beside existing Ubuntu*.
+    assert "AutoPilot: never ask R/C/A" in ASSISTANT
+    assert "WSL DISTRIBUTION CHOICE" not in ASSISTANT
+    assert "I'll add $PreferredDistro beside it" in ASSISTANT or "beside it so nothing else is changed" in ASSISTANT
     assert "AllowFirstMatch" in FIND_UBUNTU
     assert "Select-Object -First 1" in FIND_UBUNTU  # only under AllowFirstMatch path
     # Default find-ubuntu must NOT auto-pick first Ubuntu without -AllowFirstMatch
@@ -137,7 +141,7 @@ def test_J_ready_requires_identity_and_no_fatal_error():
     assert "identity_ok" in ASSISTANT or "Test-OtaconIdentity" in ASSISTANT
     assert "PORT_CONFLICT" in ASSISTANT
     assert "staleFail" in ASSISTANT or "last_error" in ASSISTANT
-    assert "identity check passed" in ASSISTANT.lower() or "identity health ok" in ASSISTANT.lower()
+    assert "identity check passed" in ASSISTANT.lower() or "identity health ok" in ASSISTANT.lower() or "Identity OK" in ASSISTANT
 
 
 def test_P0_tts_finalize_hard_fail_no_soft_success():
@@ -156,8 +160,21 @@ def test_P0_tts_finalize_hard_fail_no_soft_success():
 def test_P0_ready_requires_tts_not_web_alone():
     assert "tts_ok" in ASSISTANT
     assert 'Write-Host $(if ($s.web_health) { "READY" } else { $s.overall })' not in ASSISTANT
-    assert "OTACON NEEDS REPAIR" in ASSISTANT
-    assert "Repair  (TTS unit + wake + spoken preview)" in ASSISTANT
+    # AutoPilot repairs TTS without a repair-choice menu when web is up but voice is down.
+    assert "Chat is up, but voice needs a tune-up" in ASSISTANT or "I'll repair that automatically" in ASSISTANT
+    assert "Invoke-RepairTtsAndWake" in ASSISTANT
+    assert "Choice [O/F/P/R]" not in ASSISTANT
+    assert "OTACON NEEDS REPAIR" not in ASSISTANT
+
+
+def test_P0_autopilot_otacon_ui():
+    assert "function Show-OtaconRain" in ASSISTANT
+    assert "function Write-OtaconSay" in ASSISTANT
+    assert "You don't need to know Linux" in ASSISTANT or "you don't need to know Linux" in ASSISTANT
+    assert "I'm handling the installation" in ASSISTANT or "I am handling the installation" in ASSISTANT
+    assert "Choice [I/F/X]" not in ASSISTANT
+    assert "Choice [R/L]" not in ASSISTANT
+    assert "press I to continue setup" not in ASSISTANT
 
 
 def test_P1_doctor_and_uninstall_cover_tts():
