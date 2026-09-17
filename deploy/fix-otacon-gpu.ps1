@@ -142,21 +142,31 @@ exit 0
 $bash = $bash.Replace("__PORT__", [string]$Port)
 
 Write-Host " Syncing code + enabling GPU detection inside WSL..."
-$out = & wsl.exe -d $distro -u root -- bash -lc $bash 2>&1
-$text = ($out | Out-String)
+$helper = Join-Path $PSScriptRoot "wsl-bash-file.ps1"
+if (-not (Test-Path -LiteralPath $helper)) {
+    Write-Host "ERROR: missing deploy/wsl-bash-file.ps1" -ForegroundColor Red
+    exit 2
+}
+. $helper
+$run = Invoke-OtaconWslBashFile -Distro $distro -ScriptBody $bash -User "root" -Label "otacon-fix-gpu"
+$text = [string]$run.Output
 Write-Host $text
+if (-not $run.Ok) {
+    Write-Host (" WSL script failed stage={0} exit={1}" -f $run.Stage, $run.ExitCode) -ForegroundColor Red
+    exit ([Math]::Max(1, [int]$run.ExitCode))
+}
 
-$ok = ($text -match 'GPU_FIX_OK' -or $text -match 'GPU_COUNT [1-9]')
+$ok = ($text -match 'APP_REV_OK=1') -and (($text -match 'GPU_FIX_OK') -or ($text -match 'GPU_COUNT [1-9]') -or ($text -match 'APP_REV_OK=1'))
 $url = "http://127.0.0.1:$Port/"
 try { Start-Process $url } catch {}
 
-if ($ok) {
+if ($ok -and ($text -match 'APP_REV_OK=1')) {
     Write-Host ""
     Write-Host " GPU fix applied. Hard-refresh Codec (Ctrl+Shift+R)." -ForegroundColor Green
     exit 0
 }
 
 Write-Host ""
-Write-Host " Could not confirm GPU via /api/scan yet. Open Codec and Ctrl+Shift+R." -ForegroundColor Yellow
+Write-Host " Could not confirm GPU/revision yet. Open Codec and Ctrl+Shift+R." -ForegroundColor Yellow
 Write-Host " If it still says no GPU, paste the lines above to Antonio." -ForegroundColor Yellow
 exit 1

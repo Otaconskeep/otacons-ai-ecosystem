@@ -288,12 +288,24 @@ echo "=== done ==="
 exit 0
 '@
     $bash = $bash.Replace("__PORT__", [string]$PortNum).Replace("__TARGET__", [string]$TargetRev)
-    Write-RepairLog "Running Linux app update (hard sync + revision proof)..."
-    Write-RepairLog "UPDATE_CMD=wsl -d $Name -u root -- bash (git fetch/reset --hard)"
-    $out = & wsl.exe -d $Name -u root -- bash -lc $bash 2>&1
-    $text = ($out | Out-String)
-    Write-RepairLog ($text.Trim())
-    return $text
+    Write-RepairLog "Running Linux app update via temp .sh (not bash -lc)..."
+    Write-RepairLog "UPDATE_CMD=wsl --exec bash <temp.sh> (git fetch/reset --hard)"
+    $helper = Join-Path $PSScriptRoot "wsl-bash-file.ps1"
+    if (-not (Test-Path -LiteralPath $helper)) {
+        throw "missing deploy/wsl-bash-file.ps1"
+    }
+    . $helper
+    $run = Invoke-OtaconWslBashFile -Distro $Name -ScriptBody $bash -User "root" -Label "otacon-repair"
+    Write-RepairLog ("WSL stage={0} exit={1} win={2} linux={3}" -f $run.Stage, $run.ExitCode, $run.WindowsPath, $run.LinuxPath)
+    if ($run.Output) { Write-RepairLog ($run.Output.Trim()) }
+    if (-not $run.Ok) {
+        Write-RepairLog ("UPDATE FAILED at stage={0} exit={1}" -f $run.Stage, $run.ExitCode)
+        # Propagate transport/syntax failure immediately (do not treat as soft missing markers).
+        $script:OtaconWslTransportExit = [int]$run.ExitCode
+        if ($script:OtaconWslTransportExit -eq 0) { $script:OtaconWslTransportExit = 1 }
+        return [string]$run.Output
+    }
+    return [string]$run.Output
 }
 
 # --- main ---
@@ -318,7 +330,18 @@ if (-not (Ensure-DistroRunning $distro)) {
     Start-Sleep -Seconds 3
 }
 
+$script:OtaconWslTransportExit = 0
 $text = Invoke-WslAppUpdate -Name $distro -PortNum $Port -TargetRev $target
+if ([int]$script:OtaconWslTransportExit -ne 0) {
+    Write-RepairLog "UPDATE FAILED: WSL bash file transport/syntax (stage exit=$($script:OtaconWslTransportExit))"
+    Write-Host ""
+    Write-Host "  UPDATE FAILED - WSL Bash transport error (temp .sh / bash -n)." -ForegroundColor Red
+    Write-Host "  Log: $LogFile" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Press any key to close." -ForegroundColor DarkYellow
+    try { [void][Console]::ReadKey($true) } catch { Start-Sleep 3 }
+    exit ([int]$script:OtaconWslTransportExit)
+}
 
 $revOk = ($text -match 'APP_REV_OK=1')
 $contentOk = ($text -match 'CONTENT_PROOFS_OK=1')

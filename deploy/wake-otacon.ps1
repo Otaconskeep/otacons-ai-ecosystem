@@ -63,7 +63,16 @@ if ! curl -fsS --max-time 2 http://127.0.0.1:5757/api/branding >/dev/null 2>&1; 
   fi
 fi
 '@
-    & wsl.exe -d $DistroName -u root -- bash -lc $script 2>$null | Out-Null
+    $helper = Join-Path $PSScriptRoot "wsl-bash-file.ps1"
+    if (Test-Path -LiteralPath $helper) {
+        . $helper
+        $run = Invoke-OtaconWslBashFile -Distro $DistroName -ScriptBody $script -User "root" -Label "otacon-wake"
+        Write-Log ("wake wsl stage={0} exit={1}" -f $run.Stage, $run.ExitCode)
+    } else {
+        # Last-resort short commands only (never multiline bash -lc payloads).
+        Write-Log "wsl-bash-file.ps1 missing; using short --exec commands"
+        & wsl.exe -d $DistroName -u root --exec bash -c "systemctl restart otacon-tts.service 2>/dev/null; systemctl restart otacon.service 2>/dev/null; true" 2>$null | Out-Null
+    }
 }
 
 Write-Log "Waking $DistroName"

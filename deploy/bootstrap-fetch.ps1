@@ -78,6 +78,7 @@ $full = @(
     "deploy/installer-revision.txt",
     "deploy/windows-setup-assistant.ps1",
     "deploy/repair-otacon-core.ps1",
+    "deploy/wsl-bash-file.ps1",
     "deploy/fix-otacon-gpu.ps1",
     "deploy/get-fix-codec.cmd",
     "deploy/find-ubuntu.ps1",
@@ -93,6 +94,7 @@ $deployOnly = @(
     "deploy/installer-revision.txt",
     "deploy/windows-setup-assistant.ps1",
     "deploy/repair-otacon-core.ps1",
+    "deploy/wsl-bash-file.ps1",
     "deploy/fix-otacon-gpu.ps1",
     "deploy/get-fix-codec.cmd",
     "deploy/find-ubuntu.ps1",
@@ -273,6 +275,7 @@ Write-Host "  All setup files downloaded." -ForegroundColor Green
 $required = @(
     "deploy/windows-setup-assistant.ps1",
     "deploy/repair-otacon-core.ps1",
+    "deploy/wsl-bash-file.ps1",
     "deploy/installer-revision.txt",
     "install_otacon.bat",
     "install_otacon.sh"
