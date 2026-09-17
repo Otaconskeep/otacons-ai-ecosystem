@@ -349,17 +349,26 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
     if path == '/api/expansion/jobs/create':
         from expansion.pipeline import LivingPipeline
         pipe = LivingPipeline()
-        succeed = bool(data.get('succeed', True))
+        # Production default: queue real work. Simulated COMPLETE/FAILED only when
+        # the caller explicitly opts in (tests / qualify harness).
+        simulate = bool(data.get('simulate', False))
+        succeed = data.get('succeed')
+        if succeed is not None:
+            succeed = bool(succeed)
         out = pipe.create_and_run_job(
             data.get('request') or 'untitled job',
             domain=data.get('domain') or 'coordination',
             succeed=succeed,
             result_text=data.get('result') or '',
             error=data.get('error') or '',
+            simulate=simulate,
+            queue_only=bool(data.get('queue_only', False)),
         )
         job = out.get('job')
         send_json({
             'ok': True,
+            'queued': bool(out.get('queued')),
+            'simulated': bool(out.get('simulated')),
             'job': asdict(job) if job else None,
             'event_id': out.get('event_id'),
             'journal_ids': out.get('journal_ids'),

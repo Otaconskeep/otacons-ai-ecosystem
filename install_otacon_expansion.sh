@@ -12,15 +12,18 @@ set -Eeuo pipefail
 #
 # READ THIS FIRST:
 #   Otacon Expansion is still in development. This script installs and
-#   verifies exactly what exists today: the versioned agent schema, the
-#   bounded relationship/mood formulas, the motion-manifest schema, decision
-#   audit records, readiness state, and a schema-valid five-agent default
-#   roster (Aria/Vector/Ledger/Muse/Sentry) written to disk.
+#   verifies the foundation layer: versioned agent schema, bounded
+#   relationship/mood formulas, motion-manifest schema, decision audit
+#   records, readiness state, and a schema-valid five-agent default roster
+#   (Aria/Vector/Ledger/Muse/Sentry) written to disk.
 #
-#   It does NOT install a Dashboard, Codec, War Room, Video Studio, or any
-#   other UI wired to that roster -- those surfaces are specified in
-#   docs/EXPANSION.md but not yet built. Nothing here overwrites, gates, or
-#   otherwise touches Otacon Core. Full status: https://otaconskeep.github.io/expansion/
+#   UI floors (Dashboard, Codec, War Room, Learning, etc.) exist in source
+#   and may be reachable after entitlement + Core restart. This installer
+#   only claims "Foundation installed" — not full Expansion-ready — until
+#   entitlement and feature smoke checks pass. Optional integrations
+#   (Discord/HA/n8n) remain unconfigured unless the owner sets them up.
+#   Nothing here overwrites or gates Otacon Core.
+#   Full status: https://otaconskeep.github.io/expansion/
 #
 # What this installer does:
 #   - Confirms Otacon Core is already installed (Expansion installs on top
@@ -64,6 +67,7 @@ RUN_TESTS="${OTACON_RUN_TESTS:-1}"
 
 REQUIRED_FAIL=0
 TESTS_OK=0
+TESTS_SKIPPED=0
 SEED_OK=0
 
 INSTALL_LOG_DIR="${OTACON_INSTALL_LOG_DIR:-$HOME/.config/otacon/logs}"
@@ -96,7 +100,8 @@ printf '\033[0m\n'
 printf '\033[1;36m%s\033[0m\n' "$BRAND"
 printf '\033[0;37m%s :: %s\033[0m\n' "$PRODUCT" "$TAGLINE"
 printf '\033[0;33mThis installs the canonical schema, formulas, and a validated 5-agent\033[0m\n'
-printf '\033[0;33mdefault roster. Dashboard/Codec/War Room/Video Studio are NOT built yet.\033[0m\n'
+printf '\033[0;33mdefault roster. Foundation install is verified; entitled UI surfaces need\033[0m\n'
+printf '\033[0;33mentitlement + Core restart. Optional Discord/HA/n8n stay unconfigured until set up.\033[0m\n'
 printf '\033[0;37mFull spec & status: %s\033[0m\n\n' "$SPEC_URL"
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
@@ -243,7 +248,8 @@ if [[ "$RUN_TESTS" == "1" ]]; then
   fi
 else
   warn "Skipping the acceptance gate (OTACON_RUN_TESTS=0) -- Windows installer verifies via foundation + API"
-  TESTS_OK=1
+  TESTS_OK=0
+  TESTS_SKIPPED=1
 fi
 
 # ------------------------------------------------------------------------------
@@ -274,6 +280,7 @@ from expansion.readiness import evaluate_foundation
 from expansion.topology import default_topology, save_topology
 from expansion.manifest import build_dev_manifest, save_manifest
 from expansion.bootstrap import bootstrap_runtime_state
+from expansion.entitlement import EntitlementGate
 
 layout = resolve_layout()
 layout.ensure_user_dirs()
@@ -283,17 +290,23 @@ apply_pending(layout)
 manifest_path = layout.user_config_root / 'PACKAGE_MANIFEST.dev.json'
 save_manifest(build_dev_manifest(), manifest_path)
 print('bootstrap', bootstrap_runtime_state(layout))
+ent = EntitlementGate(layout).refresh_after_provision()
+print('entitlement', ent.expansion_entitled, ent.source)
 report = evaluate_foundation(layout)
 print('foundation_ready=', report.foundation_ready())
+print('surfaces_ready=', report.surfaces_ready())
+print('expansion_ready=', report.expansion_ready())
 print('semantic=', {k: (v.value if hasattr(v, 'value') else v) for k, v in report.semantic.items()})
 if not report.foundation_ready():
     raise SystemExit(1)
 PY
+# Feed bootstrap via stdin so a root-owned mode-0600 temp file remains readable
+# when Python runs as the non-root owner (open-by-caller, not by the child).
 if run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" PYTHONPATH="$INSTALL_DIR" \
     OTACON_EXPANSION_DATA_DIR="$DATA_DIR" \
     OTACON_EXPANSION_CONFIG_ROOT="$OTACON_EXPANSION_CONFIG_ROOT" \
     OTACON_EXPANSION_DATA_ROOT="$OTACON_EXPANSION_DATA_ROOT" \
-    "$VPY" "$BOOT_PY"
+    "$VPY" - < "$BOOT_PY"
 then
   ok "P0/P1 platform bootstrap complete"
   echo "EXP_FOUNDATION_READY=1"
@@ -328,6 +341,9 @@ FINAL_RC=0
 if [[ "$REQUIRED_FAIL" == "1" ]]; then
   FINAL_STATE=FAILED
   FINAL_RC=1
+elif [[ "$TESTS_SKIPPED" == "1" ]]; then
+  FINAL_STATE=READY
+  FINAL_RC=0
 elif [[ "$TESTS_OK" != "1" ]]; then
   FINAL_STATE=DEGRADED
   FINAL_RC=2
@@ -338,7 +354,7 @@ case "$FINAL_STATE" in
   READY)
     cat <<'DONE_ASCII'
 ==============================================================================
-         OTACON EXPANSION // FOUNDATION LAYER READY
+         OTACON EXPANSION // FOUNDATION INSTALLED
 ==============================================================================
                    ANTONIO G. GARCIA // OTACONSKEEP
 DONE_ASCII
@@ -363,10 +379,18 @@ DONE_ASCII
 esac
 printf '\033[0m'
 
+if [[ "$TESTS_SKIPPED" == "1" ]]; then
+  TEST_LABEL=SKIPPED
+elif [[ "$TESTS_OK" == "1" ]]; then
+  TEST_LABEL=PASS
+else
+  TEST_LABEL="DID NOT PASS"
+fi
+
 printf 'Final state       : %s (exit %s)\n' "$FINAL_STATE" "$FINAL_RC"
 printf 'Install log       : %s\n' "$INSTALL_LOG"
 printf 'Repository        : %s\n' "$INSTALL_DIR"
-printf 'Test suite        : %s\n' "$([[ "$TESTS_OK" == "1" ]] && echo PASS || echo "DID NOT PASS")"
+printf 'Test suite        : %s\n' "$TEST_LABEL"
 printf 'Default roster    : %s (%s)\n' "$([[ "$SEED_OK" == "1" ]] && echo written || echo FAILED)" "$DATA_DIR"
 printf '\n'
 printf '\033[1;33mWhat this actually gives you right now:\033[0m\n'
@@ -375,14 +399,16 @@ printf '  - P0 platform: state layout, topology config, versions, migrations,\n'
 printf '    package manifest contract, provision skeleton, event bus, readiness\n'
 printf '  - Importable modules under expansion/ (schema through provision/events)\n'
 printf '  - Migration contract: docs/KEEP_EXPANSION_MIGRATION.md\n'
-printf '\033[1;33mWhat this does NOT give you yet:\033[0m\n'
-printf '  - A Dashboard, Codec, War Room, Video Studio, Page Builder UI\n'
-printf '  - Discord/Home Assistant/n8n wiring, voice synthesis from the seeded agents\n'
-printf '  - Full status and roadmap: %s\n' "$SPEC_URL"
+printf '\033[1;33mFeature matrix (this install):\033[0m\n'
+printf '  - Foundation roster/schema     : installed (verified by this script)\n'
+printf '  - Entitled surfaces (War Room) : check /api/expansion/entitlement after restart\n'
+printf '  - Optional Discord/HA/n8n      : unconfigured unless you add credentials\n'
+printf '  - Page Builder                 : page registry metadata only (not a page factory)\n'
+printf '  - Full status and roadmap      : %s\n' "$SPEC_URL"
 printf '\n'
 printf '[ANTONIO G. GARCIA] Rerunning this installer is safe; it re-validates and re-syncs.\n'
 if [[ "$FINAL_RC" -eq 0 ]]; then
-  printf '[ANTONIO G. GARCIA] Foundation layer verified. Questions or want early access to what'"'"'s next: %s\n' "$DISCORD_URL"
+  printf '[ANTONIO G. GARCIA] Foundation installed. Confirm entitlement before calling Expansion ready: %s\n' "$DISCORD_URL"
 elif [[ "$FINAL_RC" -eq 2 ]]; then
   printf '[ANTONIO G. GARCIA] Roster is valid but the test suite flagged something. Check the log: %s\n' "$INSTALL_LOG"
 else

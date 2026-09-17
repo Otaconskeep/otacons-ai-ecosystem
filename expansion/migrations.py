@@ -145,8 +145,20 @@ def snapshot_user_state(layout: Optional[StateLayout] = None, label: str = '') -
 
 
 def pending_migrations(layout: Optional[StateLayout] = None) -> list[Migration]:
+    """Migrations not yet successfully applied.
+
+    Failed attempts stay in the ledger for history but do NOT count as applied,
+    so they remain pending and can be retried.
+    """
     plan = load_ledger(layout)
-    applied_ids = {r['migration_id'] if isinstance(r, dict) else r.migration_id for r in plan.applied}
+    applied_ids = set()
+    for r in plan.applied:
+        if isinstance(r, dict):
+            if r.get('success', True):
+                applied_ids.add(r.get('migration_id'))
+        else:
+            if getattr(r, 'success', True):
+                applied_ids.add(r.migration_id)
     return [m for m in _REGISTRY if m.migration_id not in applied_ids]
 
 

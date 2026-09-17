@@ -205,8 +205,13 @@ if (-not (Test-Path -LiteralPath $expShWin)) {
 }
 
 $linuxSh = ConvertTo-OtaconLinuxPath -Distro $distro -WindowsPath $expShWin -User "root"
-# Windows path verifies foundation + API by default. Pass -SkipTests:$false to run the full suite.
-$runTests = "0"
+# Honor -SkipTests. Default (omitted): skip full suite; Windows verifies foundation+API.
+# Pass -SkipTests:$false to run the Expansion unittest suite inside WSL.
+if ($PSBoundParameters.ContainsKey('SkipTests')) {
+    $runTests = if ($SkipTests) { "0" } else { "1" }
+} else {
+    $runTests = "0"
+}
 
 Write-OtaconSay "Setting up dossiers..." "work"
 Write-OtaconSay "Initializing relationships..." "work"
@@ -268,18 +273,27 @@ if ($status -and $status.agents) {
     $names = @($status.agents | ForEach-Object { $_.display_name })
 }
 
-Write-ExpLog ("status enabled={0} foundation_ready={1} agents={2}" -f `
+Write-ExpLog ("status enabled={0} foundation_ready={1} entitled={2} agents={3}" -f `
     $(if ($status) { $status.enabled } else { 'null' }), `
     $(if ($status) { $status.foundation_ready } else { 'null' }), `
+    $(if ($status -and $status.expansion_entitled) { $status.expansion_entitled } elseif ($status -and $status.entitlement) { $status.entitlement.entitled } else { 'null' }), `
     $agentCount)
 
 $need = @('Aria', 'Vector', 'Ledger', 'Muse', 'Sentry')
 $missing = @($need | Where-Object { $names -notcontains $_ })
 
+$entitled = $false
+if ($status -and $null -ne $status.expansion_entitled) {
+    $entitled = [bool]$status.expansion_entitled
+} elseif ($status -and $status.entitlement) {
+    $entitled = [bool]$status.entitlement.entitled
+}
+
 if (-not $status -or -not $status.enabled -or -not $status.foundation_ready -or $agentCount -lt 5 -or $missing.Count -gt 0) {
-    Write-OtaconSay "Expansion is not healthy yet." "alert"
+    Write-OtaconSay "Expansion foundation is not healthy yet." "alert"
     Write-Host ("  enabled={0}" -f $(if ($status) { $status.enabled } else { 'n/a' }))
     Write-Host ("  foundation_ready={0}" -f $(if ($status) { $status.foundation_ready } else { 'n/a' }))
+    Write-Host ("  expansion_entitled={0}" -f $entitled)
     Write-Host ("  agents={0}  missing={1}" -f $agentCount, ($missing -join ','))
     Write-Host "  Log: $LogFile"
     exit 8
@@ -287,16 +301,30 @@ if (-not $status -or -not $status.enabled -or -not $status.foundation_ready -or 
 
 Write-Host ""
 Write-Host " ============================================================"
-Write-Host "   EXPANSION READY"
+if ($entitled) {
+    Write-Host "   FOUNDATION INSTALLED + ENTITLED"
+} else {
+    Write-Host "   FOUNDATION INSTALLED"
+}
 Write-Host " ============================================================"
 Write-Host "   enabled=true"
 Write-Host "   foundation_ready=true"
+Write-Host ("   expansion_entitled={0}" -f $entitled)
+if (-not $entitled) {
+    $entMsg = if ($status -and $status.entitlement) { $status.entitlement.message } else { 'check /api/expansion/entitlement' }
+    Write-Host ("   entitlement_reason={0}" -f $entMsg)
+    Write-Host "   War Room / REX / Learning stay locked until entitlement resolves."
+}
 Write-Host ("   agents: {0}" -f ($names -join ', '))
 Write-Host "   Core remains healthy at $base"
 Write-Host " ============================================================"
 Write-Host ""
-Write-OtaconSay "Expansion is online. Talk to Aria - she learns on chat turns." "ok"
-Write-ExpLog "SUCCESS"
+if ($entitled) {
+    Write-OtaconSay "Foundation is online and entitled. Talk to Aria - she learns on chat turns." "ok"
+} else {
+    Write-OtaconSay "Foundation installed. Entitlement is false — open entitlement API for the reason." "warn"
+}
+Write-ExpLog "SUCCESS foundation_ready=1 entitled=$entitled"
 
 if ($OpenBrowser) {
     try { Start-Process "$base/" } catch {}

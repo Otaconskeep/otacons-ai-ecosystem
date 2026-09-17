@@ -483,14 +483,26 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({'voices': catalog_entries()})
         elif path == '/api/expansion/status':
             try:
+                from expansion.entitlement import EntitlementGate
                 from expansion.readiness import evaluate_foundation
                 from expansion.runtime import ExpansionRuntime
                 rt = ExpansionRuntime(core_memory=MEMORY)
                 enabled = rt.expansion_enabled()
                 report = evaluate_foundation() if enabled else None
+                ent = EntitlementGate().current() if enabled else None
                 self.send_json({
                     'enabled': enabled,
                     'foundation_ready': bool(report and report.foundation_ready()),
+                    'expansion_entitled': bool(
+                        report and report.expansion_entitled()
+                    ) if report else bool(ent and ent.expansion_entitled),
+                    'surfaces_ready': bool(report and report.surfaces_ready()),
+                    'expansion_ready': bool(report and report.expansion_ready()),
+                    'entitlement': {
+                        'entitled': bool(ent and ent.expansion_entitled),
+                        'source': ent.source if ent else 'none',
+                        'message': ent.message if ent else '',
+                    } if ent else {'entitled': False, 'source': 'none', 'message': ''},
                     'report': report.to_dict() if report else {},
                     'agents': [
                         {

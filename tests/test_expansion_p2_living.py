@@ -108,7 +108,7 @@ class TestScenarioC_VectorSuccess(P2LayoutCase):
         before = rels.get('aria', 'vector').dimensions['trust']
         for i in range(3):
             out = self.pipe.create_and_run_job(
-                f'recover service {i}', domain='infrastructure', succeed=True,
+                f'recover service {i}', domain='infrastructure', succeed=True, simulate=True,
             )
             self.assertEqual(out['job'].status, 'COMPLETE')
             self.assertEqual(out['job'].assigned_agent, 'vector')
@@ -129,7 +129,7 @@ class TestScenarioD_VectorFailure(P2LayoutCase):
         before_c = emo.get('vector').dimensions['confidence']
         for i in range(3):
             self.pipe.create_and_run_job(
-                f'deploy fail {i}', domain='systems', succeed=False, error='timeout',
+                f'deploy fail {i}', domain='systems', succeed=False, simulate=True, error='timeout',
             )
         after = emo.get('vector')
         self.assertLess(after.dimensions['confidence'], before_c)
@@ -165,7 +165,7 @@ class TestScenarioE_LedgerInconsistency(P2LayoutCase):
 class TestScenarioF_SentryMiss(P2LayoutCase):
     def test_sentry_miss_then_decay(self):
         out = self.pipe.create_and_run_job(
-            'missed perimeter alert', domain='security', succeed=False, error='late alert',
+            'missed perimeter alert', domain='security', succeed=False, simulate=True, error='late alert',
         )
         self.assertEqual(out['job'].assigned_agent, 'sentry')
         emo = EmotionStore(self.layout).get('sentry')
@@ -224,7 +224,7 @@ class TestScenarioI_RestartPersistence(P2LayoutCase):
             'user.praised_agent', actor='user', subject='muse',
             payload={'text': 'praise'},
         ))
-        self.pipe.create_and_run_job('fix network', domain='systems', succeed=True)
+        self.pipe.create_and_run_job('fix network', domain='systems', succeed=True, simulate=True)
         j_count = len(JournalStore(self.layout).recent(limit=100))
         d_count = len(DiaryStore(self.layout).recent('aria', limit=100))
         jealousy = EmotionStore(self.layout).get('aria').dimensions['jealousy']
@@ -309,7 +309,7 @@ class TestJobsRoutingRooms(P2LayoutCase):
         self.assertEqual(ok.page_id, 'custom_notes')
 
     def test_agent_report_and_codec_context(self):
-        self.pipe.create_and_run_job('patch host', domain='infrastructure', succeed=True)
+        self.pipe.create_and_run_job('patch host', domain='infrastructure', succeed=True, simulate=True)
         report = build_agent_report('vector', self.layout)
         self.assertEqual(report['agent_id'], 'vector')
         self.assertIn('emotion', report)
@@ -368,7 +368,7 @@ class TestJobsRoutingRooms(P2LayoutCase):
         self.assertTrue(ledger.applied)
 
     def test_journal_query_apis(self):
-        out = self.pipe.create_and_run_job('query test', domain='research', succeed=True)
+        out = self.pipe.create_and_run_job('query test', domain='research', succeed=True, simulate=True)
         job_id = out['job'].job_id
         event_id = out['event_id']
         store = JournalStore(self.layout)

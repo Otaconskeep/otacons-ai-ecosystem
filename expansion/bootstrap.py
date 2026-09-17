@@ -137,10 +137,18 @@ def bootstrap_runtime_state(layout: Optional[StateLayout] = None) -> dict:
         subject='roster',
         payload={'agents': agent_ids, 'phase': 'p1_bootstrap'},
     ))
+    # Clear stale source=none entitlement recorded before the roster existed.
+    try:
+        from expansion.entitlement import EntitlementGate
+        ent = EntitlementGate(layout).refresh_after_provision()
+        entitled = bool(ent.expansion_entitled)
+    except Exception:
+        entitled = False
     return {
         'agents': agent_ids,
         'emotions': emotions.list_agent_ids(),
         'relationship_files': len(list(layout.user_relationships.glob('*.json'))),
+        'entitlement': entitled,
     }
 
 

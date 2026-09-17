@@ -11,6 +11,7 @@ Expansion install authority.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -41,6 +42,7 @@ OPTIONAL_COMPONENTS = (
 SEMANTIC_CHECKS = (
     'agents_load',
     'registry_validates',
+    'entitlement',
     'relationship_store',
     'emotion_engine',
     'memory_store',
@@ -74,8 +76,32 @@ class ReadinessReport:
         return all(self.components.get(c) == ReadinessState.READY for c in REQUIRED_COMPONENTS)
 
     def foundation_ready(self) -> bool:
-        """P0 foundation: five agents load and validate; stores scaffolding present."""
+        """Foundation installed: five agents load and validate.
+
+        This is NOT full Expansion usability. Entitlement, writable stores, and
+        feature smoke checks gate expansion_ready / surfaces_ready separately.
+        """
         needed = ('agents_load', 'registry_validates')
+        return all(self.semantic.get(c) == ReadinessState.READY for c in needed)
+
+    def expansion_entitled(self) -> bool:
+        return self.semantic.get('entitlement') == ReadinessState.READY
+
+    def surfaces_ready(self) -> bool:
+        """Foundation + entitlement: entitled surfaces may be opened."""
+        return self.foundation_ready() and self.expansion_entitled()
+
+    def expansion_ready(self) -> bool:
+        """End-to-end Expansion banner: entitled, writable core stores, codec path."""
+        if not self.surfaces_ready():
+            return False
+        needed = (
+            'relationship_store',
+            'emotion_engine',
+            'memory_store',
+            'journal_write',
+            'codec_reaches_agent',
+        )
         return all(self.semantic.get(c) == ReadinessState.READY for c in needed)
 
     def to_dict(self) -> dict:
@@ -96,6 +122,9 @@ class ReadinessReport:
             'details': dict(self.details),
             'overall_core_ready': self.overall_core_ready(),
             'foundation_ready': self.foundation_ready(),
+            'expansion_entitled': self.expansion_entitled(),
+            'surfaces_ready': self.surfaces_ready(),
+            'expansion_ready': self.expansion_ready(),
         })
         return out
 
@@ -166,6 +195,25 @@ def evaluate_foundation(layout: Optional[StateLayout] = None) -> ReadinessReport
     else:
         report.set_semantic('registry_validates', ReadinessState.NOT_CONFIGURED)
 
+    # Entitlement — required before advertising entitled surfaces as usable
+    try:
+        from expansion.entitlement import EntitlementGate
+        ent = EntitlementGate(layout).current()
+        if ent.expansion_entitled:
+            report.set_semantic(
+                'entitlement',
+                ReadinessState.READY,
+                f'source={ent.source}',
+            )
+        else:
+            report.set_semantic(
+                'entitlement',
+                ReadinessState.FAILED,
+                ent.message or f'not entitled (source={ent.source})',
+            )
+    except Exception as exc:  # noqa: BLE001
+        report.set_semantic('entitlement', ReadinessState.FAILED, str(exc))
+
     # Voice — bound in schema; onnx verify deferred
     if agents and all((a.get('voice') or {}).get('piper_voice') for a in agents):
         report.set('VOICE', ReadinessState.LIMITED)
@@ -180,16 +228,27 @@ def evaluate_foundation(layout: Optional[StateLayout] = None) -> ReadinessReport
 
     report.set_semantic('relationship_store',
                         ReadinessState.READY if any(layout.user_relationships.glob('*.json'))
+                        and os.access(layout.user_relationships, os.W_OK)
                         else ReadinessState.NOT_CONFIGURED)
     report.set_semantic('emotion_engine',
                         ReadinessState.READY if any(layout.user_emotions.glob('*.json'))
+                        and os.access(layout.user_emotions, os.W_OK)
                         else ReadinessState.NOT_CONFIGURED)
     report.set_semantic('memory_store',
                         ReadinessState.READY if any(layout.user_memory.glob('*'))
+                        and os.access(layout.user_memory, os.W_OK)
                         else ReadinessState.NOT_CONFIGURED)
-    report.set_semantic('journal_write',
-                        ReadinessState.READY if any(layout.user_journals.glob('*.jsonl'))
-                        else ReadinessState.NOT_CONFIGURED)
+    # journal_write: require a writable journals dir (empty seed files alone are not proof)
+    journals_ok = (
+        layout.user_journals.is_dir()
+        and os.access(layout.user_journals, os.W_OK)
+        and any(layout.user_journals.glob('*.jsonl'))
+    )
+    report.set_semantic(
+        'journal_write',
+        ReadinessState.READY if journals_ok else ReadinessState.NOT_CONFIGURED,
+        'writable journal files present' if journals_ok else 'journals missing or not writable',
+    )
     report.set_semantic('diary_generate', ReadinessState.LIMITED,
                         'diary stores exist; generation heuristics are P2')
     report.set_semantic('job_execution',

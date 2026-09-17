@@ -73,12 +73,26 @@ class ToolGateway:
 
         try:
             data, summary = self._dispatch(capability, agent_id=agent_id, **kwargs)
+            data = data or {}
+            ok = True
+            # Normalize executor truthfulness: non-zero exit / passed=False is failure.
+            if isinstance(data.get('exit_code'), int) and data['exit_code'] != 0:
+                ok = False
+            if data.get('passed') is False or data.get('ok') is False:
+                ok = False
+            if data.get('success') is False:
+                ok = False
             result = ToolResult(
-                ok=True,
+                ok=ok,
                 capability=capability,
                 agent_id=agent_id,
-                summary=summary,
-                data=data or {},
+                summary=summary if ok else (data.get('error') or summary or f'{capability} failed'),
+                data=data,
+                error='' if ok else str(
+                    data.get('error')
+                    or data.get('stderr')
+                    or f'{capability} reported failure'
+                )[:500],
                 disposition='authorize',
             )
         except Exception as exc:  # noqa: BLE001 — tool boundary
@@ -160,6 +174,35 @@ class ToolGateway:
                 'url': kwargs.get('url') or '',
                 'snippet': (kwargs.get('snippet') or '')[:400],
             }, 'research recorded'
-        if capability in ('journal.write', 'docs.update', 'continuity.update'):
-            return {'accepted': True, 'kind': capability}, f'{capability} accepted for loop'
+        if capability == 'journal.write':
+            from expansion.journal import JournalStore, new_journal_entry
+            summary = (kwargs.get('summary') or kwargs.get('text') or kwargs.get('content') or '').strip()
+            if not summary:
+                raise ValueError('journal.write requires summary/text')
+            event_ids = tuple(kwargs.get('evidence_ids') or kwargs.get('event_ids') or ())
+            job_id = kwargs.get('job_id') or ''
+            if not event_ids and not job_id:
+                # Tool-originated durable write: mint a stable reference id.
+                event_ids = (f'tool_{uuid.uuid4().hex[:12]}',)
+            entry = JournalStore(self.layout).append(new_journal_entry(
+                agent_id=agent_id,
+                event_type=kwargs.get('event_type') or 'tool.journal.write',
+                summary=summary[:500],
+                objective_result=kwargs.get('result') or 'recorded',
+                actor=agent_id,
+                event_ids=event_ids,
+                job_id=job_id,
+                evidence_ids=tuple(kwargs.get('evidence_ids') or ()),
+            ))
+            return {
+                'written': True,
+                'entry_id': entry.entry_id,
+                'agent_id': agent_id,
+                'event_ids': list(entry.event_ids),
+            }, f'journal entry {entry.entry_id} written'
+        if capability in ('docs.update', 'continuity.update'):
+            # Not yet implemented as durable writers — do not pretend success.
+            raise ValueError(
+                f'{capability} is not implemented as a durable write yet'
+            )
         raise ValueError(f'no executor for capability {capability!r}')

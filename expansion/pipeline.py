@@ -115,10 +115,18 @@ class LivingPipeline:
         request: str,
         *,
         domain: str,
-        succeed: bool = True,
+        succeed: Optional[bool] = None,
         result_text: str = '',
         error: str = '',
+        simulate: bool = False,
+        queue_only: bool = False,
     ) -> dict:
+        """Create a job.
+
+        Default: queue ASSIGNED/RUNNING without manufacturing COMPLETE.
+        Pass simulate=True (test-only) with succeed=True/False to emit fake
+        completion/failure records for pipeline tests.
+        """
         job = self.jobs.create(request, domain=domain)
         created = new_event(
             'job.created', actor=job.coordinator, subject=job.assigned_agent,
@@ -134,6 +142,23 @@ class LivingPipeline:
         self.apply_event(assigned, write_diary=False)
         self.jobs.transition(job.job_id, JobStatus.RUNNING.value)
 
+        # Production default: leave RUNNING for a real executor — do not invent COMPLETE.
+        if queue_only or not simulate:
+            out = {
+                'event_id': assigned.event_id,
+                'emotion_updates': [],
+                'relationship_updates': [],
+                'journal_ids': [],
+                'diary_ids': [],
+                'job': self.jobs.get(job.job_id),
+                'queued': True,
+                'simulated': False,
+            }
+            return out
+
+        if succeed is None:
+            succeed = True
+
         if succeed:
             text = result_text or f'Completed: {request}'
             done = new_event(
@@ -141,6 +166,7 @@ class LivingPipeline:
                 payload={
                     'job_id': job.job_id, 'result': 'success', 'evidence': [job.job_id],
                     'assigned_by': job.coordinator,
+                    'simulated': True,
                 },
             )
             out = self.apply_event(done)
@@ -148,7 +174,6 @@ class LivingPipeline:
                 job.job_id, JobStatus.COMPLETE.value,
                 result=text, evidence=[job.job_id], event_id=done.event_id, confidence=0.85,
             )
-            # Memory + living dossier for successful Vector infra work
             mem = self.memory.add(new_memory(
                 job.assigned_agent,
                 f'Successfully completed job in domain={domain}: {request}',
@@ -168,6 +193,7 @@ class LivingPipeline:
             )
             out['job'] = self.jobs.get(job.job_id)
             out['memory_id'] = mem.memory_id
+            out['simulated'] = True
             return out
 
         fail = new_event(
@@ -175,6 +201,7 @@ class LivingPipeline:
             payload={
                 'job_id': job.job_id, 'result': 'failure',
                 'error': error or 'job failed', 'evidence': [job.job_id],
+                'simulated': True,
             },
         )
         out = self.apply_event(fail)
@@ -183,6 +210,7 @@ class LivingPipeline:
             error=error or 'job failed', event_id=fail.event_id,
         )
         out['job'] = self.jobs.get(job.job_id)
+        out['simulated'] = True
         return out
 
     def _summary(self, event: Event, agent_id: str) -> str:

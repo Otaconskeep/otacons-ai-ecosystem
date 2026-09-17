@@ -47,6 +47,11 @@ def test_expansion_windows_installer_contracts():
     must("expansion-installer.log" in ps1, "logs under OtaconsKeep Logs", fails)
     must("/api/expansion/status" in ps1, "verifies Expansion status API", fails)
     must("foundation_ready" in ps1 and "enabled" in ps1, "checks enabled+foundation_ready", fails)
+    must("expansion_entitled" in ps1, "checks entitlement after install", fails)
+    must("FOUNDATION INSTALLED" in ps1, "honest foundation banner (not EXPANSION READY)", fails)
+    must("EXPANSION READY" not in ps1, "does not overclaim EXPANSION READY", fails)
+    must("PSBoundParameters.ContainsKey" in ps1 and "SkipTests" in ps1,
+         "honors SkipTests instead of hardcoding runTests=0", fails)
     must("Aria" in ps1 and "Vector" in ps1 and "Ledger" in ps1, "expects public roster names", fails)
     must("Muse" in ps1 and "Sentry" in ps1, "expects full five-agent roster", fails)
     must("I found your existing Keep" in ps1, "OtaconSay UX present", fails)
@@ -55,6 +60,10 @@ def test_expansion_windows_installer_contracts():
     must("discover_core_root" in SH, "Linux installer discovers Core dynamically", fails)
     must("run_as_owner" in SH or "runuser" in SH, "Linux installer uses repo owner for git/python", fails)
     must("EXP_FOUNDATION_READY" in SH, "Linux installer emits foundation marker", fails)
+    must('"$VPY" - < "$BOOT_PY"' in SH or '"$VPY" - <"$BOOT_PY"' in SH,
+         "bootstrap feeds script via stdin for owner-readable handoff", fails)
+    must("TESTS_SKIPPED" in SH, "skipped tests reported separately from PASS", fails)
+    must("FOUNDATION INSTALLED" in SH, "honest foundation installed banner", fails)
     must("Aria" in SH and "Sentry" in SH, "Linux seeds public roster", fails)
     must("Albedo" not in SH and "Nazarick" not in SH, "no private IP personas in public installer", fails)
 

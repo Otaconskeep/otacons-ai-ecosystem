@@ -128,16 +128,42 @@ def seed(output_dir: Path) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     for a in roster:
         path = output_dir / f'default-{a.agent_id}.json'
+        payload = to_dict(a)
         if path.exists():
-            # Idempotent re-seed: keep the original created_at instead of
-            # resetting it every run -- only updated_at moves forward.
+            # Idempotent re-seed: keep created_at and preserve unknown/custom
+            # owner fields that are not part of the canonical schema defaults.
             try:
                 existing = json.loads(path.read_text(encoding='utf-8'))
                 if existing.get('created_at'):
                     a.created_at = existing['created_at']
+                    payload['created_at'] = existing['created_at']
+                # Preserve non-schema / owner override keys
+                schema_keys = set(payload.keys())
+                for key, value in existing.items():
+                    if key not in schema_keys:
+                        payload[key] = value
+                # Preserve known fields only when owner customized away from empty
+                # and seed would otherwise wipe a meaningful override on persona/voice.
+                for preserve in ('persona', 'voice', 'room', 'display_name'):
+                    if preserve in existing and existing[preserve] not in (None, '', {}, []):
+                        # Keep owner voice/room/persona if they differ from brand-new defaults
+                        if existing.get(preserve) != payload.get(preserve):
+                            # Prefer keeping owner customization for persona text and voice ids
+                            if preserve == 'persona' and isinstance(existing.get('persona'), str):
+                                if existing['persona'].strip() and existing['persona'] != payload.get('persona'):
+                                    payload['persona'] = existing['persona']
+                            elif preserve in ('voice', 'room') and isinstance(existing.get(preserve), dict):
+                                merged = dict(payload.get(preserve) or {})
+                                merged.update({
+                                    k: v for k, v in existing[preserve].items()
+                                    if v not in (None, '', [], {})
+                                })
+                                payload[preserve] = merged
+                            elif preserve == 'display_name' and existing.get('display_name'):
+                                payload['display_name'] = existing['display_name']
             except (json.JSONDecodeError, OSError):
                 pass
-        path.write_text(json.dumps(to_dict(a), indent=2, default=str), encoding='utf-8')
+        path.write_text(json.dumps(payload, indent=2, default=str), encoding='utf-8')
         print(f'wrote {path}')
 
     print(f'\n{len(roster)} default agents validated and written to {output_dir}')

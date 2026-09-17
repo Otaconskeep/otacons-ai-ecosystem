@@ -68,9 +68,9 @@ def populate_rich_state(layout: Optional[StateLayout] = None) -> StateSnapshot:
         payload={'reassure': True, 'text': 'still need you'},
     ))
     for i in range(2):
-        pipe.create_and_run_job(f'infra task {i}', domain='infrastructure', succeed=True)
-    pipe.create_and_run_job('failed probe', domain='systems', succeed=False, error='timeout')
-    pipe.create_and_run_job('security sweep', domain='security', succeed=True)
+        pipe.create_and_run_job(f'infra task {i}', domain='infrastructure', succeed=True, simulate=True)
+    pipe.create_and_run_job('failed probe', domain='systems', succeed=False, simulate=True, error='timeout')
+    pipe.create_and_run_job('security sweep', domain='security', succeed=True, simulate=True)
     # Leave one active job
     JobStore(layout).create('active watch', domain='monitoring')
 
