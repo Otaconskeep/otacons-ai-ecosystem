@@ -1,6 +1,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 from core.platform import detect
@@ -531,10 +532,10 @@ class Handler(BaseHTTPRequestHandler):
             auto_speak = data.get('auto_speak')
             if auto_speak is None:
                 auto_speak = prefs.get('auto_speak', False)
-            cid = data.get('conversation_id') or MEMORY.create_conversation(
-                data.get('user_id', 'local_user'), agent['id']
-            )
             try:
+                cid = data.get('conversation_id') or MEMORY.create_conversation(
+                    data.get('user_id', 'local_user'), agent['id']
+                )
                 # Refresh Expansion context with the live user message when applicable.
                 if agent.get('expansion'):
                     rt = _expansion_runtime()
@@ -559,12 +560,20 @@ class Handler(BaseHTTPRequestHandler):
                     result['expansion'] = agent['_expansion_context']
                 self.send_json(result)
             except Exception as e:
-                detail = str(e)
+                err_name = type(e).__name__
+                detail = str(e) or err_name
+                # Log the real failure class (never disguise pre-inference crashes
+                # as MODEL_RESPONSE_MISSING_TOKEN downstream).
+                print(f'[CHAT] {err_name}: {detail}', flush=True)
+                code = 'MEMORY_ERROR' if 'sqlite' in err_name.lower() or 'memory' in err_name.lower() else 'CHAT_UNAVAILABLE'
+                if isinstance(e, sqlite3.Error) or err_name.startswith('Programming'):
+                    code = 'MEMORY_ERROR'
                 self.send_json({
                     'error': {
-                        'code': 'CHAT_UNAVAILABLE',
+                        'code': code,
                         'message': detail if detail else 'Your AI service is unavailable.',
-                        'technical': detail,
+                        'technical': f'{err_name}: {detail}',
+                        'exception': err_name,
                     }
                 }, 503)
         elif self.path == '/api/expansion/event':

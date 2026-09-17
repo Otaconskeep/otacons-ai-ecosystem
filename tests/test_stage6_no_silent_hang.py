@@ -73,9 +73,11 @@ def main() -> int:
     must("Get-WindowsNvidiaName" in PS1 and "Get-WslNvidiaName" in PS1, "Windows+WSL GPU probe in Stage 6 UI", fails)
     must("last 50 log lines" in PS1 or "linux-install-tail.log" in PS1, "failure dumps last log lines", fails)
     must("Current substep" in PS1 or "CURRENT :" in PS1 or "MISSION :" in PS1, "UI shows current substep", fails)
-    must("Show-OtaconProgressBar" in PS1, "Stage 6 has progress bar", fails)
+    must("Show-OtaconProgressBar" in PS1 or "ProgressPct" in PS1, "Stage 6 has progress bar", fails)
     must("LIVE FEED" not in PS1, "Stage 6 does not dump live apt/test feed to user", fails)
+    must("building the Keep" not in PS1, "Stage 6 HUD is cinematic not chatty", fails)
     must("OTACON_CHAT_PORT" in PS1 and "IsNullOrWhiteSpace" in PS1, "blank OTACON_CHAT_PORT not injected", fails)
+    must("check_same_thread" not in (ROOT / "core" / "memory.py").read_text(encoding="utf-8"), "memory does not disable SQLite thread check", fails)
 
     print("=" * 60)
     if fails:

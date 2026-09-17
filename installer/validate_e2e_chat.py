@@ -36,6 +36,7 @@ def main(argv=None) -> int:
         headers['Authorization'] = f'Bearer {args.token}'
 
     last_text = ''
+    last_fail_reason = ''
     for attempt in range(1, max(1, args.retries) + 1):
         token = secrets.token_hex(4)
         expected = f'OTACON_READY_{token}'
@@ -52,16 +53,23 @@ def main(argv=None) -> int:
             data = _post_chat(args.base_url, payload, headers, args.timeout)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode('utf-8', errors='replace')
-            print(f'Attempt {attempt}: HTTP_{exc.code} {detail[:300]}')
+            last_fail_reason = f'HTTP_{exc.code} {detail[:300]}'
+            print(f'Attempt {attempt}: {last_fail_reason}')
             time.sleep(2)
             continue
         except Exception as exc:
-            print(f'Attempt {attempt}: REQUEST_ERROR {exc}')
+            last_fail_reason = f'{type(exc).__name__}: {exc}'
+            print(f'Attempt {attempt}: REQUEST_ERROR {last_fail_reason}')
             time.sleep(2)
             continue
 
         if data.get('error'):
-            print(f"Attempt {attempt}: API_ERROR {data.get('error')}")
+            err = data.get('error') or {}
+            last_fail_reason = (
+                f"API_ERROR code={err.get('code')} exception={err.get('exception')} "
+                f"technical={err.get('technical') or err.get('message')}"
+            )
+            print(f'Attempt {attempt}: {last_fail_reason}')
             time.sleep(2)
             continue
 
@@ -71,9 +79,13 @@ def main(argv=None) -> int:
         if expected in text.replace(' ', '') or expected in text:
             print('Result: PASS')
             return 0
+        last_fail_reason = 'MODEL_RESPONSE_MISSING_TOKEN'
         time.sleep(2)
 
-    print(f'Result: FAIL\nReason: MODEL_RESPONSE_MISSING_TOKEN\nLast response: {last_text[:500]}')
+    if last_fail_reason and last_fail_reason != 'MODEL_RESPONSE_MISSING_TOKEN':
+        print(f'Result: FAIL\nReason: {last_fail_reason}\nLast response: {last_text[:500]}')
+    else:
+        print(f'Result: FAIL\nReason: MODEL_RESPONSE_MISSING_TOKEN\nLast response: {last_text[:500]}')
     return 1
 
 

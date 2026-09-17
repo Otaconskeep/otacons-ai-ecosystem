@@ -1683,39 +1683,41 @@ function Show-Stage6Panel {
     )
     Initialize-OtaconConsole
     $elapsed = (Get-Date) - $Started
-    $em = "{0:00}m {1:00}s" -f [int]$elapsed.TotalMinutes, $elapsed.Seconds
+    $em = "{0:00}:{1:00}" -f [int]$elapsed.TotalMinutes, $elapsed.Seconds
     if ($ProgressPct -lt 0) {
         $ProgressPct = Get-Stage6ProgressPercent -Phase $Phase -Started $Started
     }
     $mission = ConvertTo-OtaconMissionStatus -Raw $Substep -Phase $Phase
     Clear-Host
+    # Cinematic minimal frame: brand, one mission, one bar, sparse rain.
     Write-Host ""
-    Show-OtaconRule -Color Cyan
-    Write-Host "  OTACON UPLINK  //  DEEP INSTALL  //  LINK ACTIVE" -ForegroundColor Cyan
-    Show-OtaconRule -Color DarkCyan
-    Write-Host "  STATUS  : OPERATIONAL - leave this window open" -ForegroundColor Green
-    Write-Host ("  MISSION : {0}" -f $mission) -ForegroundColor Yellow
-    Write-Host ("  ELAPSED : {0}" -f $em) -ForegroundColor Gray
-    if ($GpuWin -and $GpuWin -ne "unknown" -and $GpuWin -ne "not visible") {
-        Write-Host ("  GPU     : {0}" -f $GpuWin) -ForegroundColor DarkCyan
-    }
-    Show-OtaconRule -Color Cyan
-    Write-Host "  SIGNAL INTEGRITY" -ForegroundColor DarkCyan
-    Show-OtaconProgressBar -Percent $ProgressPct
     Write-Host ""
-    Write-Host "  [OTACON] You don't need to read the stream." -ForegroundColor Cyan
-    Write-Host "  [OTACON] I'm building the Keep. Stay with me." -ForegroundColor DarkCyan
+    Write-Host "                         O T A C O N" -ForegroundColor Cyan
     Write-Host ""
-    # Falling-code illusion only - never dump diary/apt/unittest log lines.
-    $glyphs = Get-OtaconGlyphs
+    Write-Host ("                    {0}" -f $mission) -ForegroundColor White
+    Write-Host ""
+    $barWidth = 36
+    $filled = [int][Math]::Round(($barWidth * $ProgressPct) / 100.0)
+    if ($filled -gt $barWidth) { $filled = $barWidth }
+    $bar = ("=" * $filled) + (" " * ($barWidth - $filled))
+    Write-Host -NoNewline "                 [" -ForegroundColor DarkCyan
+    Write-Host -NoNewline $bar -ForegroundColor Green
+    Write-Host ("]  {0,3}%" -f $ProgressPct) -ForegroundColor DarkCyan
+    Write-Host ("                      {0}" -f $em) -ForegroundColor DarkGray
+    Write-Host ""
+    # Sparse matrix rain (3 rows) - movie uplink, not a log dump.
+    $glyphs = @("0","1","7","A","F",":","|","+")
     $rnd = New-Object System.Random
-    for ($r = 0; $r -lt 5; $r++) {
-        $strip = -join (0..61 | ForEach-Object { $glyphs[$rnd.Next(0, $glyphs.Count)] })
-        $c = if (($r % 3) -eq 0) { "Green" } elseif (($r % 3) -eq 1) { "DarkGreen" } else { "DarkCyan" }
-        Write-Host ("  {0}" -f $strip) -ForegroundColor $c
+    for ($r = 0; $r -lt 3; $r++) {
+        $pad = "                 "
+        $strip = -join (0..35 | ForEach-Object {
+            if ($rnd.Next(0, 5) -eq 0) { $glyphs[$rnd.Next(0, $glyphs.Count)] } else { " " }
+        })
+        $c = if ($r -eq 1) { "Green" } else { "DarkGreen" }
+        Write-Host ($pad + $strip) -ForegroundColor $c
     }
-    Show-OtaconRule -Color Cyan
-    # RecentLines retained for callers/logs but intentionally not rendered.
+    Write-Host ""
+    Write-Host "                 leave this window open" -ForegroundColor DarkGray
     if ($RecentLines -and $RecentLines.Count -gt 0) {
         Write-KeepLog ("stage6 pulse mission='{0}' pct={1} raw='{2}'" -f $mission, $ProgressPct, $Substep) -Stage "INSTALLING_OTACON"
     }
