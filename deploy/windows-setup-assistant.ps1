@@ -292,18 +292,70 @@ function Ensure-WslDistroRunning {
 }
 
 function Convert-WindowsPathToWsl {
+    <#
+      Map a Windows path into the distro. wslpath often returns empty when the
+      target file does not exist yet (we delete exit markers before convert),
+      so touch the path when needed and fall back to /mnt/<drive>/... mapping.
+    #>
     param(
         [string]$Distro,
-        [string]$WindowsPath
+        [string]$WindowsPath,
+        [switch]$EnsureExists
     )
+    if (-not $WindowsPath) { return "" }
     if (-not (Ensure-WslDistroRunning -Name $Distro)) {
         Write-KeepLog "distro not running for wslpath distro=$Distro path=$WindowsPath" -Level "ERROR" -Stage "INSTALLING_OTACON"
         return ""
     }
-    try {
-        $out = ((& wsl.exe -d $Distro -u root -- wslpath -a $WindowsPath 2>$null) | Select-Object -First 1)
-        if ($out) { return ("{0}" -f $out).Trim() }
-    } catch {}
+
+    $full = $WindowsPath
+    try { $full = [System.IO.Path]::GetFullPath($WindowsPath) } catch {}
+
+    if ($EnsureExists) {
+        try {
+            $parent = [System.IO.Path]::GetDirectoryName($full)
+            if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+                New-Item -ItemType Directory -Force -Path $parent | Out-Null
+            }
+            if (-not (Test-Path -LiteralPath $full)) {
+                # Zero-byte placeholder so wslpath has a real inode to resolve.
+                [System.IO.File]::WriteAllBytes($full, [byte[]]@())
+            }
+        } catch {
+            Write-KeepLog "could not pre-create path for wslpath: $full err=$($_.Exception.Message)" -Level "WARN" -Stage "INSTALLING_OTACON"
+        }
+    }
+
+    # 1) Native wslpath (prefer)
+    foreach ($candidate in @($full, ($full -replace '\\', '/'))) {
+        try {
+            $out = & wsl.exe -d $Distro -u root -- wslpath -a $candidate 2>$null
+            $line = @($out | ForEach-Object { ("{0}" -f $_).Trim() } | Where-Object { $_ -ne "" } | Select-Object -First 1)
+            if ($line -and $line -match '^/') {
+                Write-KeepLog "wslpath ok distro=$Distro win=$full wsl=$line" -Stage "INSTALLING_OTACON"
+                return $line
+            }
+        } catch {}
+    }
+
+    # 2) Deterministic fallback: C:\foo\bar -> /mnt/c/foo/bar
+    if ($full -match '^(?i)([A-Z]):[\\/](.*)$') {
+        $drive = $Matches[1].ToLowerInvariant()
+        $rest = ($Matches[2] -replace '\\', '/')
+        $fallback = "/mnt/$drive/$rest"
+        # Verify the mount is visible inside the distro
+        try {
+            $probe = & wsl.exe -d $Distro -u root -- bash -lc "test -d /mnt/$drive && echo OK" 2>$null
+            if (("$probe".Trim()) -match 'OK') {
+                Write-KeepLog "wslpath fallback distro=$Distro win=$full wsl=$fallback" -Level "WARN" -Stage "INSTALLING_OTACON"
+                return $fallback
+            }
+        } catch {}
+        Write-KeepLog "wslpath fallback unverified distro=$Distro win=$full wsl=$fallback (using anyway)" -Level "WARN" -Stage "INSTALLING_OTACON"
+        return $fallback
+    }
+
+    Write-KeepLog "wslpath failed distro=$Distro path=$full" -Level "ERROR" -Stage "INSTALLING_OTACON"
     return ""
 }
 
@@ -1285,7 +1337,7 @@ function Invoke-WslInstallPhase {
     $localWin = Join-Path $RepoRoot "install_otacon.sh"
     $localWsl = ""
     if (Test-Path -LiteralPath $localWin) {
-        $localWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $localWin
+        $localWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $localWin -EnsureExists
     }
     $localEsc = if ($localWsl) { $localWsl.Replace("'", "'\''") } else { "" }
 
@@ -1302,7 +1354,9 @@ function Invoke-WslInstallPhase {
         }
     }
 
-    $exitMarkerWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $exitMarkerWin
+    # Pre-create exit marker so wslpath has a real file (empty wslpath on
+    # missing paths is what produced exit 997 on Josh's Running Ubuntu).
+    $exitMarkerWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $exitMarkerWin -EnsureExists
     if (-not $exitMarkerWsl) {
         $st = Get-WslDistroState -Name $Name
         Write-KeepLog "could not wslpath exit marker for phase=$Phase distro=$Name state=$st path=$exitMarkerWin" -Level "ERROR" -Stage "INSTALLING_OTACON"
@@ -1338,7 +1392,7 @@ function Invoke-WslInstallPhase {
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($phaseScriptWin, $bashText, $utf8NoBom)
 
-    $phaseScriptWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $phaseScriptWin
+    $phaseScriptWsl = Convert-WindowsPathToWsl -Distro $Name -WindowsPath $phaseScriptWin -EnsureExists
     if (-not $phaseScriptWsl) {
         $st = Get-WslDistroState -Name $Name
         Write-KeepLog "could not wslpath phase script for phase=$Phase distro=$Name state=$st path=$phaseScriptWin" -Level "ERROR" -Stage "INSTALLING_OTACON"
