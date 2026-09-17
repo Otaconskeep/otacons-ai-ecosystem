@@ -76,6 +76,12 @@ if /I "%~1"=="-debug" goto SET_DEBUG
 if /I "%~1"=="--update" goto SET_UPDATE
 if /I "%~1"=="-update" goto SET_UPDATE
 if /I "%~1"=="--refresh" goto SET_UPDATE
+if /I "%~1"=="--fix-codec" goto SET_FIXCODEC
+if /I "%~1"=="-fix-codec" goto SET_FIXCODEC
+if /I "%~1"=="--fix" goto SET_FIXCODEC
+if /I "%~1"=="-fix" goto SET_FIXCODEC
+if /I "%~1"=="--open" goto SET_OPEN_ARG
+if /I "%~1"=="-open" goto SET_OPEN_ARG
 set "ARGS=!ARGS! %~1"
 goto PARSE_SHIFT
 :SET_SYNTAX
@@ -86,6 +92,12 @@ set "DEBUG=1"
 goto PARSE_SHIFT
 :SET_UPDATE
 set "FORCE_UPDATE=1"
+goto PARSE_SHIFT
+:SET_FIXCODEC
+set "ARGS=!ARGS! --fix-codec"
+goto PARSE_SHIFT
+:SET_OPEN_ARG
+set "ARGS=!ARGS! --open"
 goto PARSE_SHIFT
 :PARSE_SHIFT
 shift

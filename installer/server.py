@@ -1,4 +1,4 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -788,7 +788,8 @@ def main():
     else:
         LAN_TOKEN = load_lan_token()
         print(f'Otacon local mode: http://127.0.0.1:{port} (not reachable from LAN)')
-    HTTPServer((BIND_HOST, port), Handler).serve_forever()
+    # Threading so a hung GPU probe (WSL nvidia-smi D-state) cannot freeze Codec/UI.
+    ThreadingHTTPServer((BIND_HOST, port), Handler).serve_forever()
 
 
 # Avoid printing the full token into every log line; show a short hint only.

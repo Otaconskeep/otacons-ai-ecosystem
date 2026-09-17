@@ -97,12 +97,30 @@ INSTALL_VOICE_TRAINER="${OTACON_INSTALL_VOICE_TRAINER:-1}"
 # Default Model = Ollama + VRAM-tier chat pull (normal Otacon install). Alias: OTACON_INSTALL_OLLAMA.
 INSTALL_DEFAULT_MODEL="${OTACON_INSTALL_DEFAULT_MODEL:-${OTACON_INSTALL_OLLAMA:-1}}"
 LAN_MODE="${OTACON_LAN_MODE:-0}"
+# WSL: bind all interfaces so Windows can reach Core via localhost OR the WSL IP
+# (localhost forwarding sometimes breaks → "connection refused" in the browser).
+is_wsl_env() {
+  grep -qi microsoft /proc/version 2>/dev/null && return 0
+  [[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]] && return 0
+  return 1
+}
+WSL_ENV=0
+if is_wsl_env; then WSL_ENV=1; fi
 if [[ "$LAN_MODE" == "1" || "${LAN_MODE,,}" == "true" || "${LAN_MODE,,}" == "yes" || "${LAN_MODE,,}" == "lan" ]]; then
   LAN_MODE=1
   CHAT_HOST="${OTACON_CHAT_HOST:-0.0.0.0}"
 else
   LAN_MODE=0
-  CHAT_HOST="${OTACON_CHAT_HOST:-127.0.0.1}"
+  if [[ "$WSL_ENV" == "1" ]]; then
+    CHAT_HOST="${OTACON_CHAT_HOST:-0.0.0.0}"
+  else
+    CHAT_HOST="${OTACON_CHAT_HOST:-127.0.0.1}"
+  fi
+fi
+# WSL nvidia-smi can hang in D-state and freeze the Core HTTP server / Codec.
+# Default-skip the live probe on WSL unless the user explicitly sets 0.
+if [[ "$WSL_ENV" == "1" && -z "${OTACON_SKIP_NVIDIA_SMI+x}" ]]; then
+  OTACON_SKIP_NVIDIA_SMI=1
 fi
 CHAT_PORT="${OTACON_CHAT_PORT:-5757}"
 VOICE_TRAINER_INSTALLER_URL="${OTACON_VOICE_TRAINER_URL:-https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh}"
@@ -1935,6 +1953,7 @@ Environment=OTACON_LLM_ENDPOINT=$OLLAMA_ENDPOINT
 Environment=OTACON_LLM_MODEL=$RECOMMENDED_MODEL
 Environment=OTACON_TTS_PROVIDER=$TTS_PROVIDER
 Environment=OTACON_TTS_ENDPOINT=$TTS_ENDPOINT
+Environment=OTACON_SKIP_NVIDIA_SMI=${OTACON_SKIP_NVIDIA_SMI:-0}
 ExecStart=$VPY -m installer.server
 Restart=always
 RestartSec=3
@@ -1980,6 +1999,7 @@ start_otacon_background() {
     OTACON_HOST="$CHAT_HOST" \
     OTACON_PORT="$CHAT_PORT" \
     OTACON_LAN_MODE="$LAN_MODE" \
+    OTACON_SKIP_NVIDIA_SMI="${OTACON_SKIP_NVIDIA_SMI:-0}" \
     OTACON_LLM_PROVIDER=ollama \
     OTACON_LLM_ENDPOINT="$OLLAMA_ENDPOINT" \
     OTACON_LLM_MODEL="$RECOMMENDED_MODEL" \

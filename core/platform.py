@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, platform, shutil, subprocess
+import os, platform, shutil, subprocess, threading
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
@@ -52,6 +52,35 @@ def _nvidia_smi_env() -> dict:
   return env
 
 
+def _nvidia_smi_query(smi: str, timeout_s: float = 5.0) -> str:
+  """Run nvidia-smi without blocking the HTTP thread forever.
+
+  On WSL2, nvidia-smi can enter uninterruptible sleep (D state). Python's
+  subprocess timeout then never returns, which wedged the single-threaded
+  Otacon server and made Open Codec / System Scan appear dead.
+  """
+  box: dict = {'out': None, 'exc': None}
+
+  def _run():
+    try:
+      box['out'] = subprocess.check_output(
+        [smi, '--query-gpu=name,memory.total', '--format=csv,noheader,nounits'],
+        text=True, timeout=max(1, int(timeout_s)), env=_nvidia_smi_env(),
+        stderr=subprocess.STDOUT,
+      )
+    except Exception as exc:  # noqa: BLE001 — surface to caller as-is
+      box['exc'] = exc
+
+  t = threading.Thread(target=_run, daemon=True, name='nvidia-smi-query')
+  t.start()
+  t.join(timeout_s + 1.0)
+  if t.is_alive():
+    raise TimeoutError(f'{smi} hung past {timeout_s}s (WSL GPU probe abandoned)')
+  if box['exc'] is not None:
+    raise box['exc']
+  return box['out'] or ''
+
+
 def detect():
  try:
   import psutil
@@ -61,13 +90,14 @@ def detect():
   ram=round(int(next(x for x in open('/proc/meminfo') if x.startswith('MemTotal')).split()[1])/1024**2,1)
  g=[]; gpu_status='unavailable'; gpu_message='NVIDIA inspection tool is unavailable in this environment.'
  smi=_resolve_nvidia_smi()
+ if os.environ.get('OTACON_SKIP_NVIDIA_SMI', '').strip() in ('1', 'true', 'yes'):
+  smi = None
+  gpu_status = 'skipped'
+  gpu_message = 'NVIDIA inspection skipped (OTACON_SKIP_NVIDIA_SMI).'
  if smi:
   gpu_status='none'; gpu_message='No NVIDIA GPUs were reported.'
   try:
-   out=subprocess.check_output(
-     [smi,'--query-gpu=name,memory.total','--format=csv,noheader,nounits'],
-     text=True, timeout=8, env=_nvidia_smi_env(), stderr=subprocess.STDOUT,
-   )
+   out=_nvidia_smi_query(smi, timeout_s=5.0)
    for i,line in enumerate(out.splitlines()):
     line=line.strip()
     if not line or ',' not in line:
@@ -84,11 +114,13 @@ def detect():
    else:
     gpu_status='none'
     gpu_message=f'{smi} ran but reported no GPUs.'
-  except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+  except (subprocess.CalledProcessError, subprocess.TimeoutExpired, TimeoutError, OSError) as exc:
    gpu_status='error'
    detail = ''
    if isinstance(exc, subprocess.CalledProcessError) and exc.output:
      detail = ' ' + str(exc.output).strip().splitlines()[-1][:160]
+   elif isinstance(exc, TimeoutError):
+     detail = ' ' + str(exc)
    gpu_message=f'GPU inspection failed ({type(exc).__name__}) using {smi}.{detail}'
  h=Hardware(platform.system(),platform.processor() or platform.machine(),os.cpu_count() or 1,ram,free,g)
  h.gpu_detection={'status':gpu_status,'message':gpu_message,'nvidia_smi':smi or ''}

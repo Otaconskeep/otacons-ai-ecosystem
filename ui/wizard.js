@@ -33,11 +33,25 @@ async function loadExpansion(){
   }catch(e){ state.expansion=null; state.roster=[]; }
 }
 
-async function api(path,body){
-  let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
-  return {ok:r.ok,status:r.status,data:await r.json()};
+async function api(path,body,timeoutMs){
+  const ctrl=typeof AbortController!=='undefined'?new AbortController():null;
+  const ms=timeoutMs||45000;
+  const timer=ctrl?setTimeout(()=>ctrl.abort(),ms):null;
+  try{
+    let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{}),signal:ctrl?ctrl.signal:undefined});
+    return {ok:r.ok,status:r.status,data:await r.json()};
+  }finally{ if(timer) clearTimeout(timer); }
 }
-async function apiGet(path){return (await fetch(path)).json()}
+async function apiGet(path,timeoutMs){
+  const ctrl=typeof AbortController!=='undefined'?new AbortController():null;
+  const ms=timeoutMs==null?12000:timeoutMs;
+  const timer=ctrl?setTimeout(()=>ctrl.abort(),ms):null;
+  try{
+    const r=await fetch(path,{signal:ctrl?ctrl.signal:undefined});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return await r.json();
+  }finally{ if(timer) clearTimeout(timer); }
+}
 
 async function loadPrefs(){
   try{let p=await apiGet('/api/preferences'); state.autoSpeak=!!p.auto_speak}catch(e){state.autoSpeak=false}
@@ -371,7 +385,24 @@ function render(){
 }
 
 function next(){state.step++;render()}
-async function scan(){state.scan=await apiGet('/api/scan');state.storage=state.scan.storage.find(x=>x.recommended)||state.scan.storage[0];state.step=2;render()}
+function _fallbackScan(){
+  return {
+    hardware:{hardware:{os:'Linux',cpu:{model:'unknown',cores:1},ram_gb:0,free_storage_gb:0,gpus:[]},gpu_roles:{primary_gpu:'cpu'}},
+    storage:[{path:'.',free_gb:0,total_gb:0,recommended:true}]
+  };
+}
+async function scan(){
+  const page=document.getElementById('page');
+  if(page) page.innerHTML='<p class=muted>Scanning hardware…</p>';
+  try{
+    state.scan=await apiGet('/api/scan',8000);
+  }catch(e){
+    state.scan=_fallbackScan();
+    if(page) page.innerHTML='<p class=muted>GPU probe timed out — continuing with CPU defaults.</p>';
+  }
+  state.storage=(state.scan.storage||[]).find(x=>x.recommended)||(state.scan.storage||[])[0]||_fallbackScan().storage[0];
+  state.step=2; render();
+}
 async function setName(){
   state.name=document.getElementById('name').value.trim()||'Aria';
   let sel=document.getElementById('voiceSelect'); if(sel) state.voiceId=sel.value;
@@ -523,12 +554,24 @@ function animateFreq(){
 async function showChat(){
   state.view='codec';
   setBodyMode('codec');
-  await loadPrefs(); await loadVoices(); await loadCapabilities(); await loadExpansion();
-  let scan=null;
-  try{scan=await apiGet('/api/scan')}catch(e){}
+  // Paint Codec even if prefs/voices are slow — never block on /api/scan (WSL nvidia-smi hang).
+  await Promise.allSettled([
+    loadPrefs(),
+    loadVoices(),
+    loadCapabilities(),
+    loadExpansion(),
+  ]);
+  let scan=null; // GPU sidebar line is cosmetic; skip scan so Open Codec is never a dud
   const aid=currentAgentId();
-  let cs=(await api('/api/conversations',{agent_id:aid})).data;
-  state.conversation=(cs[0]||{}).id||(await api('/api/conversation',{agent_id:aid})).data.id;
+  let cs;
+  try{
+    cs=(await api('/api/conversations',{agent_id:aid},8000)).data;
+  }catch(e){ cs=[]; }
+  try{
+    state.conversation=(cs[0]||{}).id||(await api('/api/conversation',{agent_id:aid},8000)).data.id;
+  }catch(e){
+    state.conversation=null;
+  }
 
   const ttsOk=capReady('tts'), chatOk=capReady('chat'), sttOk=capReady('stt');
   const model=(state.capabilities&&state.capabilities.llm_model)||state.lastModel||'—';
@@ -659,8 +702,8 @@ async function showChat(){
 </div>`;
 
   await refreshConversationList();
-  await openConversation(state.conversation);
-  await loadMemories();
+  if(state.conversation) await openConversation(state.conversation);
+  try{ await loadMemories(); }catch(e){}
   setCodecMode('idle');
   bootCodecOnce();
   if(window.__codecFreqTimer) clearInterval(window.__codecFreqTimer);

@@ -11,6 +11,7 @@ param(
     [switch]$Force,
     [switch]$Repair,
     [switch]$Reinstall,
+    [switch]$FixCodec,
     [string]$RepoRoot = "",
     [string]$Branch = "main",
     [string]$RawBase = "https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem"
@@ -39,6 +40,8 @@ $PreferredDistroAliases = @("Ubuntu-Otacon", "OtaconsKeep")
 $script:ForceInstall = [bool]($Force -or $Repair -or $Reinstall)
 $script:ChosenDistroMode = ""   # dedicated | reuse | ""
 $script:ReinstallRequested = [bool]$Reinstall
+# Last base URL that answered /api/branding (localhost or WSL IP).
+$script:OtaconOpenBase = "http://127.0.0.1:$Port"
 
 New-Item -ItemType Directory -Force -Path $KeepDir, $LogDir, $DiagDir | Out-Null
 
@@ -497,9 +500,96 @@ function Resolve-OtaconDistroInteractive {
     }
 }
 
+function Get-WslPrimaryIp {
+    param([string]$Name)
+    if (-not $Name) { return "" }
+    try {
+        $raw = (& wsl.exe -d $Name -- hostname -I 2>$null | Out-String).Trim()
+        if (-not $raw) { return "" }
+        $ip = ($raw -split '\s+')[0]
+        if ($ip -match '^\d{1,3}(\.\d{1,3}){3}$') { return $ip }
+    } catch {}
+    return ""
+}
+
+function Get-OtaconBaseUrlCandidates {
+    $list = New-Object System.Collections.Generic.List[string]
+    [void]$list.Add("http://127.0.0.1:$Port")
+    $ubuntu = $null
+    try { $ubuntu = Get-UbuntuDistroName } catch {}
+    if ($ubuntu) {
+        $ip = Get-WslPrimaryIp -Name $ubuntu
+        if ($ip) { [void]$list.Add("http://${ip}:$Port") }
+    }
+    # Last good URL from prior repair
+    try {
+        $f = Join-Path $KeepDir "last-otacon-url.txt"
+        if (Test-Path -LiteralPath $f) {
+            $prev = (Get-Content -LiteralPath $f -TotalCount 1 -ErrorAction SilentlyContinue).Trim()
+            if ($prev -and $prev -match '^https?://' -and -not $list.Contains($prev)) {
+                [void]$list.Add($prev)
+            }
+        }
+    } catch {}
+    return @($list)
+}
+
+function Get-OtaconOpenUrl {
+    param([switch]$Codec)
+    $base = $script:OtaconOpenBase
+    if (-not $base) { $base = "http://127.0.0.1:$Port" }
+    if ($Codec) { return "$base/?codec=1" }
+    return "$base/"
+}
+
+function Invoke-OtaconCoreRepair {
+    <#
+      Revive Core when connection refused / Codec dud / scan hang.
+      Prefer deploy/repair-otacon-core.ps1; falls back to inline wake.
+    #>
+    param(
+        [string]$Name = "",
+        [switch]$OpenBrowser,
+        [switch]$Codec
+    )
+    if (-not $Name) { $Name = Get-UbuntuDistroName }
+    $ps1 = Join-Path $RepoRoot "deploy\repair-otacon-core.ps1"
+    if (Test-Path -LiteralPath $ps1) {
+        Write-KeepLog "Invoke-OtaconCoreRepair via repair-otacon-core.ps1 distro=$Name" -Stage "REPAIR"
+        $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $ps1, "-Port", "$Port", "-TimeoutSeconds", "45")
+        if ($Name) { $argList += @("-DistroName", $Name) }
+        if ($OpenBrowser) { $argList += "-OpenBrowser" }
+        if ($Codec) { $argList += "-Codec" }
+        & powershell @argList
+        $ok = ($LASTEXITCODE -eq 0)
+        if ($ok) {
+            try {
+                $f = Join-Path $KeepDir "last-otacon-url.txt"
+                if (Test-Path -LiteralPath $f) {
+                    $script:OtaconOpenBase = (Get-Content -LiteralPath $f -TotalCount 1).Trim()
+                }
+            } catch {}
+            # Refresh identity against whatever answered
+            [void](Test-OtaconIdentity)
+        }
+        return $ok
+    }
+    Write-KeepLog "repair-otacon-core.ps1 missing - inline wake" -Level "WARN" -Stage "REPAIR"
+    if ($Name) {
+        & wsl.exe -d $Name -u root -- bash -lc "systemctl restart otacon-tts.service 2>/dev/null; systemctl restart otacon.service 2>/dev/null; true" 2>$null | Out-Null
+        Start-Sleep -Seconds 3
+    }
+    $id = Test-OtaconIdentity
+    if ($id.ok -and ($OpenBrowser -or $Codec)) {
+        Start-Process (Get-OtaconOpenUrl -Codec:$Codec)
+    }
+    return [bool]$id.ok
+}
+
 function Test-OtaconIdentity {
     <#
       Gate B/J: READY only when /api/branding positively identifies Otacon.
+      Tries localhost first, then WSL IP (Windows localhost forwarding can break).
       Returns hashtable: ok, reason, product_name, occupied_non_otacon
     #>
     $result = @{
@@ -509,49 +599,71 @@ function Test-OtaconIdentity {
         occupied_non_otacon  = $false
         root_status          = $null
         brand_status         = $null
+        base_url             = ""
     }
-    try {
-        $root = Invoke-WebRequest -Uri $HealthUrl -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-        $result.root_status = [int]$root.StatusCode
-        if ($root.StatusCode -lt 200 -or $root.StatusCode -ge 500) {
-            $result.reason = "root_bad_status"
-            return $result
+    $bases = Get-OtaconBaseUrlCandidates
+    $sawHttp = $false
+    foreach ($base in $bases) {
+        $rootOk = $false
+        try {
+            $root = Invoke-WebRequest -Uri "$base/" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+            $result.root_status = [int]$root.StatusCode
+            if ($root.StatusCode -ge 200 -and $root.StatusCode -lt 500) {
+                $rootOk = $true
+                $sawHttp = $true
+            } else {
+                continue
+            }
+        } catch {
+            continue
         }
-    } catch {
-        $result.reason = "root_unreachable"
-        return $result
-    }
+        if (-not $rootOk) { continue }
 
-    try {
-        $b = Invoke-WebRequest -Uri $BrandUrl -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-        $result.brand_status = [int]$b.StatusCode
-        if ($b.StatusCode -lt 200 -or $b.StatusCode -ge 300) {
-            $result.reason = "branding_bad_status"
+        try {
+            $b = Invoke-WebRequest -Uri "$base/api/branding" -UseBasicParsing -TimeoutSec 4 -ErrorAction Stop
+            $result.brand_status = [int]$b.StatusCode
+            if ($b.StatusCode -lt 200 -or $b.StatusCode -ge 300) {
+                $result.reason = "branding_bad_status"
+                $result.occupied_non_otacon = $true
+                $result.base_url = $base
+                return $result
+            }
+            $json = $null
+            try { $json = $b.Content | ConvertFrom-Json } catch {
+                $result.reason = "branding_invalid_json"
+                $result.occupied_non_otacon = $true
+                $result.base_url = $base
+                return $result
+            }
+            $pname = [string]($json.product_name)
+            $result.product_name = $pname
+            $result.base_url = $base
+            if ($pname -eq "Otacon") {
+                $result.ok = $true
+                $result.reason = "ok"
+                $script:OtaconOpenBase = $base
+                $script:HealthUrl = "$base/"
+                $script:BrandUrl = "$base/api/branding"
+                try {
+                    Set-Content -LiteralPath (Join-Path $KeepDir "last-otacon-url.txt") -Value $base -Encoding ASCII
+                } catch {}
+                return $result
+            }
+            $result.reason = "branding_wrong_product"
             $result.occupied_non_otacon = $true
             return $result
-        }
-        $json = $null
-        try { $json = $b.Content | ConvertFrom-Json } catch {
-            $result.reason = "branding_invalid_json"
+        } catch {
+            # Root answered but branding missing -> may be foreign; try next base first
+            $result.reason = "branding_missing"
             $result.occupied_non_otacon = $true
-            return $result
+            $result.base_url = $base
+            # Keep looking at other bases before concluding
+            continue
         }
-        $pname = [string]($json.product_name)
-        $result.product_name = $pname
-        if ($pname -eq "Otacon") {
-            $result.ok = $true
-            $result.reason = "ok"
-            return $result
-        }
-        $result.reason = "branding_wrong_product"
-        $result.occupied_non_otacon = $true
-        return $result
-    } catch {
-        # Root answered but branding missing/failed -> foreign service on 5757
-        $result.reason = "branding_missing"
-        $result.occupied_non_otacon = $true
-        return $result
     }
+    if ($sawHttp -and $result.occupied_non_otacon) { return $result }
+    $result.reason = "root_unreachable"
+    return $result
 }
 
 function Test-OtaconHealth {
@@ -1070,9 +1182,17 @@ function Request-RestartConfirmation {
 # Open Otacon (launch guard)
 # ---------------------------------------------------------------------------
 function Open-OtaconIfReady {
+    $ubuntu = Get-UbuntuDistroName
+    # Always attempt core repair first — fixes connection refused / wedged scan / dead unit.
+    if ($ubuntu) {
+        Write-Host "  Making sure Otacon is awake..." -ForegroundColor Cyan
+        [void](Invoke-OtaconCoreRepair -Name $ubuntu -Codec)
+    }
     $s = Get-WhereYouAre
-    if ($s.web_health) {
-        Start-Process $HealthUrl
+    if ($s.web_health -or (Test-OtaconHealth)) {
+        $url = Get-OtaconOpenUrl -Codec
+        Write-Host "  Opening $url" -ForegroundColor Green
+        Start-Process $url
         return $true
     }
     Show-Box "HANG ON" @(
@@ -1089,9 +1209,14 @@ function Open-OtaconIfReady {
         "continue installation instead",
         "",
         "press I to continue setup",
+        "press F to retry fix/wake",
         "press X to exit"
     ) -Color Yellow
-    $c = Read-Choice "  Choice [I/X]: " @("I","X")
+    $c = Read-Choice "  Choice [I/F/X]: " @("I","F","X")
+    if ($c -eq "F") {
+        if ($ubuntu -and (Invoke-OtaconCoreRepair -Name $ubuntu -Codec)) { return $true }
+        return (Open-OtaconIfReady)
+    }
     return ($c -eq "I")
 }
 
@@ -1160,7 +1285,7 @@ function Step-EnableWsl {
     Write-KeepLog "wsl --install exit=$($p.ExitCode)" -Stage "WAITING_FOR_WINDOWS"
     # On virgin machines the store distro is named Ubuntu - record intent for dedicated rename/import next run.
     if ($DistroName -eq $PreferredDistro) {
-        Save-InstallerState @{ ubuntu_name = "Ubuntu"; ubuntu_mode = "virgin_ubuntu_pending_dedicated"; target_distro = $PreferredDistro }
+        Save-InstallerState @{ ubuntu_name = $null; ubuntu_mode = "virgin_ubuntu_pending_dedicated"; target_distro = $PreferredDistro }
     }
     return $p.ExitCode
 }
@@ -1727,15 +1852,27 @@ function Step-RegisterWakeTask {
             return $false
         }
     }
-    # Also drop an Open Otacon launcher
-    $openBat = Join-Path $KeepDir "Open-Otacon.bat"
+    # Also drop Open Otacon + Fix Codec launchers (double-click, no pasting)
     $assistant = Join-Path $RepoRoot "deploy\windows-setup-assistant.ps1"
+    $repairPs1 = Join-Path $RepoRoot "deploy\repair-otacon-core.ps1"
+    $openBat = Join-Path $KeepDir "Open-Otacon.bat"
     @"
 @echo off
-title Open Otacon
+title Open Otacon Codec
 powershell -NoProfile -ExecutionPolicy Bypass -File "$assistant" -Open -RepoRoot "$RepoRoot"
+if errorlevel 1 pause
 "@ | Set-Content -Path $openBat -Encoding ASCII
-    Write-KeepLog "wake task + Open-Otacon.bat registered ok=$(Test-WakeTaskRegistered)" -Stage "STARTING"
+    $fixBat = Join-Path $KeepDir "Fix-Otacon-Codec.bat"
+    @"
+@echo off
+title Fix Otacon Codec
+echo Reviving Otacon Core / Codec - do not close this window.
+powershell -NoProfile -ExecutionPolicy Bypass -File "$repairPs1" -OpenBrowser -Codec -Port $Port
+echo.
+echo Done. Press any key to close.
+pause >nul
+"@ | Set-Content -Path $fixBat -Encoding ASCII
+    Write-KeepLog "wake task + Open-Otacon.bat + Fix-Otacon-Codec.bat registered ok=$(Test-WakeTaskRegistered)" -Stage "STARTING"
     return (Test-WakeTaskRegistered)
 }
 
@@ -1815,15 +1952,17 @@ function Start-GuidedSetup {
         $ttsOk = [bool]$snap.tts_ok
         $title = if ($ttsOk) { "OTACON IS READY" } else { "OTACON NEEDS REPAIR" }
         $color = if ($ttsOk) { [ConsoleColor]::Green } else { [ConsoleColor]::Yellow }
+        $openHint = Get-OtaconOpenUrl
         $lines = @(
             $(if ($ttsOk) { "otacon is already installed and responding" } else { "chat may be up, but the voice engine is not healthy" }),
             "",
-            $(if ($ttsOk) { "identity check passed on localhost:$Port" } else { "voice reason: $($snap.tts_reason)" }),
+            $(if ($ttsOk) { "identity check passed" } else { "voice reason: $($snap.tts_reason)" }),
             "",
-            "http://localhost:$Port",
+            $openHint,
             "",
-            "[ O ] Open Otacon",
-            "[ P ] Repair  (TTS unit + wake + spoken preview)",
+            "[ O ] Open Codec",
+            "[ F ] Fix connection  (wake service, skip hung GPU scan, open Codec)",
+            "[ P ] Repair voice  (TTS unit + wake + spoken preview)",
             "[ R ] Reinstall  (force reinstall path)",
             "[ X ] Exit"
         )
@@ -1833,10 +1972,21 @@ function Start-GuidedSetup {
         } else {
             Save-InstallerState @{ stage = "degraded"; last_error = "TTS down: $($snap.tts_reason)" }
         }
-        $c = Read-Choice "  Choice [O/P/R/X]: " @("O","P","R","X")
+        $c = Read-Choice "  Choice [O/F/P/R/X]: " @("O","F","P","R","X")
         if ($c -eq "O") {
-            Start-Process $HealthUrl
+            $ubuntuOpen = Get-UbuntuDistroName
+            if ($ubuntuOpen) { [void](Invoke-OtaconCoreRepair -Name $ubuntuOpen) }
+            Start-Process (Get-OtaconOpenUrl -Codec)
             return $(if ($ttsOk) { 0 } else { 2 })
+        }
+        if ($c -eq "F") {
+            $ubuntuFix = Get-UbuntuDistroName
+            if ($ubuntuFix -and (Invoke-OtaconCoreRepair -Name $ubuntuFix -Codec)) {
+                Save-InstallerComplete
+                return 0
+            }
+            Write-Host "  Fix did not bring Otacon up - continuing into guided setup." -ForegroundColor DarkYellow
+            $script:ForceInstall = $true
         }
         if ($c -eq "X") { return $(if ($ttsOk) { 0 } else { 2 }) }
         if ($c -eq "P") {
@@ -1854,7 +2004,7 @@ function Start-GuidedSetup {
                         "press O to open, X to finish"
                     ) -Color Green
                     $c2 = Read-Choice "  Choice [O/X]: " @("O","X")
-                    if ($c2 -eq "O") { Start-Process $HealthUrl }
+                    if ($c2 -eq "O") { Start-Process (Get-OtaconOpenUrl -Codec) }
                     return 0
                 }
                 Write-Host "  Repair did not fully restore TTS - continuing into guided setup." -ForegroundColor DarkYellow
@@ -1880,9 +2030,29 @@ function Start-GuidedSetup {
                     "press O to open, X to finish"
                 ) -Color Green
                 $c2 = Read-Choice "  Choice [O/X]: " @("O","X")
-                if ($c2 -eq "O") { Start-Process $HealthUrl }
+                if ($c2 -eq "O") { Start-Process (Get-OtaconOpenUrl -Codec) }
                 return 0
             }
+        }
+    } elseif (-not $snap.web_health) {
+        $ubuntuDead = Get-UbuntuDistroName
+        if ($ubuntuDead -and (Test-OtaconFiles $ubuntuDead)) {
+            Write-Host "  Otacon files found but web is down - running core repair..." -ForegroundColor Cyan
+            Write-KeepLog "auto core repair (web down, files present) distro=$ubuntuDead" -Stage "REPAIR"
+            if (Invoke-OtaconCoreRepair -Name $ubuntuDead -Codec) {
+                Save-InstallerComplete
+                Show-Box "OTACON RESTORED" @(
+                    "core service was down; it is back online",
+                    "",
+                    (Get-OtaconOpenUrl),
+                    "",
+                    "press O to open Codec, X to finish"
+                ) -Color Green
+                $cR = Read-Choice "  Choice [O/X]: " @("O","X")
+                if ($cR -eq "O") { Start-Process (Get-OtaconOpenUrl -Codec) }
+                return 0
+            }
+            Write-Host "  Core repair did not restore the site - continuing setup." -ForegroundColor DarkYellow
         }
     }
 
@@ -2056,7 +2226,7 @@ function Start-GuidedSetup {
                         "press O to open, X to finish"
                     ) -Color Green
                     $c2 = Read-Choice "  Choice [O/X]: " @("O","X")
-                    if ($c2 -eq "O") { Start-Process $HealthUrl }
+                    if ($c2 -eq "O") { Start-Process (Get-OtaconOpenUrl -Codec) }
                     return 0
                 }
             }
@@ -2076,6 +2246,7 @@ function Start-GuidedSetup {
     Clear-ResumeMarkers
     $ttsFinal = Test-OtaconTts
     $sttNote = "mic/STT: not installed by default (set OTACON_INSTALL_STT=1 to enable)"
+    $readyUrl = Get-OtaconOpenUrl
     $readyLines = @(
         "installation completed successfully",
         "",
@@ -2084,19 +2255,23 @@ function Start-GuidedSetup {
         "wake task: $(if (Test-WakeTaskRegistered) { 'registered' } else { 'MISSING - reboot may not auto-start' })",
         $sttNote,
         "",
-        "open otacon",
+        "open otacon codec",
         "",
-        "http://localhost:$Port",
+        $readyUrl,
+        "",
+        "if the site ever says connection refused, double-click:",
+        "%LOCALAPPDATA%\OtaconsKeep\Fix-Otacon-Codec.bat",
+        "or run OtaconsKeep-Setup.bat --fix-codec",
         "",
         "you can close this setup window now",
         "",
-        "press O to open otacon",
+        "press O to open Codec",
         "press X to finish"
     )
     Show-Box "OTACON IS READY" $readyLines -Color Green
     Write-KeepLog "COMPLETE identity+tts health ok wake=$(Test-WakeTaskRegistered)" -Stage "COMPLETE"
     $c = Read-Choice "  Choice [O/X]: " @("O","X")
-    if ($c -eq "O") { Start-Process $HealthUrl }
+    if ($c -eq "O") { Start-Process (Get-OtaconOpenUrl -Codec) }
     return 0
 }
 
@@ -2111,6 +2286,11 @@ try {
     }
     if ($Status) { Show-StatusReport; exit 0 }
     if ($Diagnostics) { Write-DiagnosticsFile | Out-Null; exit 0 }
+    if ($FixCodec) {
+        $ubuntu = Get-UbuntuDistroName
+        $ok = Invoke-OtaconCoreRepair -Name $ubuntu -OpenBrowser -Codec
+        exit $(if ($ok) { 0 } else { 1 })
+    }
     if ($Open) {
         $cont = Open-OtaconIfReady
         if ($cont -and -not (Test-OtaconHealth)) { exit (ConvertTo-InstallerExitCode (Start-GuidedSetup)) }

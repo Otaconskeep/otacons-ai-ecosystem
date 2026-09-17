@@ -30,22 +30,33 @@ function Test-Otacon {
 }
 
 function Start-OtaconStack {
-    # Prefer systemd units. Clear orphan nohup piper that would mask a dead unit.
+    # Prefer systemd units. Skip hung GPU probe. Manual start if unit missing.
     $script = @'
-set -e
+set +e
 pkill -f "wyoming-piper.*10200" 2>/dev/null || true
 sleep 1
+UNIT=/etc/systemd/system/otacon.service
+if [ -f "$UNIT" ]; then
+  grep -q "OTACON_SKIP_NVIDIA_SMI=" "$UNIT" || sed -i "/\[Service\]/a Environment=OTACON_SKIP_NVIDIA_SMI=1" "$UNIT"
+  grep -q "OTACON_HOST=0.0.0.0" "$UNIT" || sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=0.0.0.0|" "$UNIT"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
 if systemctl list-unit-files otacon-tts.service >/dev/null 2>&1; then
   systemctl enable otacon-tts.service >/dev/null 2>&1 || true
   systemctl restart otacon-tts.service >/dev/null 2>&1 || systemctl start otacon-tts.service >/dev/null 2>&1 || true
 fi
 systemctl enable otacon.service >/dev/null 2>&1 || true
 systemctl restart otacon.service >/dev/null 2>&1 || systemctl start otacon.service >/dev/null 2>&1 || true
-# Soft ensure: if unit missing but piper venv exists, fall back once
-if ! systemctl is-active --quiet otacon-tts.service 2>/dev/null; then
-  # Public Core markers only - never /opt/otacon (private Keep).
-  if [ -x "$HOME/.local/bin/otacon" ] || [ -d "${OTACON_INSTALL_DIR:-$HOME/otacon-ai-ecosystem}/core" ] || [ -f "$HOME/.config/otacon/config.json" ]; then
-    true
+sleep 2
+if ! curl -fsS --max-time 2 http://127.0.0.1:5757/api/branding >/dev/null 2>&1; then
+  ROOT="$(ls -d /home/*/otacon-ai-ecosystem 2>/dev/null | head -n1)"
+  if [ -n "$ROOT" ] && [ -x "$ROOT/.venv/bin/python" ]; then
+    OWNER="$(stat -c %U "$ROOT" 2>/dev/null || echo root)"
+    mkdir -p "/home/${OWNER}/.config/otacon" 2>/dev/null || true
+    if command -v runuser >/dev/null 2>&1 && [ "$OWNER" != "root" ]; then
+      runuser -u "$OWNER" -- env OTACON_SKIP_NVIDIA_SMI=1 OTACON_HOST=0.0.0.0 OTACON_PORT=5757 PYTHONPATH="$ROOT" \
+        bash -lc "cd \"$ROOT\" && nohup \"$ROOT/.venv/bin/python\" -m installer.server >\$HOME/.config/otacon/wizard.log 2>&1 &"
+    fi
   fi
 fi
 '@

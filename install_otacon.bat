@@ -87,6 +87,10 @@ if /I "%~1"=="--repair" goto SET_REPAIR
 if /I "%~1"=="-repair" goto SET_REPAIR
 if /I "%~1"=="--reinstall" goto SET_REINSTALL
 if /I "%~1"=="-reinstall" goto SET_REINSTALL
+if /I "%~1"=="--fix-codec" goto SET_FIXCODEC
+if /I "%~1"=="-fix-codec" goto SET_FIXCODEC
+if /I "%~1"=="--fix" goto SET_FIXCODEC
+if /I "%~1"=="-fix" goto SET_FIXCODEC
 goto PARSE_SHIFT
 :SET_SYNTAX
 set "SYNTAX_ONLY=1"
@@ -114,6 +118,9 @@ set "MODE=!MODE! -Repair"
 goto PARSE_SHIFT
 :SET_REINSTALL
 set "MODE=!MODE! -Reinstall"
+goto PARSE_SHIFT
+:SET_FIXCODEC
+set "MODE=!MODE! -FixCodec"
 goto PARSE_SHIFT
 :PARSE_SHIFT
 shift
