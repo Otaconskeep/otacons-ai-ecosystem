@@ -1746,8 +1746,9 @@ function ConvertFrom-WslPasswdRecord {
     $name = $parts[0]
     $uid = $parts[2]
     $gid = $parts[3]
-    $home = $parts[5]
-    $shell = $parts[6]
+    # Never use $home - PowerShell treats it as read-only $HOME (case-insensitive).
+    $linuxHome = $parts[5]
+    $linuxShell = $parts[6]
     if ($name -ne $ExpectedUser) {
         $result.Detail = "username_mismatch"
         return $result
@@ -1755,14 +1756,14 @@ function ConvertFrom-WslPasswdRecord {
     $result.Exists = $true
     $result.Uid = $uid
     $result.Gid = $gid
-    $result.Home = $home
-    $result.Shell = $shell
+    $result.Home = $linuxHome
+    $result.Shell = $linuxShell
 
     $uidNum = 0
     $uidParsed = [int]::TryParse([string]$uid, [ref]$uidNum)
     $result.UidOk = ($uidParsed -and $uidNum -ne 0)
-    $result.ShellOk = (-not [string]::IsNullOrWhiteSpace($shell))
-    $homeNonEmpty = (-not [string]::IsNullOrWhiteSpace($home))
+    $result.ShellOk = (-not [string]::IsNullOrWhiteSpace($linuxShell))
+    $homeNonEmpty = (-not [string]::IsNullOrWhiteSpace($linuxHome))
     if (-not $HomeChecked) {
         # Intermediate parse only - caller must probe home with --exec test -d.
         $result.Status = "PARSED"
@@ -1869,17 +1870,17 @@ function Get-WslLinuxUserDiagnosis {
         $parsed.DefectConfirmed = $false
         return $parsed
     }
-    $home = [string]$parsed.Home
-    if ([string]::IsNullOrWhiteSpace($home)) {
+    $linuxHome = [string]$parsed.Home
+    if ([string]::IsNullOrWhiteSpace($linuxHome)) {
         # Empty home is a confirmed defect once passwd parsed cleanly.
         return (ConvertFrom-WslPasswdRecord -Record $line -ExpectedUser $User -HomeExists:$false -HomeChecked:$true)
     }
     $homeExists = $false
     try {
-        & wsl.exe -d $Name --exec test -d $home 2>$null | Out-Null
+        & wsl.exe -d $Name --exec test -d $linuxHome 2>$null | Out-Null
         $homeExists = ($LASTEXITCODE -eq 0)
     } catch {
-        Write-KeepLog "Get-WslLinuxUserDiagnosis: test -d failed user=$User home=$home err=$($_.Exception.Message)" -Level "ERROR" -Stage "WSL_USER"
+        Write-KeepLog "Get-WslLinuxUserDiagnosis: test -d failed user=$User home=$linuxHome err=$($_.Exception.Message)" -Level "ERROR" -Stage "WSL_USER"
         $parsed.Status = "DIAGNOSTIC_ERROR"
         $parsed.Ok = $false
         $parsed.DefectConfirmed = $false
