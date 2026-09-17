@@ -1242,28 +1242,24 @@ function Show-SetupNeedsHelp {
     if (Test-ComponentStoreCorruptMessage $PlainError) {
         return (Show-ComponentStoreCorruptHelp -Detail $PlainError)
     }
-    Show-Box "SETUP NEEDS HELP" @(
-        "[OTACON] I hit a snag - nothing was deleted.",
-        "",
-        "step",
-        $Step,
-        "",
-        "error",
-        $PlainError,
-        "",
-        "log",
-        $LogFile,
-        "",
-        "[ R ] Retry    [ O ] Open logs    [ X ] Exit"
-    ) -Color Red
-    Write-OtaconSay "I need a decision here. Press R to retry, O for logs, or X to exit." -Mood "alert" -NoType
     Write-KeepLog "FAILED step=$Step err=$PlainError" -Level "ERROR" -Stage "FAILED"
     Save-InstallerState @{ stage = "failed"; last_error = $PlainError; last_step = $Step }
+    Write-OtaconSay "I couldn't repair this automatically." -Mood "alert"
+    Show-Box "GUIDED RECOVERY" @(
+        "You don't need to understand Linux.",
+        "I saved the technical details here:",
+        "",
+        $LogFile,
+        "",
+        "Press ENTER to try again (I'll keep handling it).",
+        "Press L to open logs.",
+        "Press Q to exit."
+    ) -Color Yellow
     while ($true) {
-        $c = Read-Choice "  Choice [R/O/X]: " @("R","O","X")
-        if ($c -eq "O") { Start-Process explorer.exe $LogDir; continue }
-        if ($c -eq "X") { return "exit" }
-        if ($c -eq "R") { return "retry" }
+        $c = Read-Choice "  [ENTER]=retry  [L]=logs  [Q]=exit : " @("ENTER","L","Q")
+        if ($c -eq "L") { Start-Process explorer.exe $LogDir; continue }
+        if ($c -eq "Q") { return "exit" }
+        if ($c -eq "ENTER") { return "retry" }
     }
 }
 
@@ -1689,22 +1685,70 @@ function Test-WslLinuxUserValid {
       Does NOT check whether this account is the distro's effective default.
     #>
     param([string]$Name, [string]$User)
-    if (-not $Name -or -not $User) { return $false }
-    if ($User -eq "root") { return $false }
+    $diag = Get-WslLinuxUserDiagnosis -Name $Name -User $User
+    return [bool]$diag.Ok
+}
+
+function Get-WslLinuxUserDiagnosis {
+    <#
+      Inspect account A without mutating. Returns Exists/Uid/Home/Shell flags + Detail.
+    #>
+    param([string]$Name, [string]$User)
+    $result = @{
+        Exists  = $false
+        Uid     = ""
+        Home    = ""
+        Shell   = ""
+        UidOk   = $false
+        HomeOk  = $false
+        ShellOk = $false
+        Ok      = $false
+        Detail  = "missing_args"
+    }
+    if (-not $Name -or -not $User) { return $result }
+    if ($User -eq "root") {
+        $result.Detail = "root_rejected"
+        return $result
+    }
     $esc = $User.Replace("'", "'\''")
     $check = @"
 u='$esc'
-id "`$u" >/dev/null 2>&1 || exit 1
-uid=`$(id -u "`$u")
+if ! id "`$u" >/dev/null 2>&1; then echo EXISTS=0; exit 0; fi
+echo EXISTS=1
+uid=`$(id -u "`$u" 2>/dev/null || echo '')
 home=`$(getent passwd "`$u" | cut -d: -f6)
 shell=`$(getent passwd "`$u" | cut -d: -f7)
-[ -n "`$uid" ] && [ "`$uid" -ge 1000 ] && [ "`$uid" -lt 65534 ] || exit 2
-[ -n "`$home" ] && [ -d "`$home" ] || exit 3
-case "`$shell" in */bash|*/sh|*/zsh|*/fish) ;; *) exit 4 ;; esac
-echo ACCOUNT_VALID
+echo UID=`$uid
+echo HOME=`$home
+echo SHELL=`$shell
 "@
     $out = & wsl.exe -d $Name -u root -- bash -lc $check 2>$null
-    return (("$out" | Out-String) -match 'ACCOUNT_VALID')
+    $text = ("$out" | Out-String)
+    if ($text -notmatch 'EXISTS=1') {
+        $result.Detail = "missing"
+        return $result
+    }
+    $result.Exists = $true
+    if ($text -match 'UID=(\d+)') { $result.Uid = $Matches[1] }
+    if ($text -match 'HOME=([^\r\n]+)') { $result.Home = $Matches[1].Trim() }
+    if ($text -match 'SHELL=([^\r\n]+)') { $result.Shell = $Matches[1].Trim() }
+    $uidNum = 0
+    [void][int]::TryParse([string]$result.Uid, [ref]$uidNum)
+    $result.UidOk = ($uidNum -ge 1000 -and $uidNum -lt 65534)
+    $result.HomeOk = ($result.Home -and ($text -match 'HOME=') -and ((& wsl.exe -d $Name -u root -- bash -lc ("[ -d '{0}' ] && echo HOME_DIR_OK" -f ($result.Home.Replace("'", "'\''"))) 2>$null | Out-String) -match 'HOME_DIR_OK'))
+    $sh = [string]$result.Shell
+    $result.ShellOk = ($sh -match '/(bash|sh|zsh|fish)$')
+    $result.Ok = ($result.UidOk -and $result.HomeOk -and $result.ShellOk)
+    if ($result.Ok) {
+        $result.Detail = "ok"
+    } else {
+        $bits = @()
+        if (-not $result.UidOk) { $bits += "uid" }
+        if (-not $result.HomeOk) { $bits += "home" }
+        if (-not $result.ShellOk) { $bits += "shell" }
+        $result.Detail = ($bits -join ",")
+    }
+    return $result
 }
 
 function Get-WslEffectiveDefaultUser {
@@ -1871,22 +1915,108 @@ function New-WslLinuxUser {
     return ($result.Ok -and ($result.Output -match 'OTACON_USER_CREATED') -and (Test-WslLinuxUserValid -Name $Name -User $User))
 }
 
+function Repair-WslLinuxUser {
+    <#
+      Auto-repair an existing account (home/shell/groups). Never clears passwords.
+      Does not change UID (unsafe). Returns $true only when Test-WslLinuxUserValid passes.
+    #>
+    param(
+        [string]$Name,
+        [string]$User,
+        [switch]$Quiet
+    )
+    if (-not $Name -or -not $User -or $User -eq "root") { return $false }
+    $diag = Get-WslLinuxUserDiagnosis -Name $Name -User $User
+    if (-not $diag.Exists) {
+        Write-KeepLog "Repair-WslLinuxUser: user missing user=$User" -Stage "WSL_USER"
+        return $false
+    }
+    if ($diag.Ok) { return $true }
+    if (-not $diag.UidOk) {
+        Write-KeepLog "Repair-WslLinuxUser: uid not repairable user=$User uid=$($diag.Uid) detail=$($diag.Detail)" -Level "ERROR" -Stage "WSL_USER"
+        if (-not $Quiet) {
+            Write-OtaconSay ("User {0} has an unusual account id ({1}). I won't force-change it." -f $User, $diag.Uid) -Mood "warn" -NoType
+        }
+        return $false
+    }
+    if (-not $Quiet) {
+        Write-OtaconSay ("Checking user {0}..." -f $User) -Mood "work" -NoType
+        if (-not $diag.HomeOk) { Write-OtaconSay "Creating/fixing home directory..." -Mood "work" -NoType }
+        if (-not $diag.ShellOk) { Write-OtaconSay "Verifying shell..." -Mood "work" -NoType }
+    }
+    Show-WorkingPanel -Step 5 -StepName "REPAIRING LINUX USER" -Detail ("Repairing account {0}" -f $User) -Started (Get-Date) -Typical "under a minute"
+
+    $escUser = $User.Replace("'", "'\''")
+    $bashLines = @(
+        '#!/bin/bash',
+        'set -euo pipefail',
+        ("USER_NAME='{0}'" -f $escUser),
+        'id "$USER_NAME" >/dev/null 2>&1 || { echo "OTACON_USER_REPAIR_FAIL=missing"; exit 1; }',
+        'uid="$(id -u "$USER_NAME")"',
+        'if [ -z "$uid" ] || [ "$uid" -lt 1000 ] || [ "$uid" -ge 65534 ]; then',
+        '  echo "OTACON_USER_REPAIR_FAIL=uid:$uid"',
+        '  exit 2',
+        'fi',
+        'HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"',
+        'if [ -z "$HOME_DIR" ] || [ "$HOME_DIR" = "/" ] || [ "$HOME_DIR" = "/nonexistent" ]; then',
+        '  HOME_DIR="/home/$USER_NAME"',
+        '  usermod -d "$HOME_DIR" "$USER_NAME"',
+        'fi',
+        'if [ ! -d "$HOME_DIR" ]; then',
+        '  mkdir -p "$HOME_DIR"',
+        '  if [ -d /etc/skel ]; then',
+        '    cp -a /etc/skel/. "$HOME_DIR"/ 2>/dev/null || true',
+        '  fi',
+        'fi',
+        'chown -R "$USER_NAME":"$USER_NAME" "$HOME_DIR" 2>/dev/null || chown "$USER_NAME":"$USER_NAME" "$HOME_DIR" || true',
+        'shell="$(getent passwd "$USER_NAME" | cut -d: -f7)"',
+        'case "$shell" in',
+        '  */bash|*/sh|*/zsh|*/fish) ;;',
+        '  *)',
+        '    if [ -x /bin/bash ]; then chsh -s /bin/bash "$USER_NAME" >/dev/null 2>&1 || usermod -s /bin/bash "$USER_NAME"; fi',
+        '    ;;',
+        'esac',
+        'for g in sudo adm video render plugdev users audio cdrom dip docker; do',
+        '  if getent group "$g" >/dev/null 2>&1; then usermod -aG "$g" "$USER_NAME" || true; fi',
+        'done',
+        'HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"',
+        'shell="$(getent passwd "$USER_NAME" | cut -d: -f7)"',
+        'echo "OTACON_USER_REPAIRED=$USER_NAME uid=$uid home=$HOME_DIR shell=$shell"',
+        'exit 0'
+    )
+    $scriptWin = Join-Path $LogDir "wsl-repair-user.sh"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($scriptWin, (($bashLines -join "`n") + "`n"), $utf8NoBom)
+    $result = Invoke-WslRootBashFile -Name $Name -ScriptWin $scriptWin
+    Write-KeepLog "Repair-WslLinuxUser output: $($result.Output.Trim())" -Stage "WSL_USER"
+    $ok = ($result.Ok -and ($result.Output -match 'OTACON_USER_REPAIRED') -and (Test-WslLinuxUserValid -Name $Name -User $User))
+    if ($ok) {
+        if (-not $Quiet) { Write-OtaconSay ("Account repair complete for {0}." -f $User) -Mood "ok" -NoType }
+    } else {
+        Write-KeepLog "Repair-WslLinuxUser: still invalid after repair user=$User" -Level "ERROR" -Stage "WSL_USER"
+    }
+    return $ok
+}
+
 function Ensure-WslTargetUser {
     <#
       Resolve install target user with separate A/B states:
         A) account validity (exists, not root, home/shell)
         B) effective default (`wsl -d Distro --exec id -un` == target)
-      Creates the account only when missing. Never clears an existing password.
-      Does not recreate or group-modify an already-valid account.
+      Creates the account only when missing. Auto-repairs home/shell when invalid.
+      Never clears an existing password. Does not recreate a valid account.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Name,
-        [string]$PreferredUser = ""
+        [string]$PreferredUser = "",
+        [int]$MaxRepairAttempts = 3,
+        [switch]$Quiet
     )
     if (-not (Ensure-WslDistroRunning -Name $Name)) {
         Write-KeepLog "Ensure-WslTargetUser: distro not running name=$Name" -Level "ERROR" -Stage "WSL_USER"
         return @{ User = ""; AccountValid = $false; DefaultOk = $false; Error = "distro_not_running" }
     }
+    $script:WslUserNeededRepair = $false
 
     $preferred = if ($PreferredUser) {
         ConvertTo-OtaconLinuxUsername -Raw $PreferredUser
@@ -1903,23 +2033,61 @@ function Ensure-WslTargetUser {
         }
     }
 
-    # --- State A: account validity ---
+    # --- State A: account validity (create or auto-repair) ---
     if (-not (Test-WslLinuxUserValid -Name $Name -User $candidate)) {
         if (Test-WslUserExists -Name $Name -User $candidate) {
-            Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_INVALID user=$candidate (exists but home/shell/uid failed)" -Level "ERROR" -Stage "WSL_USER"
-            return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid" }
+            Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_INVALID user=$candidate - autopilot repair" -Level "WARN" -Stage "WSL_USER"
+            $script:WslUserNeededRepair = $true
+            if (-not $Quiet) {
+                Write-OtaconSay "Linux account setup needs attention." -Mood "warn" -NoType
+                Write-OtaconSay "I'm repairing it now..." -Mood "work"
+            }
+            $repaired = $false
+            for ($attempt = 1; $attempt -le $MaxRepairAttempts; $attempt++) {
+                Write-KeepLog "Ensure-WslTargetUser: repair attempt=$attempt/$MaxRepairAttempts user=$candidate" -Stage "WSL_USER"
+                if (Repair-WslLinuxUser -Name $Name -User $candidate -Quiet:$Quiet) {
+                    $repaired = $true
+                    break
+                }
+                Start-Sleep -Seconds 1
+            }
+            if (-not $repaired) {
+                # Preferred user unrepairable (e.g. bad uid) - try a healthy alternate or create otacon.
+                $alt = Get-WslDefaultUser -Name $Name
+                if ($alt -and $alt -ne $candidate -and $alt -ne "root" -and (Test-WslLinuxUserValid -Name $Name -User $alt)) {
+                    Write-KeepLog "Ensure-WslTargetUser: falling back to valid alternate user=$alt" -Stage "WSL_USER"
+                    if (-not $Quiet) { Write-OtaconSay ("I'll use the healthy Linux account '{0}' instead." -f $alt) -Mood "work" -NoType }
+                    $candidate = $alt
+                } elseif ($candidate -ne "otacon" -and -not (Test-WslUserExists -Name $Name -User "otacon")) {
+                    Write-KeepLog "Ensure-WslTargetUser: creating fallback user=otacon" -Stage "WSL_USER"
+                    if (-not $Quiet) { Write-OtaconSay "Creating a fresh Linux account 'otacon' so we can continue..." -Mood "work" -NoType }
+                    if (New-WslLinuxUser -Name $Name -User "otacon") {
+                        $candidate = "otacon"
+                        [void](Set-WslDefaultUser -Name $Name -User $candidate -EnsureGroups)
+                        try { & wsl.exe --terminate $Name 2>$null | Out-Null } catch {}
+                        Start-Sleep -Seconds 2
+                        [void](Ensure-WslDistroRunning -Name $Name)
+                    } else {
+                        return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid" }
+                    }
+                } else {
+                    return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid" }
+                }
+            }
+        } else {
+            Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_MISSING user=$candidate - creating" -Stage "WSL_USER"
+            $script:WslUserNeededRepair = $true
+            if (-not $Quiet) { Write-OtaconSay ("Creating Linux user '{0}'..." -f $candidate) -Mood "work" -NoType }
+            if (-not (New-WslLinuxUser -Name $Name -User $candidate)) {
+                Write-KeepLog "Ensure-WslTargetUser: create failed user=$candidate" -Level "ERROR" -Stage "WSL_USER"
+                return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_create_failed" }
+            }
+            # Groups + default for brand-new accounts only
+            [void](Set-WslDefaultUser -Name $Name -User $candidate -EnsureGroups)
+            try { & wsl.exe --terminate $Name 2>$null | Out-Null } catch {}
+            Start-Sleep -Seconds 2
+            [void](Ensure-WslDistroRunning -Name $Name)
         }
-        Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_MISSING user=$candidate - creating" -Stage "WSL_USER"
-        Write-Host "  Creating Linux user '$candidate' in $Name..." -ForegroundColor Cyan
-        if (-not (New-WslLinuxUser -Name $Name -User $candidate)) {
-            Write-KeepLog "Ensure-WslTargetUser: create failed user=$candidate" -Level "ERROR" -Stage "WSL_USER"
-            return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_create_failed" }
-        }
-        # Groups + default for brand-new accounts only
-        [void](Set-WslDefaultUser -Name $Name -User $candidate -EnsureGroups)
-        try { & wsl.exe --terminate $Name 2>$null | Out-Null } catch {}
-        Start-Sleep -Seconds 2
-        [void](Ensure-WslDistroRunning -Name $Name)
     } else {
         Write-KeepLog "Ensure-WslTargetUser: ACCOUNT_VALID user=$candidate (not recreated; password untouched)" -Stage "WSL_USER"
     }
@@ -1928,11 +2096,22 @@ function Ensure-WslTargetUser {
         return @{ User = $candidate; AccountValid = $false; DefaultOk = $false; Error = "account_invalid" }
     }
 
-    # --- State B: effective default-user ---
+    # --- State B: effective default-user (auto-fix) ---
     $defaultOk = Test-WslEffectiveDefaultUser -Name $Name -User $candidate
     if (-not $defaultOk) {
         Write-KeepLog "Ensure-WslTargetUser: DEFAULT_MISMATCH want=$candidate effective=$(Get-WslEffectiveDefaultUser -Name $Name)" -Stage "WSL_USER"
+        $script:WslUserNeededRepair = $true
+        if (-not $Quiet) {
+            Write-OtaconSay "Setting default WSL user..." -Mood "work" -NoType
+            Write-OtaconSay ("Restarting {0}..." -f $Name) -Mood "work" -NoType
+        }
         $defaultOk = Ensure-WslEffectiveDefaultUser -Name $Name -User $candidate
+        if (-not $defaultOk) {
+            # Second bounded attempt
+            Start-Sleep -Seconds 1
+            if (-not $Quiet) { Write-OtaconSay "Verifying identity..." -Mood "work" -NoType }
+            $defaultOk = Ensure-WslEffectiveDefaultUser -Name $Name -User $candidate
+        }
     } else {
         Write-KeepLog "Ensure-WslTargetUser: DEFAULT_OK user=$candidate (wsl --exec id -un)" -Stage "WSL_USER"
     }
@@ -1942,8 +2121,15 @@ function Ensure-WslTargetUser {
         return @{ User = $candidate; AccountValid = $true; DefaultOk = $false; Error = "default_mismatch" }
     }
 
-    Write-Host "  [ok] Linux user ready: $candidate (account valid, effective default verified)" -ForegroundColor Green
+    if (-not $Quiet) {
+        Write-OtaconSay ("Linux user ready: {0}" -f $candidate) -Mood "ok" -NoType
+    } else {
+        Write-Host "  [ok] Linux user ready: $candidate (account valid, effective default verified)" -ForegroundColor Green
+    }
     Save-InstallerState @{ wsl_user = $candidate }
+    if ($script:WslUserNeededRepair -and -not $Quiet) {
+        Write-OtaconSay "Back on track. Continuing installation..." -Mood "ok"
+    }
     return @{ User = $candidate; AccountValid = $true; DefaultOk = $true; Error = "" }
 }
 
@@ -2384,30 +2570,32 @@ function Step-InstallOtacon {
 
     # Elevation architecture: never configure NOPASSWD:ALL.
     # privileged + finalize run as WSL root via wsl.exe -u root; user phase runs as the normal account.
-    # Dedicated Ubuntu-Otacon imports start with only root - auto-provision the expected user.
+    # Dedicated Ubuntu-Otacon imports start with only root - auto-provision/repair the expected user.
     # Keep account validity (A) and effective default-user (B) as separate failure states.
-    $prov = Ensure-WslTargetUser -Name $Name
+    # Autopilot: Ensure-WslTargetUser already creates/repairs/default-fixes with bounded retries.
+    # Stage 5 narrates; keep this call quiet to avoid duplicate dialogue.
+    $prov = Ensure-WslTargetUser -Name $Name -Quiet
     $targetUser = [string]$prov.User
     if (-not $prov.AccountValid) {
         $acctErr = switch ($prov.Error) {
-            "account_invalid" { "Linux user '$targetUser' exists but is not a valid install account (home/shell/uid). The password was not changed." }
-            "account_create_failed" { "Could not create Linux user '$targetUser' in $Name." }
+            "account_invalid" { "Linux user '$targetUser' still failed account checks (home/shell/uid) after automatic repair. The password was not changed." }
+            "account_create_failed" { "Could not create Linux user '$targetUser' in $Name after automatic attempts." }
             "distro_not_running" { "WSL distro '$Name' is not running, so the Linux account could not be checked." }
-            default { "Linux account for OtaconsKeep is missing or invalid in '$Name' (got='$targetUser')." }
+            default { "Linux account for OtaconsKeep is missing or invalid in '$Name' (got='$targetUser') after automatic repair." }
         }
-        Write-KeepLog "WSL ACCOUNT_VALID=false user='$targetUser' err=$($prov.Error)" -Level "ERROR" -Stage "INSTALLING_OTACON"
-        Show-SetupNeedsHelp -Step "installing otacon (linux account invalid)" -PlainError (
-            "$acctErr Check Logs under %LOCALAPPDATA%\OtaconsKeep\Logs, then rerun Setup."
-        ) | Out-Null
-        return 1
+        Write-KeepLog "WSL ACCOUNT_VALID=false user='$targetUser' err=$($prov.Error) (autopilot exhausted)" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        $act = Show-SetupNeedsHelp -Step "installing otacon (linux account invalid)" -PlainError $acctErr
+        if ($act -eq "retry") { return 100 }
+        return 101
     }
     if (-not $prov.DefaultOk) {
         $eff = Get-WslEffectiveDefaultUser -Name $Name
-        Write-KeepLog "WSL DEFAULT_OK=false want='$targetUser' effective='$eff' (account is valid)" -Level "ERROR" -Stage "INSTALLING_OTACON"
-        Show-SetupNeedsHelp -Step "installing otacon (WSL default user mismatch)" -PlainError (
-            "Linux account '$targetUser' is valid, but the effective WSL default user is '$eff' (expected '$targetUser' from: wsl -d $Name --exec id -un). Account validity passed; only the distro default-user setting failed. Check /etc/wsl.conf [user] default= and rerun Setup."
-        ) | Out-Null
-        return 1
+        Write-KeepLog "WSL DEFAULT_OK=false want='$targetUser' effective='$eff' (account is valid; autopilot exhausted)" -Level "ERROR" -Stage "INSTALLING_OTACON"
+        $act = Show-SetupNeedsHelp -Step "installing otacon (WSL default user mismatch)" -PlainError (
+            "Linux account '$targetUser' is valid, but the effective WSL default user is still '$eff' after automatic repair (expected '$targetUser' from: wsl -d $Name --exec id -un). Account validity passed; only the distro default-user setting failed."
+        )
+        if ($act -eq "retry") { return 100 }
+        return 101
     }
     Write-KeepLog "WSL user=$targetUser account_valid=true default_ok=true (no NOPASSWD:ALL; using wsl -u root for privileged steps)" -Stage "INSTALLING_OTACON"
 
@@ -2441,10 +2629,11 @@ function Step-InstallOtacon {
     while ($true) {
         $privAttempts++
         if ($privAttempts -gt 3) {
-            Show-SetupNeedsHelp -Step "installing otacon (privileged)" -PlainError (
+            $act = Show-SetupNeedsHelp -Step "installing otacon (privileged)" -PlainError (
                 "Privileged bootstrap kept requesting a WSL restart. Log: $logPipe"
-            ) | Out-Null
-            return 1
+            )
+            if ($act -eq "retry") { return 100 }
+            return 101
         }
         $code = Invoke-WslInstallPhase -Name $Name -Phase "privileged" -AsUser "root" -TargetUser $targetUser `
             -EnvPass $envPass -Started $started -GpuWin $gpuWin -GpuWsl $gpuWsl -LogPipe $logPipe `
@@ -2493,9 +2682,11 @@ function Step-InstallOtacon {
             }
             if ($act -eq "retry" -and $userRepairRetries -lt 2) {
                 $userRepairRetries++
-                Write-Host "  Retrying the privileged install phase against the existing WSL environment..." -ForegroundColor Yellow
+                Write-OtaconSay "Retrying the privileged install against the same Linux environment..." -Mood "work" -NoType
                 continue
             }
+            if ($act -eq "retry") { return 100 }
+            if ($act -eq "exit") { return 101 }
             return (ConvertTo-InstallerExitCode $code)
         }
         break
@@ -2506,14 +2697,20 @@ function Step-InstallOtacon {
         -EnvPass $envPass -Started $started -GpuWin $gpuWin -GpuWsl $gpuWsl -LogPipe $logPipe `
         -OverallTimeoutMin $overallTimeoutMin -StallTimeoutMin $stallTimeoutMin
     if ($code -ne 0 -and $code -ne 2) {
+        Write-OtaconSay "User phase hit a snag. I'm retrying once automatically..." -Mood "warn" -NoType
+        $code = Invoke-WslInstallPhase -Name $Name -Phase "user" -AsUser $targetUser -TargetUser $targetUser `
+            -EnvPass $envPass -Started $started -GpuWin $gpuWin -GpuWsl $gpuWsl -LogPipe $logPipe `
+            -OverallTimeoutMin $overallTimeoutMin -StallTimeoutMin $stallTimeoutMin
+    }
+    if ($code -ne 0 -and $code -ne 2) {
         if (Test-Path $logPipe) {
-            Write-Host "---- last 50 log lines (user) ----" -ForegroundColor Yellow
-            Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            Write-KeepLog "user phase failed; last log lines preserved in $logPipe" -Level "ERROR" -Stage "INSTALLING_OTACON"
         }
-        Show-SetupNeedsHelp -Step "installing otacon (user phase)" -PlainError (
-            "User install phase failed (exit $code). Log: $logPipe"
-        ) | Out-Null
-        return (ConvertTo-InstallerExitCode $code)
+        $act = Show-SetupNeedsHelp -Step "installing otacon (user phase)" -PlainError (
+            "User install phase failed (exit $code) after automatic retry. Log: $logPipe"
+        )
+        if ($act -eq "retry") { return 100 }
+        return 101
     }
     $userCode = [int](ConvertTo-InstallerExitCode $code)
     if ($code -eq 2) { $userCode = 2 }
@@ -2523,18 +2720,21 @@ function Step-InstallOtacon {
         -EnvPass $envPass -Started $started -GpuWin $gpuWin -GpuWsl $gpuWsl -LogPipe $logPipe `
         -OverallTimeoutMin 15 -StallTimeoutMin 10
     if ($code -ne 0) {
-        if (Test-Path $logPipe) {
-            Write-Host "---- last 50 log lines (finalize) ----" -ForegroundColor Yellow
-            Get-Content $logPipe -Tail 50 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-        }
+        Write-OtaconSay "Finalize step needs another pass. Retrying automatically..." -Mood "warn" -NoType
+        $code = Invoke-WslInstallPhase -Name $Name -Phase "finalize" -AsUser "root" -TargetUser $targetUser `
+            -EnvPass $envPass -Started $started -GpuWin $gpuWin -GpuWsl $gpuWsl -LogPipe $logPipe `
+            -OverallTimeoutMin 15 -StallTimeoutMin 10
+    }
+    if ($code -ne 0) {
         # P0-5: finalize soft-fail must NOT look like success. Durable systemd units
         # (otacon + otacon-tts) are installed only in finalize - never treat nohup as READY.
         Write-KeepLog "finalize failed exit=$code (user phase was $userCode) - hard FAIL" -Level "ERROR" -Stage "INSTALLING_OTACON"
         Save-InstallerState @{ stage = "failed"; last_error = "Finalize failed (exit $code). systemd units not durable." }
-        Show-SetupNeedsHelp -Step "finalizing systemd services" -PlainError (
-            "Finalize failed (exit $code). Otacon may be running temporarily but will not survive reboot. Log: $logPipe"
-        ) | Out-Null
-        return (ConvertTo-InstallerExitCode $code)
+        $act = Show-SetupNeedsHelp -Step "finalizing systemd services" -PlainError (
+            "Finalize failed (exit $code) after automatic retry. Otacon may be running temporarily but will not survive reboot. Log: $logPipe"
+        )
+        if ($act -eq "retry") { return 100 }
+        return 101
     }
 
     return [int]$userCode
@@ -2802,7 +3002,7 @@ function Start-GuidedSetup {
         Write-OtaconSay "Ubuntu environment present: $ubuntu" -Mood "ok" -NoType
     }
 
-    # [5/8] prepare ubuntu - AutoPilot provisions user; no password prompts
+    # [5/8] prepare ubuntu - AutoPilot provisions/repairs user; no password prompts; no R/O/X
     Write-OtaconSay "[5/$TotalSteps] Preparing your Linux user (no password needed)..." -Mood "work" -NoType
     if (-not (Test-UbuntuReady $ubuntu)) {
         Write-OtaconSay "Bringing the Linux environment online..." -Mood "work" -NoType
@@ -2824,14 +3024,22 @@ function Start-GuidedSetup {
                 Request-RestartConfirmation
                 return 0
             }
+            Write-OtaconSay "Linux came online. Repairing the account again..." -Mood "work" -NoType
             $prov = Ensure-WslTargetUser -Name $ubuntu
         }
     }
-    if ($prov.AccountValid -and $prov.DefaultOk) {
-        Write-OtaconSay "Linux user ready: $($prov.User)" -Mood "ok" -NoType
-    } else {
-        Write-OtaconSay "Linux account setup incomplete (account=$($prov.AccountValid) default=$($prov.DefaultOk)). Continuing - Stage 6 will retry." -Mood "warn" -NoType
+    if (-not ($prov.AccountValid -and $prov.DefaultOk)) {
+        # Autopilot already exhausted create/repair/default fixes inside Ensure-WslTargetUser.
+        $plain = if (-not $prov.AccountValid) {
+            "Linux account setup could not be repaired automatically (account checks still failing for '$($prov.User)')."
+        } else {
+            "Linux account '$($prov.User)' is valid, but the WSL default user still could not be set automatically."
+        }
+        $act = Show-SetupNeedsHelp -Step "preparing linux user" -PlainError $plain
+        if ($act -eq "retry") { return (Start-GuidedSetup) }
+        return 1
     }
+    # Ready message / Back on track already narrated inside Ensure-WslTargetUser when needed.
 
     Clear-ResumeMarkers
 
@@ -2842,11 +3050,15 @@ function Start-GuidedSetup {
         Write-OtaconSay "Otacon is already installed and healthy." -Mood "ok" -NoType
     } else {
         $rc = Step-InstallOtacon -Name $ubuntu
+        if ($rc -eq 100) { return (Start-GuidedSetup) }
+        if ($rc -eq 101) { return 1 }
         if ($rc -ne 0 -and $rc -ne 2) {
-            # Gate C: leave stage=failed with last_error (Show-SetupNeedsHelp already sets it)
+            # Step-InstallOtacon should have already shown guided help for interactive failures.
+            # Fallback only if a raw code slipped through without UI.
+            Write-KeepLog "Step-InstallOtacon returned $rc without guided help sentinel" -Level "WARN" -Stage "INSTALLING_OTACON"
             $tail = Join-Path $LogDir "linux-install-tail.log"
             $act = Show-SetupNeedsHelp -Step "installing otacon" -PlainError (
-                "The Linux installer exited with code $rc. Your files were not wiped. You can retry. Log: $tail"
+                "The Linux installer exited with code $rc. Your files were not wiped. Log: $tail"
             )
             if ($act -eq "retry") { return (Start-GuidedSetup) }
             return (ConvertTo-InstallerExitCode $rc)

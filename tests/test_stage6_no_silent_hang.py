@@ -69,10 +69,10 @@ def main() -> int:
     must("stallTimeoutMin" in PS1 or "STALL" in PS1, "Stage 6 stall timeout", fails)
     must("overallTimeoutMin" in PS1 or "OVERALL" in PS1, "Stage 6 overall timeout", fails)
     must("phaseStarted" in PS1 and "phase-local clock" in PS1, "phase overall timeout uses phase-local clock not Stage 6 start", fails)
-    must("STAGE" in PS1 and "-match" in PS1 and "Current substep" in PS1, "Windows UI parses STAGE markers", fails)
+    must("STAGE" in PS1 and "-match" in PS1 and ("Current substep" in PS1 or "CURRENT :" in PS1), "Windows UI parses STAGE markers", fails)
     must("Get-WindowsNvidiaName" in PS1 and "Get-WslNvidiaName" in PS1, "Windows+WSL GPU probe in Stage 6 UI", fails)
-    must("last 50 log lines" in PS1, "failure dumps last log lines", fails)
-    must("Current substep" in PS1, "UI shows current substep", fails)
+    must("last 50 log lines" in PS1 or "linux-install-tail.log" in PS1, "failure dumps last log lines", fails)
+    must("Current substep" in PS1 or "CURRENT :" in PS1, "UI shows current substep", fails)
 
     print("=" * 60)
     if fails:

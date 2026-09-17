@@ -7,8 +7,10 @@ Cases:
   3. valid default user    → wsl -d Distro --exec id -un must equal target
   4. root rejected         → root is never a valid install account
   5. existing password preserved → no unconditional passwd -d on existing users
+  6. invalid existing user → Repair-WslLinuxUser auto-fixes home/shell (no R/O/X)
 
 A and B must remain separate failure states in Step-InstallOtacon.
+Autopilot must repair before asking the user anything.
 """
 from __future__ import annotations
 
@@ -36,15 +38,20 @@ def main() -> int:
     fails: list[str] = []
 
     must("function Test-WslLinuxUserValid" in PS1, "A: Test-WslLinuxUserValid exists", fails)
+    must("function Get-WslLinuxUserDiagnosis" in PS1, "A: Get-WslLinuxUserDiagnosis exists", fails)
     must("function Test-WslEffectiveDefaultUser" in PS1, "B: Test-WslEffectiveDefaultUser exists", fails)
     must("function Get-WslEffectiveDefaultUser" in PS1, "B: Get-WslEffectiveDefaultUser exists", fails)
     must("function New-WslLinuxUser" in PS1, "create-only helper exists", fails)
+    must("function Repair-WslLinuxUser" in PS1, "6. Repair-WslLinuxUser exists", fails)
     must("function Ensure-WslTargetUser" in PS1, "Ensure-WslTargetUser exists", fails)
 
-    valid_fn = fn_body("Test-WslLinuxUserValid", "Get-WslEffectiveDefaultUser")
-    must("ACCOUNT_VALID" in valid_fn, "A emits ACCOUNT_VALID", fails)
-    must("User -eq \"root\"" in valid_fn or '$User -eq "root"' in valid_fn, "A rejects root", fails)
+    valid_fn = fn_body("Test-WslLinuxUserValid", "Get-WslLinuxUserDiagnosis")
+    must("Get-WslLinuxUserDiagnosis" in valid_fn, "A validity delegates to diagnosis", fails)
     must("--exec id -un" not in valid_fn, "A does not collapse into effective-default check", fails)
+
+    diag_fn = fn_body("Get-WslLinuxUserDiagnosis", "Get-WslEffectiveDefaultUser")
+    must("UidOk" in diag_fn and "HomeOk" in diag_fn and "ShellOk" in diag_fn, "A diagnosis covers uid/home/shell", fails)
+    must("root_rejected" in diag_fn or 'User -eq "root"' in diag_fn or "$User -eq \"root\"" in diag_fn, "A rejects root", fails)
 
     eff_get = fn_body("Get-WslEffectiveDefaultUser", "Test-WslEffectiveDefaultUser")
     must("--exec id -un" in eff_get, "B uses wsl -d <distro> --exec id -un", fails)
@@ -52,7 +59,7 @@ def main() -> int:
     eff_test = fn_body("Test-WslEffectiveDefaultUser", "Get-WslDefaultUser")
     must("Get-WslEffectiveDefaultUser" in eff_test, "B compares effective default to target", fails)
 
-    new_fn = fn_body("New-WslLinuxUser", "Ensure-WslTargetUser")
+    new_fn = fn_body("New-WslLinuxUser", "Repair-WslLinuxUser")
     must("Test-WslUserExists" in new_fn, "1. missing-user path detects existence first", fails)
     must("refuse create" in new_fn or "already exists" in new_fn, "2. refuse create when user exists", fails)
     must("adduser --disabled-password" in new_fn or "useradd -m" in new_fn, "1. creates missing user", fails)
@@ -61,19 +68,22 @@ def main() -> int:
     must("HOME_DIR" in new_fn, "creates/ensures home on create", fails)
     must("usermod -aG" in new_fn and "sudo" in new_fn, "applies sudo/groups on create", fails)
 
+    repair_fn = fn_body("Repair-WslLinuxUser", "Ensure-WslTargetUser")
+    must("OTACON_USER_REPAIRED" in repair_fn, "6. repair success marker", fails)
+    must("mkdir -p" in repair_fn, "6. repair creates missing home", fails)
+    must("/bin/bash" in repair_fn, "6. repair sets bash shell", fails)
+    must("passwd -d" not in repair_fn, "6. repair never clears passwords", fails)
+    must("I'm repairing it now" not in repair_fn, "repair helper stays low-level (narration in Ensure)", fails)
+
     # 5. password preservation: passwd -d only inside brand-new useradd branch, never after EXISTS
     passwd_lines = [ln for ln in new_fn.splitlines() if "passwd -d" in ln and "USER_NAME" in ln]
     must(len(passwd_lines) >= 1, "new accounts may clear password once at create", fails)
-    # From EXISTS echo through end of that if-branch: passwd -d must not appear
     after_exists = new_fn.split("OTACON_USER_EXISTS", 1)
     if len(after_exists) > 1:
         exists_exit_chunk = after_exists[1].split("fi", 1)[0]
         must("passwd -d" not in exists_exit_chunk, "5. no passwd -d on existing-user EXISTS path", fails)
-    # Unconditional trailing passwd -d must be gone from Ensure-WslTargetUser
     ensure_fn = fn_body("Ensure-WslTargetUser", "Format-StartProcessArgumentList")
     must("passwd -d" not in ensure_fn, "5. Ensure-WslTargetUser never clears passwords", fails)
-    # Count passwd -d in whole assistant: only inside New-WslLinuxUser create branch
-    # Count active passwd -d invocations (ignore comment/help text)
     active_passwd = []
     for ln in PS1.splitlines():
         s = ln.strip()
@@ -88,12 +98,17 @@ def main() -> int:
     must("password untouched" in ensure_fn, "2. existing valid user password untouched", fails)
     must("not recreated" in ensure_fn or "ACCOUNT_VALID" in ensure_fn, "2. existing valid user not recreated", fails)
     must("ACCOUNT_MISSING" in ensure_fn, "1. missing user logged as ACCOUNT_MISSING", fails)
+    must("ACCOUNT_INVALID" in ensure_fn and "Repair-WslLinuxUser" in ensure_fn, "6. invalid account triggers repair", fails)
+    must("I'm repairing it now" in ensure_fn, "6. Otacon narrates auto-repair", fails)
+    must("MaxRepairAttempts" in ensure_fn, "6. bounded repair attempts", fails)
     must("DEFAULT_OK" in ensure_fn and "DEFAULT_MISMATCH" in ensure_fn, "3. default-user state separate from account", fails)
     must("Get-WslEffectiveDefaultUser" in ensure_fn or "Test-WslEffectiveDefaultUser" in ensure_fn, "3. verifies effective default", fails)
     must("--exec id -un" in ensure_fn or "wsl --exec id -un" in ensure_fn, "3. default check references --exec id -un", fails)
+    must("Back on track" in ensure_fn, "6. narrates recovery after repair", fails)
+    must("Continuing - Stage 6 will retry" not in PS1, "must not soft-continue past broken account", fails)
 
     # 4. root rejected
-    must(re.search(r'\$User -eq ["\']root["\']', valid_fn) is not None, "4. root rejected by account validity", fails)
+    must(re.search(r'\$User -eq ["\']root["\']', diag_fn) is not None, "4. root rejected by account validity", fails)
     must(
         re.search(r'\$User -eq ["\']root["\']', eff_test) is not None
         or "root" in eff_test,
@@ -103,7 +118,6 @@ def main() -> int:
     sanitize = fn_body("ConvertTo-OtaconLinuxUsername", "Get-OtaconExpectedWslUsername")
     must('"root"' in sanitize and "otacon" in sanitize, "4. sanitizer maps root → otacon", fails)
 
-    # crist scenario still covered
     def sanitize_py(raw: str) -> str:
         s = raw.strip().lower()
         s = re.sub(r"[^a-z0-9_-]", "", s)
@@ -125,10 +139,16 @@ def main() -> int:
     must("no default user" not in step, "must not collapse A/B into generic 'no default user'", fails)
     must("--exec id -un" in step, "B failure message cites --exec id -un", fails)
     must("password was not changed" in step or "password untouched" in ensure_fn, "5. messaging preserves existing password", fails)
+    must("return 100" in step and "return 101" in step, "guided help maps retry/exit without double prompt", fails)
+
+    # Guided failure UI (only after autopilot exhausted)
+    help_fn = fn_body("Show-SetupNeedsHelp", "Register-ResumeAfterReboot")
+    must("GUIDED RECOVERY" in help_fn or "couldn't repair this automatically" in help_fn, "guided failure copy", fails)
+    must("Choice [R/O/X]" not in help_fn, "no R/O/X after autopilot", fails)
+    must("ENTER" in help_fn and "Q" in help_fn, "ENTER retry / Q exit", fails)
 
     # EnsureGroups only for newly created accounts
     must("-EnsureGroups" in ensure_fn, "groups applied on new create path", fails)
-    # Existing valid path should call Ensure-WslEffectiveDefaultUser without forcing groups rebuild unnecessarily
     must("Ensure-WslEffectiveDefaultUser" in ensure_fn, "B fix uses default-only helper", fails)
     default_only = fn_body("Ensure-WslEffectiveDefaultUser", "New-WslLinuxUser")
     must("Set-WslDefaultUser" in default_only, "B default fix writes wsl.conf", fails)
