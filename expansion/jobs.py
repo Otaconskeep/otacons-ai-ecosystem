@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Optional
 
-from expansion.persist import atomic_write_json, read_json
+from expansion.persist import atomic_write_json, read_json, update_json
 from expansion.state_layout import StateLayout, resolve_layout
 
 JOB_SCHEMA_VERSION = 1
@@ -128,9 +128,14 @@ class JobStore:
         errors = job.validate()
         if errors:
             raise ValueError('; '.join(errors))
-        data = self._load_all()
-        data['jobs'][job.job_id] = asdict(job)
-        self._save_all(data)
+
+        def _mut(data):
+            data = data or {'schema_version': JOB_SCHEMA_VERSION, 'jobs': {}}
+            data.setdefault('jobs', {})
+            data['jobs'][job.job_id] = asdict(job)
+            return data
+
+        update_json(self._path, _mut, default={'schema_version': JOB_SCHEMA_VERSION, 'jobs': {}})
         return job
 
     def get(self, job_id: str) -> Optional[Job]:
@@ -161,9 +166,14 @@ class JobStore:
         errors = job.validate()
         if errors:
             raise ValueError('; '.join(errors))
-        data = self._load_all()
-        data['jobs'][job.job_id] = asdict(job)
-        self._save_all(data)
+
+        def _mut(data):
+            data = data or {'schema_version': JOB_SCHEMA_VERSION, 'jobs': {}}
+            data.setdefault('jobs', {})
+            data['jobs'][job.job_id] = asdict(job)
+            return data
+
+        update_json(self._path, _mut, default={'schema_version': JOB_SCHEMA_VERSION, 'jobs': {}})
         return job
 
     def transition(
@@ -177,25 +187,37 @@ class JobStore:
         event_id: str = '',
         confidence: float = 0.0,
     ) -> Job:
-        job = self.get(job_id)
-        if job is None:
-            raise KeyError(job_id)
         now = time.time()
-        job.status = status
-        if status == JobStatus.RUNNING.value and not job.started_at:
-            job.started_at = now
-        if status in (JobStatus.COMPLETE.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value):
-            job.completed_at = now
-        if result:
-            job.result = result
-        if error:
-            job.error = error
-        if evidence:
-            job.evidence = list(evidence)
-        if confidence:
-            job.confidence = confidence
-        if event_id:
-            job.event_ids = list(job.event_ids) + [event_id]
-        if status == JobStatus.ASSIGNED.value and job.status:
-            job.status = JobStatus.ASSIGNED.value
-        return self.update(job)
+        holder = {'job': None}
+
+        def _mut(data):
+            data = data or {'schema_version': JOB_SCHEMA_VERSION, 'jobs': {}}
+            jobs = data.setdefault('jobs', {})
+            raw = jobs.get(job_id)
+            if not raw:
+                raise KeyError(job_id)
+            job = Job(**{k: raw[k] for k in Job.__dataclass_fields__ if k in raw})
+            job.status = status
+            if status == JobStatus.RUNNING.value and not job.started_at:
+                job.started_at = now
+            if status in (JobStatus.COMPLETE.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value):
+                job.completed_at = now
+            if result:
+                job.result = result
+            if error:
+                job.error = error
+            if evidence:
+                job.evidence = list(evidence)
+            if confidence:
+                job.confidence = confidence
+            if event_id:
+                job.event_ids = list(job.event_ids) + [event_id]
+            jobs[job_id] = asdict(job)
+            holder['job'] = job
+            return data
+
+        try:
+            update_json(self._path, _mut, default={'schema_version': JOB_SCHEMA_VERSION, 'jobs': {}})
+        except KeyError:
+            raise
+        return holder['job']

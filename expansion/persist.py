@@ -7,10 +7,12 @@ P1 introduced many JSON writers. P2 hardens them with:
 
 Limitations (documented, not silent):
 - Concurrent writers to the *same* file serialize via flock when used.
+- Use update_json() for read-modify-write of shared JSON docs (jobs.json etc.).
 - Cross-process readers may see a torn JSONL append without flock; prefer
   append_jsonl() which locks.
-- Not a full ACID database; if Expansion grows many competing writers for
-  the same high-churn store, migrate that store to SQLite via migrations.
+- P4 stress (4–8 workers × 8–20 iters) passed with update_json on JobStore.
+- Not a full ACID database; if hot-store contention grows further, migrate
+  that store to SQLite via migrations.
 """
 from __future__ import annotations
 
@@ -83,6 +85,38 @@ def append_jsonl(path: Path, record: dict) -> None:
             f.flush()
             os.fsync(f.fileno())
 
+
+def update_json(path: Path, mutator, *, default: Any = None) -> Any:
+    """Atomically load-modify-save JSON under one exclusive flock.
+
+    `mutator(data) -> data` must return the new payload. Prevents lost updates
+    when multiple writers RMW the same store.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with file_lock(path):
+        if path.is_file():
+            data = json.loads(path.read_text(encoding='utf-8'))
+        else:
+            data = default if default is not None else {}
+        data = mutator(data)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(path.parent), prefix=f'.{path.name}.', suffix='.tmp',
+        )
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, default=str)
+                f.write('\n')
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, path)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+        return data
 
 def read_jsonl(path: Path, *, limit: Optional[int] = None) -> list[dict]:
     path = Path(path)
