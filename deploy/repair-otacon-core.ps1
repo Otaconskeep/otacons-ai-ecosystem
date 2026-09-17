@@ -146,6 +146,9 @@ if [ -f "$UNIT" ]; then
     sed -i '/OTACON_SKIP_NVIDIA_SMI=/d' "$UNIT"
     echo "removed_OTACON_SKIP_NVIDIA_SMI_from_unit"
   fi
+  # Pin skip=0 so a later wake/login cannot reintroduce the lie.
+  sed -i "/\[Service\]/a Environment=OTACON_SKIP_NVIDIA_SMI=0" "$UNIT"
+  echo "pinned_OTACON_SKIP_NVIDIA_SMI=0"
   # Prefer all-interfaces bind so Windows can use localhost OR the WSL IP
   if grep -q "OTACON_HOST=" "$UNIT"; then
     sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=0.0.0.0|" "$UNIT"
