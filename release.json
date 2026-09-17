@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "d1ee57f334379c1528ac354effe33041cc082a7b",
+  "commit": "97826815d742b1ebae466dbc8c071cfb502b74af",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -10,7 +10,7 @@
   "python_preferred": "3.12",
   "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on 'main').",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
-  "installer_revision": "dec19c8cbfd383a442431ab58a223a1b2159edb2",
+  "installer_revision": "97826815d742b1ebae466dbc8c071cfb502b74af",
   "files": [
     {
       "path": "install_otacon.bat",
@@ -49,8 +49,8 @@
     },
     {
       "path": "deploy/repair-otacon-core.ps1",
-      "sha256": "27c96099fe96c1e36ed9532bd3695bb2e57cc74814ae7a2886c6d2f42ba5a750",
-      "bytes": 15703
+      "sha256": "b2119449ce00faecb4953a7289c2ecf58fe8237290239523fa84951528fb9802",
+      "bytes": 18059
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
@@ -59,8 +59,8 @@
     },
     {
       "path": "deploy/fix-otacon-gpu.ps1",
-      "sha256": "ff19946ee68979ccfdde6f1e55dd37683cbf07280a304928f8195dceab36da5d",
-      "bytes": 6400
+      "sha256": "d8a5ca79761eef87b54e3bc40550f04384cba05bc775dabc413b0910008c0af0",
+      "bytes": 8059
     },
     {
       "path": "deploy/get-fix-codec.cmd",
