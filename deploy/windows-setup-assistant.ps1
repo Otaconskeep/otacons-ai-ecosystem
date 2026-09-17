@@ -1087,8 +1087,70 @@ function ConvertTo-InstallerExitCode {
     return 1
 }
 
+function Test-ComponentStoreCorruptMessage {
+    param([string]$Text)
+    if (-not $Text) { return $false }
+    return [bool]($Text -match '(?i)\b14098\b|0x80073712|component store has been corrupted|ERROR_SXS_COMPONENT_STORE_CORRUPT')
+}
+
+function Show-ComponentStoreCorruptHelp {
+    param([string]$Detail = "")
+    $ubuntu = Get-UbuntuDistroName
+    $hasFiles = $false
+    if ($ubuntu) { $hasFiles = Test-OtaconFiles $ubuntu }
+    $lines = @(
+        "Windows reports error 14098",
+        "The component store has been corrupted",
+        "",
+        "This is a WINDOWS problem (not Otacon).",
+        "It blocks enabling Linux / WSL features.",
+        "",
+        $(if ($Detail) { "detail: $Detail" } else { "" }),
+        $(if ($Detail) { "" } else { $null }),
+        "If Otacon was already installed on this PC:",
+        "press F to wake Codec only (skip Windows repair)",
+        "",
+        "Otherwise fix Windows first (Admin Command Prompt):",
+        "",
+        "  DISM /Online /Cleanup-Image /StartComponentCleanup",
+        "  DISM /Online /Cleanup-Image /RestoreHealth",
+        "  sfc /scannow",
+        "",
+        "Then reboot and run OtaconsKeep Setup again.",
+        "",
+        "If DISM still says 14098: use Microsoft's Windows",
+        "Installation Assistant / ISO and choose",
+        "Upgrade this PC (keep files and apps).",
+        "",
+        "[ F ] Fix Codec only (if already installed)",
+        "[ R ] Retry this step",
+        "[ O ] Open installer log folder",
+        "[ X ] Exit"
+    ) | Where-Object { $_ -ne $null }
+    Show-Box "WINDOWS COMPONENT STORE CORRUPT" $lines -Color Red
+    Write-KeepLog "Component store corrupt 14098 detail=$Detail hasFiles=$hasFiles" -Level "ERROR" -Stage "FAILED"
+    Save-InstallerState @{ stage = "failed"; last_error = "Windows error 14098 component store corrupt"; last_step = "preparing windows" }
+    while ($true) {
+        $c = Read-Choice "  Choice [F/R/O/X]: " @("F","R","O","X")
+        if ($c -eq "O") { Start-Process explorer.exe $LogDir; continue }
+        if ($c -eq "X") { return "exit" }
+        if ($c -eq "R") { return "retry" }
+        if ($c -eq "F") {
+            if ($ubuntu -and (Invoke-OtaconCoreRepair -Name $ubuntu -Codec)) {
+                Save-InstallerComplete
+                return "fixed"
+            }
+            Write-Host "  Could not wake Codec - Otacon may not be installed yet. Fix Windows with DISM first." -ForegroundColor DarkYellow
+            continue
+        }
+    }
+}
+
 function Show-SetupNeedsHelp {
     param([string]$Step, [string]$PlainError)
+    if (Test-ComponentStoreCorruptMessage $PlainError) {
+        return (Show-ComponentStoreCorruptHelp -Detail $PlainError)
+    }
     Show-Box "SETUP NEEDS HELP" @(
         "otacon could not finish this step",
         "",
@@ -1283,6 +1345,13 @@ function Step-EnableWsl {
         Start-Sleep -Seconds 4
     }
     Write-KeepLog "wsl --install exit=$($p.ExitCode)" -Stage "WAITING_FOR_WINDOWS"
+    if ($p.ExitCode -eq 14098 -or $p.ExitCode -eq -2146498798) {
+        # -2146498798 = unchecked 0x80073712
+        $act = Show-ComponentStoreCorruptHelp -Detail "wsl --install exit=$($p.ExitCode)"
+        if ($act -eq "fixed") { return 0 }
+        if ($act -eq "retry") { return (Step-EnableWsl -DistroName $DistroName) }
+        return 14098
+    }
     # On virgin machines the store distro is named Ubuntu - record intent for dedicated rename/import next run.
     if ($DistroName -eq $PreferredDistro) {
         Save-InstallerState @{ ubuntu_name = $null; ubuntu_mode = "virgin_ubuntu_pending_dedicated"; target_distro = $PreferredDistro }
