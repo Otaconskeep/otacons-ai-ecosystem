@@ -79,10 +79,35 @@ def handle_expansion_get(path: str, send_json) -> bool:
         from expansion.jobs import JobStore
         from expansion.capabilities.video_studio import probe_video_studio, studio_runtime_context
         from expansion.capabilities.comfy_sidecar import detect_local_comfy
+        from expansion.capabilities.studio_setup import setup_status, studio_hardware_snapshot
+        from expansion.persist import read_json
+        from expansion.state_layout import resolve_layout
         from expansion.readiness import evaluate_foundation
         jobs = [j for j in JobStore().list(agent_id='muse', limit=40)]
         vs = probe_video_studio()
         detected = detect_local_comfy()
+        setup = setup_status()
+        hw = studio_hardware_snapshot()
+        layout = resolve_layout()
+        creative_settings = read_json(
+            layout.user_preferences / 'studio_creative_settings.json', default={}
+        ) or {}
+        defaults = {}
+        try:
+            from pathlib import Path
+            import json as _json
+            defaults_path = Path(__file__).resolve().parent / 'product' / 'studio' / 'keep_defaults.json'
+            if defaults_path.is_file():
+                defaults = _json.loads(defaults_path.read_text(encoding='utf-8'))
+        except Exception:
+            defaults = {}
+        disc = vs.discovery if hasattr(vs, 'discovery') else (vs.to_dict().get('discovery') or {})
+        endpoint = (
+            (disc or {}).get('endpoint')
+            or setup.get('endpoint')
+            or detected.get('endpoint')
+            or ''
+        )
         send_json({
             'surface': 'muse_creative',
             'creative_queue': [asdict(j) for j in jobs
@@ -101,6 +126,46 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'comfy_detect': detected,
             'runtime_context': studio_runtime_context('muse'),
             'foundation': evaluate_foundation().to_dict(),
+            'setup': {
+                'phase': setup.get('phase'),
+                'ok': setup.get('ok'),
+                'running': setup.get('running'),
+                'endpoint': endpoint,
+                'source': setup.get('source') or '',
+            },
+            'studio': {
+                'endpoint': endpoint,
+                'healthy': bool((disc or {}).get('healthy') or vs.state == 'READY'),
+                'hardware': hw,
+                'settings': creative_settings,
+                'engines': (defaults.get('engines') or {}),
+                'modalities': [
+                    {
+                        'id': 'image',
+                        'label': 'Image',
+                        'engine': ((hw.get('image') or {}).get('engine')
+                                   or ((creative_settings.get('image') or {}).get('engine'))
+                                   or 'z-image-turbo'),
+                        'tier': ((hw.get('image') or {}).get('tier') or 'local'),
+                    },
+                    {
+                        'id': 'video',
+                        'label': 'Video',
+                        'engine': ((hw.get('video') or {}).get('engine')
+                                   or ((creative_settings.get('video') or {}).get('engine'))
+                                   or 'wan-2.2-5b'),
+                        'tier': ((hw.get('video') or {}).get('tier') or 'local'),
+                    },
+                    {
+                        'id': 'music',
+                        'label': 'Music',
+                        'engine': ((hw.get('music') or {}).get('engine')
+                                   or ((creative_settings.get('music') or {}).get('engine'))
+                                   or 'ace-step-1.5'),
+                        'tier': ((hw.get('music') or {}).get('tier') or 'local'),
+                    },
+                ],
+            },
             'honest_note': (
                 'Expansion Video Studio — READY when ComfyUI is connected. '
                 'Use Set Up Video Studio; OtaconsKeep provisions the sidecar automatically.'
@@ -562,6 +627,50 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             force=bool((data or {}).get('force')),
             proceed_anyway=bool((data or {}).get('proceed_anyway') or (data or {}).get('acknowledge_under_spec')),
         ))
+        return True
+    if path == '/api/expansion/creative/generate':
+        from expansion.pipeline import LivingPipeline
+        modality = str((data or {}).get('modality') or 'image').strip().lower()
+        if modality not in ('image', 'video', 'music', 'script'):
+            modality = 'image'
+        prompt = str((data or {}).get('prompt') or (data or {}).get('request') or '').strip()
+        if not prompt:
+            send_json({'ok': False, 'error': 'prompt required'}, 400)
+            return True
+        engine = str((data or {}).get('engine') or '').strip()
+        negative = str((data or {}).get('negative') or '').strip()
+        tuning = (data or {}).get('tuning') or {}
+        request = (
+            f'[Muse Studio · {modality}'
+            + (f' · {engine}' if engine else '')
+            + f'] {prompt}'
+        )
+        if negative:
+            request += f' | negative: {negative[:240]}'
+        if isinstance(tuning, dict) and tuning:
+            bits = []
+            for k in ('steps', 'cfg', 'duration', 'fps', 'resolution', 'seed', 'quality'):
+                if tuning.get(k) not in (None, ''):
+                    bits.append(f'{k}={tuning.get(k)}')
+            if bits:
+                request += ' | ' + ', '.join(bits)
+        pipe = LivingPipeline()
+        out = pipe.create_and_run_job(
+            request,
+            domain='creative',
+            assigned_agent='muse',
+            queue_only=True,
+            simulate=False,
+        )
+        job = out.get('job')
+        send_json({
+            'ok': True,
+            'queued': True,
+            'modality': modality,
+            'engine': engine,
+            'job': asdict(job) if job else None,
+            'message': 'Queued for Muse. Packs/workflows continue to land with Studio deps.',
+        })
         return True
     if path == '/api/expansion/jobs/create':
         from expansion.pipeline import LivingPipeline

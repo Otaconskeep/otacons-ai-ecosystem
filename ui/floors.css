@@ -60,3 +60,24 @@
 .fl-ready.bad{border-color:rgba(255,77,154,.4)}.fl-ready.bad b{background:#ff4d9a;box-shadow:0 0 10px #ff4d9a}.fl-ready.bad em{color:#ff4d9a}
 .fl-agent-card{display:flex;gap:12px;align-items:flex-start}
 .fl-avatar{width:56px;height:56px;object-fit:cover;border:1px solid rgba(46,230,214,.35);background:#020508;flex-shrink:0}
+
+/* Muse Video Studio workshop */
+.fl-studio-status{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.65rem;margin:0 0 .75rem}
+@media(max-width:900px){.fl-studio-status{grid-template-columns:1fr}}
+.fl-studio-actions{margin:0 0 .85rem}
+.fl-studio-work{align-items:start}
+.fl-studio-entry-head{display:flex;justify-content:space-between;align-items:baseline;gap:.75rem;flex-wrap:wrap;margin-bottom:.35rem}
+.fl-studio-deck{margin:.55rem 0 .75rem}
+.fl-studio-deck .fl-h{display:block;margin-bottom:.35rem}
+.fl-studio-prompt-label{display:flex;flex-direction:column;gap:.35rem;font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ot-muted,#9a95b0);margin:0 0 .55rem}
+.fl-studio-prompt-label textarea{
+  font:inherit;font-size:.9rem;letter-spacing:0;text-transform:none;line-height:1.45;
+  color:var(--ot-text,#e8e6f2);background:rgba(8,6,12,.88);border:1px solid rgba(151,159,236,.28);
+  border-radius:10px;padding:.7rem .85rem;resize:vertical;min-height:4.5rem;
+}
+.fl-studio-prompt-label textarea:focus{outline:none;border-color:rgba(46,230,214,.55);box-shadow:0 0 0 1px rgba(46,230,214,.2)}
+.fl-studio-tune .fl-form{margin-top:.35rem}
+.fl-studio-advanced{margin-top:1rem;padding:.75rem 0;border-top:1px solid rgba(151,159,236,.16)}
+.fl-studio-advanced>summary{cursor:pointer;color:var(--ot-muted,#9a95b0);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+.fl-studio-advanced[open]>summary{margin-bottom:.65rem;color:var(--ot-lilac,#979fec)}
+.fl-studio-hero{margin-top:.25rem}

@@ -1046,48 +1046,245 @@
     floorShell('Agent Reports', 'Full provenance depth', body);
   }
 
-  /* —— Creative —— */
+  /* —— Creative / Muse Video Studio (Keep Workshop parity) —— */
+  var FL_STUDIO = { modality: 'image' };
+
+  function studioEndpointHost(ep) {
+    try {
+      var u = String(ep || '');
+      if (!u) return '—';
+      return u.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    } catch (e) { return String(ep || '—'); }
+  }
+
+  function studioPromptDefaults(engines, modality) {
+    var map = {
+      image: 'z-image-turbo',
+      video: 'wan-2.2-5b',
+      music: 'ace-step-1.5'
+    };
+    var key = map[modality] || map.image;
+    var eng = (engines && engines[key]) || {};
+    // Prefer modality-matching engine if profile selected a different id
+    Object.keys(engines || {}).forEach(function (k) {
+      if (modality === 'image' && /image|z-image/i.test(k)) key = k;
+      if (modality === 'video' && /wan|ltx|video/i.test(k)) key = k;
+      if (modality === 'music' && /ace|music/i.test(k)) key = k;
+    });
+    eng = (engines && engines[key]) || eng;
+    return {
+      engine: key,
+      positive: eng.default_positive || '',
+      negative: eng.default_negative || '',
+      role: eng.role || ''
+    };
+  }
+
+  async function floorStudioSetModality(mod) {
+    FL_STUDIO.modality = mod || 'image';
+    var tabs = document.querySelectorAll('.fl-studio-tabs .fl-tab');
+    tabs.forEach(function (t) {
+      t.classList.toggle('on', t.getAttribute('data-mod') === FL_STUDIO.modality);
+    });
+    var defs = FL_STUDIO._defaults || {};
+    var d = studioPromptDefaults(defs, FL_STUDIO.modality);
+    var prompt = document.getElementById('fl-studio-prompt');
+    var neg = document.getElementById('fl-studio-negative');
+    var eng = document.getElementById('fl-studio-engine');
+    var role = document.getElementById('fl-studio-engine-role');
+    if (prompt && !prompt.dataset.dirty) prompt.value = d.positive || '';
+    if (neg && !neg.dataset.dirty) neg.value = d.negative || '';
+    if (eng) eng.textContent = d.engine || '—';
+    if (role) role.textContent = d.role || '';
+    var tuneVideo = document.getElementById('fl-tune-video');
+    var tuneImage = document.getElementById('fl-tune-image');
+    if (tuneVideo) tuneVideo.hidden = FL_STUDIO.modality !== 'video';
+    if (tuneImage) tuneImage.hidden = FL_STUDIO.modality === 'music';
+  }
+
+  async function floorStudioGenerate() {
+    var msg = document.getElementById('fl-studio-msg');
+    function say(t) { if (msg) msg.textContent = t; }
+    var promptEl = document.getElementById('fl-studio-prompt');
+    var negEl = document.getElementById('fl-studio-negative');
+    var prompt = promptEl ? String(promptEl.value || '').trim() : '';
+    if (!prompt) { say('Write a prompt first.'); return; }
+    var engEl = document.getElementById('fl-studio-engine');
+    var engine = engEl ? String(engEl.textContent || '').trim() : '';
+    var tuning = {
+      steps: (document.getElementById('fl-tune-steps') || {}).value,
+      cfg: (document.getElementById('fl-tune-cfg') || {}).value,
+      resolution: (document.getElementById('fl-tune-res') || {}).value,
+      seed: (document.getElementById('fl-tune-seed') || {}).value,
+      duration: (document.getElementById('fl-tune-dur') || {}).value,
+      fps: (document.getElementById('fl-tune-fps') || {}).value,
+      quality: (document.getElementById('fl-tune-quality') || {}).value
+    };
+    say('Queuing for Muse…');
+    try {
+      var r = await api('/api/expansion/creative/generate', {
+        modality: FL_STUDIO.modality || 'image',
+        prompt: prompt,
+        negative: negEl ? String(negEl.value || '').trim() : '',
+        engine: engine,
+        tuning: tuning
+      });
+      if (!r.ok) {
+        say('Rejected: ' + ((r.data && r.data.error) || r.status));
+        return;
+      }
+      say((r.data && r.data.message) || 'Queued.');
+      setTimeout(function () { renderCreativeFloor(); }, 600);
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
+  function floorStudioApplyChip(text) {
+    var prompt = document.getElementById('fl-studio-prompt');
+    if (!prompt) return;
+    var t = String(text || '').trim();
+    if (!t) return;
+    prompt.value = prompt.value ? (prompt.value.replace(/\s+$/, '') + ', ' + t) : t;
+    prompt.dataset.dirty = '1';
+  }
+
   async function renderCreativeFloor() {
     var d;
     try { d = await apiGet('/api/expansion/creative'); }
     catch (e) { floorShell('Creative Studio', 'Muse', empty('Failed: ' + e)); return; }
-    var state = d.video_studio_readiness || (d.video_studio && d.video_studio.state) || 'UNAVAILABLE';
+    var state = String(d.video_studio_readiness || (d.video_studio && d.video_studio.state) || 'UNAVAILABLE').toUpperCase();
     var vs = d.video_studio || {};
-    var studio;
-    if (state === 'UNAVAILABLE' || state === 'NOT_CONFIGURED') {
-      studio = '<div class="fl-panel"><h3 class="fl-h">Video Studio</h3>' +
-        pill(state || 'NOT_CONFIGURED', 'warn') +
-        '<p class="fl-note">' + esc(d.honest_note || '') + '</p>' +
-        '<p class="muted">' + esc(vs.detail || vs.note || vs.message || d.note ||
-          'Set up Video Studio to go READY.') + '</p>' +
-        '<div class="fl-rail">' +
-        btn('Set Up Video Studio', "typeof startStudioSetup==='function'?startStudioSetup():(typeof showVideoStudioSetup==='function'&&showVideoStudioSetup())", true) +
-        btn('Open setup', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", false) +
-        '</div></div>';
-    } else {
-      studio = '<div class="fl-panel"><h3 class="fl-h">Video Studio</h3>' +
-        pill(state, state === 'READY' ? 'ok' : 'warn') +
-        '<p class="fl-note">' + esc(d.honest_note || '') + '</p>' +
-        (state === 'READY'
-          ? '<p class="fl-note">ComfyUI is healthy — Muse Studio endpoint is live. Queue creative jobs below; LTX/music widgets continue to land with Studio deps.</p>'
-          : '<p class="muted">Endpoint configured but not healthy yet — check ComfyUI is running.</p>') +
-        panel('Queue', listCards(d.creative_queue || [], jobCard, 'Queue empty.')) +
-        panel('Active renders', listCards(d.active_renders || [], jobCard, 'No active renders.')) +
-        panel('Capabilities', kvPre(d.capabilities || {}, 600)) +
-        panel('Discovery', kvPre(vs.discovery || d.video_studio || {}, 800)) +
-        panel('Recent output', listCards(d.recent_output || d.recent_creative_jobs || [],
-          jobCard, 'No completed creative jobs.')) +
-        panel('Runtime context', kvPre(d.runtime_context || {}, 1200)) + '</div>';
+    var studio = d.studio || {};
+    var hw = studio.hardware || {};
+    var engines = studio.engines || {};
+    FL_STUDIO._defaults = engines;
+    var endpoint = studio.endpoint || (vs.discovery && vs.discovery.endpoint) || '';
+    var ready = state === 'READY';
+    var needsSetup = state === 'UNAVAILABLE' || state === 'NOT_CONFIGURED' || state === 'NEEDS_SETUP';
+    var liveCls = ready ? 'ok' : (needsSetup ? 'warn' : 'warn');
+
+    var hwLine = hw.profile_id
+      ? (esc(hw.profile_id) + ' · ' +
+        esc(String(hw.marketed_vram_gb || hw.vram_gb || '?')) + ' GB VRAM · ' +
+        esc(String(hw.marketed_ram_gb || hw.ram_gb || '?')) + ' GB RAM · Comfy ' +
+        esc(hw.comfy_runtime || '—'))
+      : '';
+
+    var statusStrip =
+      '<div class="fl-studio-status">' +
+      '<div class="fl-ready ' + liveCls + '"><div class="fl-ready-top"><b></b><span>Studio</span><em>' +
+      esc(ready ? 'LIVE' : state) + '</em></div><p>' +
+      esc(ready ? 'ComfyUI connected — Muse Workshop is live.' : (vs.detail || d.honest_note || 'Set up Video Studio to go READY.')) +
+      '</p></div>' +
+      '<div class="fl-ready ' + (studio.healthy ? 'ok' : 'warn') + '"><div class="fl-ready-top"><b></b><span>ComfyUI</span><em>' +
+      esc(studioEndpointHost(endpoint)) + '</em></div><p>' +
+      esc(hwLine || (endpoint ? 'Endpoint registered with Expansion.' : 'No endpoint yet.')) +
+      '</p></div>' +
+      '<div class="fl-ready"><div class="fl-ready-top"><b></b><span>Engines</span><em>LOCAL</em></div><p>' +
+      esc(((studio.modalities || []).map(function (m) {
+        return (m.label || m.id) + ': ' + (m.engine || '—');
+      }).join(' · ')) || 'Image · Video · Music') +
+      '</p></div></div>';
+
+    var actions =
+      '<div class="fl-rail fl-studio-actions">' +
+      (needsSetup
+        ? btn('Set Up Video Studio', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", false) +
+          btn('Start setup', "typeof startStudioSetup==='function'?startStudioSetup():(typeof showVideoStudioSetup==='function'&&showVideoStudioSetup())", true)
+        : btn('Refresh', 'renderCreativeFloor()', true) +
+          btn('Setup / Advanced', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", true)) +
+      '</div>';
+
+    if (needsSetup) {
+      floorShell('Muse Creative Studio', 'Expansion premium — Video Studio',
+        statusStrip + actions +
+        '<div class="fl-panel fl-studio-hero"><h3 class="fl-h">Workshop</h3>' +
+        '<p class="fl-guide">Otacon can provision ComfyUI for you. After READY, this floor becomes the Muse production deck — prompt, tune, and queue — not a diagnostics dump.</p>' +
+        '<p class="muted">' + esc(d.note || '') + '</p></div>');
+      return;
     }
+
+    var mods = studio.modalities || [
+      { id: 'image', label: 'Image' },
+      { id: 'video', label: 'Video' },
+      { id: 'music', label: 'Music' }
+    ];
+    if (!FL_STUDIO.modality) FL_STUDIO.modality = 'image';
+    var defs = studioPromptDefaults(engines, FL_STUDIO.modality);
+    // Prefer engine from modality card
+    mods.forEach(function (m) {
+      if (m.id === FL_STUDIO.modality && m.engine) defs.engine = m.engine;
+    });
+
+    var chips = [
+      'identity-preserving', 'cinematic lighting', 'stable subject',
+      'natural motion', 'clean background', 'film grain'
+    ];
+
+    var entry =
+      '<div class="fl-panel fl-studio-entry">' +
+      '<div class="fl-studio-entry-head"><h3 class="fl-h">New entry</h3>' +
+      '<span class="muted">Agent <b>Muse</b> · Engine <b id="fl-studio-engine">' + esc(defs.engine || '—') + '</b></span></div>' +
+      '<div class="fl-tabs fl-studio-tabs">' + mods.map(function (m) {
+        return '<button type="button" class="fl-tab' + (m.id === FL_STUDIO.modality ? ' on' : '') +
+          '" data-mod="' + esc(m.id) + '" onclick="floorStudioSetModality(\'' + esc(m.id) + '\')">' +
+          esc(m.label || m.id) + '</button>';
+      }).join('') + '</div>' +
+      '<p class="fl-note" id="fl-studio-engine-role">' + esc(defs.role || '') + '</p>' +
+      '<div class="fl-studio-deck">' +
+      '<span class="fl-h">Prompt deck</span>' +
+      '<div class="fl-rail">' + chips.map(function (c) {
+        return '<button type="button" class="fl-tab" onclick=\'floorStudioApplyChip(' +
+          JSON.stringify(c) + ')\'>' + esc(c) + '</button>';
+      }).join('') + '</div></div>' +
+      '<label class="fl-studio-prompt-label">Prompt<textarea id="fl-studio-prompt" rows="5" oninput="this.dataset.dirty=\'1\'">' +
+      esc(defs.positive || '') + '</textarea></label>' +
+      '<label class="fl-studio-prompt-label">Negative<textarea id="fl-studio-negative" rows="2" oninput="this.dataset.dirty=\'1\'">' +
+      esc(defs.negative || '') + '</textarea></label>' +
+      '<div class="fl-rail" style="margin-top:10px">' +
+      btn('Generate', 'floorStudioGenerate()', false) +
+      btn('Optimal defaults', "FL_STUDIO._defaults&&floorStudioSetModality(FL_STUDIO.modality);var p=document.getElementById('fl-studio-prompt');if(p)delete p.dataset.dirty;floorStudioSetModality(FL_STUDIO.modality)", true) +
+      '</div>' +
+      '<p id="fl-studio-msg" class="muted" style="margin-top:8px"></p></div>';
+
+    var tuning =
+      '<div class="fl-panel fl-studio-tune"><h3 class="fl-h">Tuning</h3>' +
+      '<div class="fl-form" id="fl-tune-image">' +
+      '<label>Steps<input id="fl-tune-steps" type="number" value="28" min="1" max="150"></label>' +
+      '<label>CFG<input id="fl-tune-cfg" type="number" value="5" min="1" max="30" step="0.5"></label>' +
+      '<label>Resolution<select id="fl-tune-res"><option>1024x1024</option><option>1280x720</option><option>768x1344</option></select></label>' +
+      '<label>Seed<input id="fl-tune-seed" type="text" placeholder="random"></label>' +
+      '<label>Quality<select id="fl-tune-quality"><option>standard</option><option>high</option><option>draft</option></select></label>' +
+      '</div>' +
+      '<div class="fl-form" id="fl-tune-video" hidden>' +
+      '<label>Duration (s)<input id="fl-tune-dur" type="number" value="4" min="1" max="30"></label>' +
+      '<label>FPS<input id="fl-tune-fps" type="number" value="24" min="8" max="60"></label>' +
+      '</div>' +
+      '<p class="muted" style="margin-top:8px">Real knobs for the job — not a JSON dump. Engine packs continue to land with Studio deps.</p></div>';
+
+    var queueBody =
+      '<div class="fl-two">' +
+      panel('Queue', listCards(d.creative_queue || [], jobCard, 'Queue empty.')) +
+      panel('Active renders', listCards(d.active_renders || [], jobCard, 'No active renders.')) +
+      '</div>' +
+      panel('Recent output', listCards(d.recent_output || d.recent_creative_jobs || [],
+        jobCard, 'No completed creative jobs yet.'));
+
+    var advanced =
+      '<details class="fl-studio-advanced"><summary>Advanced · Diagnostics</summary>' +
+      '<p class="muted">Endpoint, discovery, and runtime context stay here — not in the workshop viewport.</p>' +
+      panel('Discovery', kvPre(vs.discovery || {}, 800)) +
+      panel('Runtime context', kvPre(d.runtime_context || {}, 800)) +
+      panel('Capabilities', kvPre(d.capabilities || {}, 400)) +
+      '</details>';
+
     floorShell('Muse Creative Studio', 'Expansion premium — Video Studio',
-      '<p class="fl-note">' + esc(d.note || '') + '</p>' +
-      '<div class="fl-panel"><h3 class="fl-h">Premium scope</h3>' +
-      pill(state === 'READY' ? 'STUDIO LIVE' : 'NEEDS COMFY', state === 'READY' ? 'ok' : 'warn') +
-      '<p class="fl-note">Video Studio is an <b>Expansion premium</b> surface. Wire ComfyUI via ' +
-      '<span class="mono">OTACON_COMFYUI_URL</span> for READY. Piper TTS does not require Studio.</p></div>' +
-      studio +
-      panel('Muse creative queue', listCards(d.creative_queue || d.recent_creative_jobs || [],
-        jobCard, 'No Muse creative jobs yet.')));
+      statusStrip + actions +
+      '<div class="fl-two fl-studio-work">' + entry + tuning + '</div>' +
+      queueBody + advanced);
+
+    floorStudioSetModality(FL_STUDIO.modality);
   }
 
   /* —— Ops —— */
@@ -1432,6 +1629,9 @@
     floorRelDrill: floorRelDrill,
     floorRegisterPage: floorRegisterPage,
     floorConfigureIntegration: floorConfigureIntegration,
+    floorStudioSetModality: floorStudioSetModality,
+    floorStudioGenerate: floorStudioGenerate,
+    floorStudioApplyChip: floorStudioApplyChip,
     renderDossiersFloor: renderDossiersFloor,
     renderJournalFloor: renderJournalFloor,
     renderDiaryFloor: renderDiaryFloor,
