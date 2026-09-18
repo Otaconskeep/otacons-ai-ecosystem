@@ -1,22 +1,22 @@
 /* Otacon Lite — Codec cockpit (visual language matched to Keep /codec) */
 :root{
-  --mf-void:#070506;
-  --mf-void-navy:#0c0a0e;
-  --mf-panel:#121014;
-  --mf-panel-2:#18151c;
-  --mf-accent:#979fec;
-  --mf-accent-bright:#e4e6fb;
-  --mf-lilac:#d9b6fd;
-  --mf-pink:#e095b5;
-  --mf-soft-blue:#7c93dd;
-  --mf-text:#e4e6fb;
-  --mf-text-dim:#836f79;
-  --mf-text-ghost:#4a3f46;
-  --mf-border:rgba(228,230,251,.35);
-  --mf-border-dim:rgba(151,159,236,.22);
-  --mf-cyan-glow:rgba(151,159,236,.45);
-  --mf-ok:#a7c1e8;
-  --mf-warn:#e095b5;
+  --mf-void:#03070a;
+  --mf-void-navy:#061018;
+  --mf-panel:#0a1520;
+  --mf-panel-2:#0d1c28;
+  --mf-accent:#2ee6d6;
+  --mf-accent-bright:#b8fff6;
+  --mf-lilac:#7dd3c8;
+  --mf-pink:#ff6b8a;
+  --mf-soft-blue:#14b8a6;
+  --mf-text:#d7f7f2;
+  --mf-text-dim:#6b8f96;
+  --mf-text-ghost:#3d555c;
+  --mf-border:rgba(46,230,214,.35);
+  --mf-border-dim:rgba(46,230,214,.2);
+  --mf-cyan-glow:rgba(46,230,214,.4);
+  --mf-ok:#2ee6d6;
+  --mf-warn:#f5a524;
 }
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%;background:var(--mf-void);color:var(--mf-text);

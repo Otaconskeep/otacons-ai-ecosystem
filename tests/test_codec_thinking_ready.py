@@ -42,14 +42,14 @@ def main() -> int:
          "Codec no longer skips /api/scan forever", fails)
     must("agent:{id:'agent_001'" not in js and "agent_id:'agent_001'" not in js,
          "wizard preview/setup no longer hardcodes agent_001", fails)
-    must("PREMIUM" in js and "SETUP GENOME" in js and "SETUP STUDIO" in js,
-         "Expansion entitled tiles offer Setup actions not dead PREMIUM locks", fails)
-    must("KEEP ONLY" not in js and "Keep-only" not in js,
-         "no Keep-only Genome framing on Expansion UI", fails)
-    must('showGenomeSetup' in js and 'showVideoStudioSetup' in js and 'showComputeNodes' in js,
-         "Genome/Studio/Nodes setup surfaces wired", fails)
-    must('onclick="openVoiceTrainer()"' in js and 'startVoiceTrainer' in js,
-         "Open/Start Genome controls wired", fails)
+    must("hud-deck" in js and "openAgentRoom" in js and "otSfx" in js,
+         "Command Deck HUD with agent room opens + sfx", fails)
+    must("showGenomeSetup" in js and "showVideoStudioSetup" in js and "Fix-Otacon-GPU" in js,
+         "Aria-guided Genome/Studio setup with GPU fix path", fails)
+    must("five-agent Lite roster" not in js,
+         "no Lite-roster copy on Expansion home", fails)
+    must("Keep-only" not in js and "KEEP ONLY" not in js,
+         "no Keep-only Genome framing", fails)
 
     must("_memory_usable" in srv and "chat_probe" in srv, "capabilities require memory + chat probe", fails)
     must("MEMORY.ping" in srv or "create_conversation('__health__'" in srv, "memory health create/list path", fails)

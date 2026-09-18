@@ -277,6 +277,77 @@ function formatNow(){
   }catch(e){ return new Date().toISOString(); }
 }
 
+/* Tiny WebAudio pack — no asset files */
+let _otAudioCtx=null;
+function otSfx(kind){
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC) return;
+    if(!_otAudioCtx) _otAudioCtx=new AC();
+    const ctx=_otAudioCtx;
+    if(ctx.state==='suspended') ctx.resume();
+    const t=ctx.currentTime;
+    const o=ctx.createOscillator();
+    const g=ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    const map={
+      boot:[220,440,0.08,0.18],
+      click:[680,420,0.02,0.06],
+      transmit:[520,780,0.04,0.12],
+      switch:[340,560,0.05,0.14],
+      error:[180,90,0.06,0.2],
+      ok:[440,660,0.04,0.1]
+    };
+    const m=map[kind]||map.click;
+    o.type=kind==='error'?'sawtooth':'square';
+    o.frequency.setValueAtTime(m[0], t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(40,m[1]), t+m[3]);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.045, t+m[2]);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+m[3]);
+    o.start(t); o.stop(t+m[3]+0.02);
+  }catch(_e){}
+}
+
+function agentRoomKind(a){
+  const id=a.id||a.agent_id||'';
+  const fromRoute=roomKindFromRoute(a.room||a.room_route||'');
+  if(fromRoute && fromRoute!=='codec') return fromRoute;
+  return ({aria:'command',vector:'war-room',ledger:'intel',muse:'creative',sentry:'ops'})[id]||'codec';
+}
+function openAgentRoom(id){
+  otSfx('switch');
+  const a=(state.roster||[]).find(x=>(x.id||x.agent_id)===id)||{id};
+  selectExpansionAgent(id);
+  const kind=agentRoomKind(a);
+  if(kind==='codec') showChat();
+  else showExpansionSurface(kind==='creative'?'creative':kind);
+}
+function hudMeter(label, pct, value){
+  const p=Math.max(0,Math.min(100,Number(pct)||0));
+  return `<div class="hud-meter"><div class="hud-meter-h"><span>${escapeHtml(label)}</span><span>${escapeHtml(String(value||(p|0)+'%'))}</span></div>
+    <div class="hud-meter-track"><i style="width:${p}%"></i></div></div>`;
+}
+function hudLed(label, ok, warn){
+  const cls=ok?'ok':(warn?'warn':'bad');
+  return `<div class="hud-led ${cls}"><b></b><span>${escapeHtml(label)}</span></div>`;
+}
+function scanMeterRows(scanPack){
+  const pack=scanPack||{};
+  const h=pack.hardware||{};
+  const ram=Number(h.ram_gb||0);
+  const free=Number(h.free_storage_gb||0);
+  const gpu=Array.isArray(h.gpus)&&h.gpus[0]?h.gpus[0]:null;
+  const cpuCores=h.cpu&&h.cpu.cores?Number(h.cpu.cores):0;
+  return {
+    cpu: hudMeter('CPU', cpuCores?Math.min(100,cpuCores*8):12, cpuCores?cpuCores+' cores':'—'),
+    ram: hudMeter('RAM', ram?Math.min(100,Math.round((ram/64)*100)):8, ram?ram+' GB':'—'),
+    disk: hudMeter('DISK', free?Math.min(100,Math.round((free/1000)*100)):8, free?Math.round(free)+' GB free':'—'),
+    gpu: hudMeter('GPU', gpu?Math.min(100,Math.round(((gpu.vram_gb||0)/24)*100)):(pack.ok?6:0),
+      gpu?(gpu.model||'GPU')+(gpu.vram_gb?(' · '+gpu.vram_gb+' GB'):''):(pack.ok?'none':'scan…'))
+  };
+}
+
 function resourceBarsHtml(scanOrPack){
   // Accept either raw /api/scan JSON or loadHardwareScan() pack.
   const pack=scanOrPack&&scanOrPack.hardware&&!scanOrPack.hardware.hardware
@@ -310,209 +381,127 @@ async function showHome(){
   let scanPack=await loadHardwareScan(15000);
   state.scan=scanPack.data;
   state.scanStatus=scanPack;
-  const chatOk=capReady('chat'), ttsOk=capReady('tts'), sttOk=capReady('stt');
+  const chatOk=capReady('chat'), ttsOk=capReady('tts');
   const vtStatus=capStatus('voice_trainer');
   const vtOk=vtStatus==='ready';
   const vtOffline=vtStatus==='offline';
   const videoStatus=capStatus('video');
   const videoOk=videoStatus==='ready';
-  const expEntitled=!!(state.expansion&&(state.expansion.expansion_entitled||state.expansion.surfaces_ready||state.expansion.enabled));
+  const expOn=!!(state.expansion&&state.expansion.enabled);
+  const expEntitled=!!(state.expansion&&(state.expansion.expansion_entitled||state.expansion.surfaces_ready||expOn));
   const model=(state.capabilities&&state.capabilities.llm_model)||'—';
-  const hwHome=scanPack.hardware||{};
-  const gpuDet=scanPack.gpu_detection||{};
-  const gpuHomeLine=formatGpuLine(scanPack);  const expOn=!!(state.expansion&&state.expansion.enabled);
-  const expReady=!!(state.expansion&&state.expansion.foundation_ready);
-  const expAgents=(state.roster||[]).map(a=>a.display_name).join(' · ')||'—';
-  const sem=((state.expansion&&state.expansion.report&&state.expansion.report.semantic)||{});
-  const emotionOk=sem.emotion_engine==='READY';
-  const relOk=sem.relationship_store==='READY';
+  const gpuHomeLine=formatGpuLine(scanPack);
   const brandLine=expOn?'Otaconskeep · Expansion':'Otaconskeep · Lite';
   const footLine=expOn
     ?'Otaconskeep Expansion · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX'
     :'Otaconskeep Lite · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX';
+  const meters=scanMeterRows(scanPack);
+  const vtLed=vtOk?'Genome live':(vtOffline?'Genome offline — start':(expEntitled?'Genome setup':'Genome locked'));
+  const vsLed=videoOk?'Studio READY':(videoStatus==='limited'?'Studio limited':'Studio needs Comfy');
+  const ariaLine=expOn
+    ?'Priority channels are live. Open Codec to talk to the roster, Genome for voice training, Studio when Comfy is up.'
+    :'Core deck online. Expansion unlocks the five-agent roster and premium rooms.';
 
-  const vtPill=vtOk?'OPEN GENOME':(vtOffline?'START GENOME':(expEntitled?'SETUP GENOME':'PREMIUM'));
-  const vtClick=vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()');
-  const vidPill=videoOk?'STUDIO READY':(videoStatus==='limited'?'STUDIO LIMITED':(expEntitled?'SETUP STUDIO':'PREMIUM'));
-  const vidClick=expEntitled||expOn?'showVideoStudioSetup()':'showExpansionSurface(\'creative\')';
-  const nodesClick=expOn?'showComputeNodes()':'showNodes()';
-  const nodesPill=expOn?'LOCAL NODE':'LOCAL ONLY';
-
-  const agentRoomTiles=(state.roster||[]).map(a=>{
+  const agentStrip=(state.roster||[]).map(a=>{
     const id=a.id||a.agent_id;
-    const room=a.room_title||a.room||'Codec';
-    return `<button type="button" class="svc" onclick="selectExpansionAgent('${escapeHtml(id)}')">
-        <div class="svc-top"><div class="svc-ico">${escapeHtml(String(id).slice(0,3).toUpperCase())}</div><div class="svc-name">${escapeHtml(a.display_name||id)}</div></div>
-        <p class="svc-desc">${escapeHtml(a.role||'')} · room ${escapeHtml(room)}</p>
-        <span class="svc-pill ok">OPEN CODEC</span>
-      </button>`;
-  }).join('');
+    const room=a.room_title||a.room||agentRoomKind(a);
+    const img=`/assets/${id}/${id}.webp`;
+    return `<button type="button" class="hud-agent" onclick="openAgentRoom('${escapeHtml(id)}')">
+      <img src="${img}" alt="" onerror="this.style.opacity=.25">
+      <div><div class="n">${escapeHtml(a.display_name||id)}</div><div class="r">${escapeHtml(String(room))}</div></div>
+      <span class="mood" title="mood"></span>
+    </button>`;
+  }).join('')||'<p class="muted">No roster yet.</p>';
 
-  const expansionSection=expOn?`
-  <section class="home-group">
-    <h2 class="home-group-title">Keep Expansion</h2>
-    <div class="home-grid">
-      <button type="button" class="svc" onclick="showChat()">
-        <div class="svc-top"><div class="svc-ico">XP</div><div class="svc-name">Expansion Roster</div></div>
-        <p class="svc-desc">${escapeHtml(expAgents)}</p>
-        <span class="svc-pill ${expReady?'ok':'warn'}">${expReady?'FOUNDATION READY':'PARTIAL'}</span>
+  const primaryOps=expOn?`
+  <section class="hud-ops">
+    <h3>Priority surfaces</h3>
+    <div class="hud-ops-grid">
+      <button type="button" class="svc" onclick="otSfx('click');${vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()')}">
+        <div class="svc-top"><div class="svc-ico">GN</div><div class="svc-name">Genome</div></div>
+        <p class="svc-desc">Voice Trainer + Piper voices — Expansion premium.</p>
+        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtOk?'OPEN':(vtOffline?'START':'SETUP')}</span>
       </button>
-      <p class="muted" style="grid-column:1/-1;font-size:11px;margin:0 0 8px">Public Expansion is the five-agent Lite roster (Aria / Vector / Ledger / Muse / Sentry). The private Keep runs a larger 16+ agent canon — that depth is not in this public build.</p>
-      ${agentRoomTiles}
-      <button type="button" class="svc" onclick="showExpansionSurface('command')">
-        <div class="svc-top"><div class="svc-ico">CMD</div><div class="svc-name">Aria Command</div></div>
-        <p class="svc-desc">Roster, delegations, readiness, relationship shifts — coordination floor.</p>
-        <span class="svc-pill ok">ARIA</span>
+      <button type="button" class="svc" onclick="otSfx('click');showVideoStudioSetup()">
+        <div class="svc-top"><div class="svc-ico">VS</div><div class="svc-name">Video Studio</div></div>
+        <p class="svc-desc">Muse / ComfyUI — Aria will walk you through it.</p>
+        <span class="svc-pill ${videoOk?'ok':'warn'}">${videoOk?'READY':'SETUP'}</span>
       </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('war-room')">
+      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('war-room')">
         <div class="svc-top"><div class="svc-ico">WR</div><div class="svc-name">War Room</div></div>
-        <p class="svc-desc">Active jobs, failures, decision queue — Vector ops / Aria command.</p>
-        <span class="svc-pill ok">JOBS</span>
+        <p class="svc-desc">Vector ops board — jobs, failures, threat strip.</p>
+        <span class="svc-pill ok">ENTER</span>
       </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('rex')">
-        <div class="svc-top"><div class="svc-ico">REX</div><div class="svc-name">Project REX</div></div>
-        <p class="svc-desc">Autonomous work substrate — discover→verify→close under policy, not approvals.</p>
-        <span class="svc-pill ok">AUTONOMY</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('intel')">
-        <div class="svc-top"><div class="svc-ico">INT</div><div class="svc-name">Intel / Continuity</div></div>
-        <p class="svc-desc">Memories, journals, living dossiers, relationship evidence — Ledger.</p>
-        <span class="svc-pill ok">LEDGER</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('creative')">
-        <div class="svc-top"><div class="svc-ico">CRE</div><div class="svc-name">Creative Studio</div></div>
-        <p class="svc-desc">Expansion premium Video Studio — READY when ComfyUI is up (OTACON_COMFYUI_URL).</p>
-        <span class="svc-pill ok">MUSE</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('ops')">
-        <div class="svc-top"><div class="svc-ico">OPS</div><div class="svc-name">Operations</div></div>
-        <p class="svc-desc">Alerts, security jobs, HA optional — Sentry.</p>
-        <span class="svc-pill ok">SENTRY</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('reports')">
-        <div class="svc-top"><div class="svc-ico">RPT</div><div class="svc-name">Agent Reports</div></div>
-        <p class="svc-desc">Emotion, jobs, journal, diary, living observations with provenance.</p>
-        <span class="svc-pill ok">LIVE STATE</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('learning')">
-        <div class="svc-top"><div class="svc-ico">LRN</div><div class="svc-name">Learning Engine</div></div>
-        <p class="svc-desc">Evidence-backed claims — private + shared Keep. Not memory. WHY provenance.</p>
-        <span class="svc-pill ok">LEARNED</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('dossiers')">
-        <div class="svc-top"><div class="svc-ico">DOS</div><div class="svc-name">Dossiers</div></div>
-        <p class="svc-desc">Canonical + living dossiers, vulnerabilities, learning, relationships.</p>
-        <span class="svc-pill ok">DEPTH</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('journal')">
-        <div class="svc-top"><div class="svc-ico">JNL</div><div class="svc-name">Journal</div></div>
-        <p class="svc-desc">Objective chronological history — what happened.</p>
-        <span class="svc-pill ok">FACTS</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('diary')">
-        <div class="svc-top"><div class="svc-ico">DRY</div><div class="svc-name">Diary</div></div>
-        <p class="svc-desc">Subjective interpretation — what it meant.</p>
-        <span class="svc-pill ok">MEANING</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('page-builder')">
-        <div class="svc-top"><div class="svc-ico">PB</div><div class="svc-name">Page Builder</div></div>
-        <p class="svc-desc">Allowlisted registry editor — no code injection.</p>
-        <span class="svc-pill ok">REGISTRY</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('rooms')">
-        <div class="svc-top"><div class="svc-ico">RM</div><div class="svc-name">Rooms / Pages</div></div>
-        <p class="svc-desc">Room registry + Page Builder (same allowlist).</p>
-        <span class="svc-pill ok">REGISTRY</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('relationships')">
-        <div class="svc-top"><div class="svc-ico">REL</div><div class="svc-name">Relationships</div></div>
-        <p class="svc-desc">Directional matrix with WHY provenance — not a single unexplained score.</p>
-        <span class="svc-pill ${relOk?'ok':'warn'}">${relOk?'READY':'NOT READY'}</span>
-      </button>
-      <button type="button" class="svc" onclick="showExpansionSurface('emotion')">
-        <div class="svc-top"><div class="svc-ico">EM</div><div class="svc-name">Emotion</div></div>
-        <p class="svc-desc">Real EmotionStore dimensions with clickable WHY.</p>
-        <span class="svc-pill ${emotionOk?'ok':'warn'}">${emotionOk?'READY':'NOT READY'}</span>
-      </button>
-      <button type="button" class="svc" onclick="showChat()">
-        <div class="svc-top"><div class="svc-ico">CX</div><div class="svc-name">Multi-Agent Codec</div></div>
-        <p class="svc-desc">Select Aria, Vector, Ledger, Muse, or Sentry in Codec.</p>
-        <span class="svc-pill ok">ROSTER-AWARE</span>
+      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('command')">
+        <div class="svc-top"><div class="svc-ico">CMD</div><div class="svc-name">Aria Command</div></div>
+        <p class="svc-desc">Coordination floor — roster workload + alerts.</p>
+        <span class="svc-pill ok">ENTER</span>
       </button>
     </div>
-  </section>`:'';
+  </section>
+  <section class="home-group">
+    <h2 class="home-group-title">More rooms</h2>
+    <div class="home-grid compact">
+      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('rex')"><div class="svc-top"><div class="svc-ico">REX</div><div class="svc-name">REX</div></div><p class="svc-desc">Autonomy loop</p><span class="svc-pill ok">ENTER</span></button>
+      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('intel')"><div class="svc-top"><div class="svc-ico">INT</div><div class="svc-name">Intel</div></div><p class="svc-desc">Ledger continuity</p><span class="svc-pill ok">ENTER</span></button>
+      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('emotion')"><div class="svc-top"><div class="svc-ico">EM</div><div class="svc-name">Emotion</div></div><p class="svc-desc">Affect board</p><span class="svc-pill ok">ENTER</span></button>
+      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('dossiers')"><div class="svc-top"><div class="svc-ico">DOS</div><div class="svc-name">Dossiers</div></div><p class="svc-desc">Memory lives here</p><span class="svc-pill ok">ENTER</span></button>
+      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('diary')"><div class="svc-top"><div class="svc-ico">DRY</div><div class="svc-name">Diary</div></div><p class="svc-desc">What it meant</p><span class="svc-pill ok">ENTER</span></button>
+      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('reports')"><div class="svc-top"><div class="svc-ico">RPT</div><div class="svc-name">Reports</div></div><p class="svc-desc">Live state</p><span class="svc-pill ok">ENTER</span></button>
+      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('ops')"><div class="svc-top"><div class="svc-ico">OPS</div><div class="svc-name">Ops</div></div><p class="svc-desc">Sentry</p><span class="svc-pill ok">ENTER</span></button>
+      <button type="button" class="svc" onclick="otSfx('click');render()"><div class="svc-top"><div class="svc-ico">SU</div><div class="svc-name">Setup</div></div><p class="svc-desc">First-run wizard</p><span class="svc-pill">WIZARD</span></button>
+    </div>
+  </section>`:`
+  <section class="hud-ops">
+    <h3>Core surfaces</h3>
+    <div class="hud-ops-grid">
+      <button type="button" class="svc" onclick="otSfx('click');showChat()"><div class="svc-top"><div class="svc-ico">CC</div><div class="svc-name">Codec</div></div><p class="svc-desc">Talk to Aria</p><span class="svc-pill ${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'DOWN'}</span></button>
+      <button type="button" class="svc" onclick="otSfx('click');render()"><div class="svc-top"><div class="svc-ico">SU</div><div class="svc-name">Setup</div></div><p class="svc-desc">Hardware + voice</p><span class="svc-pill">WIZARD</span></button>
+    </div>
+  </section>`;
 
-  appRoot().innerHTML=`<div class="home">
+  appRoot().innerHTML=`<div class="home hud">
   <header class="home-header">
     <div>
       <p class="home-kicker">${brandLine}</p>
-      <h1 class="home-greeting">Otacon Command Center</h1>
+      <h1 class="home-greeting">Command Deck</h1>
     </div>
     <div class="home-meta">
-      <div class="home-res">${resourceBarsHtml(scanPack)}</div>
       <div class="home-datetime" id="homeClock">${escapeHtml(formatNow())}</div>
     </div>
   </header>
 
-  <section class="home-group">
-    <h2 class="home-group-title">Command Center</h2>
-    <div class="home-grid">
-      <button type="button" class="svc" onclick="showExpansionSurface('command-center')">
-        <div class="svc-top"><div class="svc-ico">HUD</div><div class="svc-name">Owner Overview</div></div>
-        <p class="svc-desc">Roster emotions, autonomous jobs, alerts, learning, readiness — flagship dashboard.</p>
-        <span class="svc-pill ${expOn?'ok':'warn'}">${expOn?'LIVE':'CORE'}</span>
-      </button>
-      <button type="button" class="svc" onclick="showChat()">
-        <div class="svc-top"><div class="svc-ico">CC</div><div class="svc-name">Codec</div></div>
-        <p class="svc-desc">${expOn?'Talk to the Expansion roster — dual-port Codec, local Ollama, Piper voice.':'Talk to Aria — dual-port Codec, local Ollama, Piper voice.'}</p>
-        <span class="svc-pill ${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'CHAT DOWN'}</span>
-      </button>
-      <button type="button" class="svc" onclick="render()">
-        <div class="svc-top"><div class="svc-ico">SU</div><div class="svc-name">Setup</div></div>
-        <p class="svc-desc">Hardware scan, agent voice, features, and first-run configuration.</p>
-        <span class="svc-pill">WIZARD</span>
-      </button>
-      <button type="button" class="svc" onclick="showChat()">
-        <div class="svc-top"><div class="svc-ico">MEM</div><div class="svc-name">Memory</div></div>
-        <p class="svc-desc">Persistent facts agents keep across conversations (inside Codec).</p>
-        <span class="svc-pill ok">LOCAL SQLITE</span>
-      </button>
-      <button type="button" class="svc" onclick="showChat()">
-        <div class="svc-top"><div class="svc-ico">VOX</div><div class="svc-name">Voice</div></div>
-        <p class="svc-desc">Piper TTS preview and Auto Speak — Warm Male / Measured Female / Aria.</p>
-        <span class="svc-pill ${ttsOk?'ok':'warn'}">${ttsOk?'TTS READY':'TTS NOT READY'}</span>
-      </button>
-    </div>
-  </section>
+  <div class="hud-deck">
+    <aside class="hud-rail">
+      <h3>Systems</h3>
+      ${meters.cpu}${meters.ram}${meters.gpu}${meters.disk}
+      ${hudLed('Chat / Ollama', chatOk, !chatOk)}
+      ${hudLed('TTS / Piper', ttsOk, !ttsOk)}
+      ${hudLed(vtLed, vtOk, !vtOk)}
+      ${hudLed(vsLed, videoOk, !videoOk)}
+      <p class="muted" style="font-size:9px;margin-top:10px;letter-spacing:.06em">GPU ${escapeHtml(gpuHomeLine)} · model ${escapeHtml(String(model))}</p>
+    </aside>
+    <main class="hud-center">
+      <div class="hud-hero">
+        <img src="/assets/aria/aria.webp" alt="Aria">
+        <div>
+          <p class="sub">Aria // Command</p>
+          <p class="line">${escapeHtml(ariaLine)}</p>
+          <div class="hud-cta-row">
+            <button type="button" class="hud-cta primary" onclick="otSfx('transmit');showChat()">Open Codec</button>
+            ${expOn?`<button type="button" class="hud-cta" onclick="otSfx('click');${vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()')}">Genome</button>
+            <button type="button" class="hud-cta warn" onclick="otSfx('click');showVideoStudioSetup()">Studio</button>`:''}
+          </div>
+        </div>
+      </div>
+    </main>
+    <aside class="hud-agents">
+      <h3>${expOn?'Roster':'Agent'}</h3>
+      ${agentStrip}
+    </aside>
+  </div>
 
-  ${expansionSection}
-
-  <section class="home-group">
-    <h2 class="home-group-title">System</h2>
-    <div class="home-grid">
-      <button type="button" class="svc" onclick="showHome()">
-        <div class="svc-top"><div class="svc-ico">SYS</div><div class="svc-name">Status</div></div>
-        <p class="svc-desc">Model ${escapeHtml(String(model))} · STT ${sttOk?'ready':'off'} · GPU ${escapeHtml(gpuHomeLine)}${expOn?' · Expansion on':''}</p>
-        <span class="svc-pill ${chatOk&&ttsOk?'ok':'warn'}">${chatOk&&ttsOk?'HEALTHY':'CHECK SERVICES'}</span>
-      </button>
-      <button type="button" class="svc" onclick="${vtClick}">
-        <div class="svc-top"><div class="svc-ico">VT</div><div class="svc-name">Voice Trainer</div></div>
-        <p class="svc-desc">${escapeHtml((state.capabilities&&state.capabilities.voice_trainer_note)||(vtOk?'Genome on :8765.':vtOffline?'Genome installed — start UI.':'Expansion Genome — click to set up / start.'))}</p>
-        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtPill}</span>
-      </button>
-      <button type="button" class="svc" onclick="${vidClick}">
-        <div class="svc-top"><div class="svc-ico">IMG</div><div class="svc-name">Images / Video</div></div>
-        <p class="svc-desc">${escapeHtml((state.capabilities&&state.capabilities.video_detail)||(videoOk?'ComfyUI Studio healthy.':'Expansion Video Studio — click to configure ComfyUI endpoint.'))}</p>
-        <span class="svc-pill ${videoOk?'ok':'warn'}">${vidPill}</span>
-      </button>
-      <button type="button" class="svc" onclick="${nodesClick}">
-        <div class="svc-top"><div class="svc-ico">NODES</div><div class="svc-name">Compute Nodes</div></div>
-        <p class="svc-desc">${expOn?'This Expansion box is the local compute node — open node status and resources.':'This Lite box is the local node.'}</p>
-        <span class="svc-pill ok">${nodesPill}</span>
-      </button>
-    </div>
-  </section>
-
+  ${primaryOps}
   <p class="home-foot">${footLine}</p>
 </div>`;
 
@@ -521,11 +510,11 @@ async function showHome(){
     const el=document.getElementById('homeClock'); if(el) el.textContent=formatNow();
   },1000);
 
-  // One-shot boot splash matching Homelab HUD
   if(!document.getElementById('ot-boot') && !sessionStorage.getItem('ot_boot_done')){
+    otSfx('boot');
     const boot=document.createElement('div');
     boot.id='ot-boot';
-    boot.innerHTML=`<div class="frame"><div class="kicker">Otaconskeep</div><div class="title">Command Center</div><div class="sub">Booting ${expOn?'Expansion':'Lite'} deck…</div></div>`;
+    boot.innerHTML=`<div class="frame"><div class="kicker">Otaconskeep</div><div class="title">Command Deck</div><div class="sub">Booting ${expOn?'Expansion':'Lite'} HUD…</div></div>`;
     document.body.appendChild(boot);
     setTimeout(()=>{ boot.classList.add('done'); sessionStorage.setItem('ot_boot_done','1'); setTimeout(()=>boot.remove(),700); },900);
   }
@@ -1043,61 +1032,79 @@ async function startVoiceTrainer(){
     showGenomeSetup();
   }
 }
+function btnHome(){
+  return `<button type="button" class="hud-cta" onclick="showHome()">Home</button>`;
+}
 async function showGenomeSetup(){
   state.view='home';
   setBodyMode('home');
   await loadCapabilities();
+  otSfx('click');
   const note=(state.capabilities&&state.capabilities.voice_trainer_note)||'';
   const st=capStatus('voice_trainer');
   const path=(state.capabilities&&state.capabilities.voice_trainer_path)||'~/otacon-voice-trainer';
   appRoot().innerHTML=`<div class="home">
-  <header class="home-header"><div><p class="home-kicker">Expansion premium</p><h1 class="home-greeting">Genome Voice Trainer</h1></div>
+  <header class="home-header"><div><p class="home-kicker">Expansion · Genome</p><h1 class="home-greeting">Voice Trainer</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
   <section class="home-group">
-    <div class="card">
-      <p><b>Status:</b> ${escapeHtml(st)} — you have Expansion; Genome just needs its runtime.</p>
-      <p class="muted">${escapeHtml(note)}</p>
-      <ol style="margin:12px 0 12px 1.2rem;line-height:1.6">
-        <li>NVIDIA GPU + working <span class="mono">nvidia-smi</span> in WSL</li>
-        <li>Install: <span class="mono">curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh | bash</span></li>
-        <li>Or re-run Expansion Setup on a GPU host (installs Genome automatically)</li>
-        <li>Then click <b>Start Genome</b> so :8765 is listening</li>
-      </ol>
-      <p class="muted">Install path: <span class="mono">${escapeHtml(path)}</span></p>
-      <div class="fl-rail" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-        <button type="button" class="cc-btn" onclick="startVoiceTrainer()">Start Genome</button>
-        <button type="button" class="cc-btn" onclick="openVoiceTrainer()">Open :8765</button>
-        <button type="button" class="cc-btn" onclick="showHome()">Back</button>
+    <div class="guide-aria">
+      <img src="/assets/aria/aria.webp" alt="Aria">
+      <div>
+        <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--ot-cyan);font-size:10px;margin:0 0 8px">Aria // guiding</p>
+        <p style="margin:0 0 10px;line-height:1.5">You already have Expansion. Genome is the voice lab — it needs a GPU path in WSL, then a short install. Piper TTS for Codec still works without Genome.</p>
+        <p><b>Status:</b> ${escapeHtml(st)}</p>
+        <p class="muted">${escapeHtml(note)}</p>
       </div>
+    </div>
+    <ol class="guide-steps">
+      <li><b>Check Windows GPU</b> — open a Windows terminal and run <code>nvidia-smi</code>. If that works but WSL fails, download <code>Fix-Otacon-GPU.bat</code> from the Otaconskeep downloads page, run it, then reopen Ubuntu.</li>
+      <li><b>Check WSL GPU</b> — in Ubuntu: <code>nvidia-smi</code>. You want a GPU name, not an error.</li>
+      <li><b>Install Genome</b> — paste this in Ubuntu:<br><code>curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh | bash</code></li>
+      <li><b>Or</b> re-run Expansion Setup on this PC after GPU is visible — Expansion installs Genome automatically when NVIDIA works.</li>
+      <li><b>Start the UI</b> — click Start Genome below so <code>http://127.0.0.1:8765/</code> answers.</li>
+    </ol>
+    <p class="muted" style="margin-top:10px">Install path: <code>${escapeHtml(path)}</code></p>
+    <div class="hud-cta-row" style="margin-top:14px">
+      <button type="button" class="hud-cta primary" onclick="otSfx('ok');startVoiceTrainer()">Start Genome</button>
+      <button type="button" class="hud-cta" onclick="otSfx('transmit');openVoiceTrainer()">Open :8765</button>
+      <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
     </div>
   </section>
 </div>`;
-}
-function btnHome(){
-  return `<button type="button" class="cc-btn" onclick="showHome()">Home</button>`;
 }
 async function showVideoStudioSetup(){
   state.view='home';
   setBodyMode('home');
   await loadCapabilities();
+  otSfx('click');
   const detail=(state.capabilities&&state.capabilities.video_detail)||'';
   const st=capStatus('video');
   const ep=(state.capabilities&&state.capabilities.video_endpoint)||'http://127.0.0.1:8188';
   appRoot().innerHTML=`<div class="home">
-  <header class="home-header"><div><p class="home-kicker">Expansion premium</p><h1 class="home-greeting">Video Studio</h1></div>
+  <header class="home-header"><div><p class="home-kicker">Expansion · Muse</p><h1 class="home-greeting">Video Studio</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
   <section class="home-group">
-    <div class="card">
-      <p><b>Status:</b> ${escapeHtml(st)} — Expansion is entitled; wire ComfyUI to go READY.</p>
-      <p class="muted">${escapeHtml(detail)}</p>
-      <label style="display:block;margin:12px 0 6px">ComfyUI URL</label>
-      <input id="comfyUrl" value="${escapeHtml(ep)}" style="width:100%;max-width:480px;padding:8px" placeholder="http://127.0.0.1:8188">
-      <div class="fl-rail" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-        <button type="button" class="cc-btn" onclick="saveComfyUrl()">Save &amp; probe</button>
-        <button type="button" class="cc-btn" onclick="showExpansionSurface('creative')">Open Muse Studio</button>
-        <button type="button" class="cc-btn" onclick="showHome()">Back</button>
+    <div class="guide-aria">
+      <img src="/assets/aria/aria.webp" alt="Aria">
+      <div>
+        <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--ot-cyan);font-size:10px;margin:0 0 8px">Aria // guiding</p>
+        <p style="margin:0 0 10px;line-height:1.5">Studio is Expansion premium. I need ComfyUI running on this machine (or your LAN). Once it answers, paste the URL below and I will probe it. You do not need Studio for Codec voice.</p>
+        <p><b>Status:</b> ${escapeHtml(st)}</p>
+        <p class="muted">${escapeHtml(detail)}</p>
       </div>
-      <p class="muted" style="margin-top:12px">Start ComfyUI locally, then save the URL. READY = healthy Comfy. Piper TTS does not need Studio.</p>
+    </div>
+    <ol class="guide-steps">
+      <li><b>Install ComfyUI</b> (one-time) — from Windows or WSL follow the official ComfyUI desktop/portable guide: <code>https://github.com/comfyanonymous/ComfyUI</code>. Prefer a local install on this PC.</li>
+      <li><b>Start ComfyUI</b> — default UI is usually <code>http://127.0.0.1:8188</code>. Open that in a browser; you should see the Comfy graph page.</li>
+      <li><b>Tell Expansion</b> — paste that URL below and click Save &amp; probe. READY means Muse Studio can see Comfy.</li>
+      <li><b>Models</b> — LTX / music packs are separate downloads; READY only requires Comfy answering. Extra models unlock richer workflows later.</li>
+    </ol>
+    <label style="display:block;margin:14px 0 6px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ot-muted)">ComfyUI URL</label>
+    <input id="comfyUrl" value="${escapeHtml(ep)}" style="width:100%;max-width:520px;padding:10px;background:#020508;border:1px solid rgba(46,230,214,.35);color:var(--ot-text);font:inherit">
+    <div class="hud-cta-row" style="margin-top:14px">
+      <button type="button" class="hud-cta primary" onclick="otSfx('ok');saveComfyUrl()">Save &amp; probe</button>
+      <button type="button" class="hud-cta" onclick="otSfx('click');showExpansionSurface('creative')">Open Muse room</button>
+      <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
     </div>
   </section>
 </div>`;
@@ -1120,6 +1127,24 @@ async function saveComfyUrl(){
   }catch(e){
     alert('Save failed: '+String(e&&e.message||e));
   }
+}
+async function saveComfyUrlFromFloor(){
+  const el=document.getElementById('fl-comfy-url');
+  if(el){
+    const wrap=document.getElementById('comfyUrl');
+    if(!wrap){
+      const hidden=document.createElement('input');
+      hidden.id='comfyUrl';
+      hidden.type='hidden';
+      hidden.value=el.value;
+      document.body.appendChild(hidden);
+    }else{
+      wrap.value=el.value;
+    }
+  }
+  await saveComfyUrl();
+  if(typeof renderCreativeFloor==='function') renderCreativeFloor();
+  else showExpansionSurface('creative');
 }
 async function showComputeNodes(){
   state.view='home';

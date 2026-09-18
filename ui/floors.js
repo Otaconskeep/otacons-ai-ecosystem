@@ -169,15 +169,22 @@
       '.fl-two{display:grid;grid-template-columns:1.2fr .8fr;gap:.75rem}',
       '@media(max-width:900px){.fl-two{grid-template-columns:1fr}}',
       '.fl-job{display:inline-flex;flex-wrap:wrap;gap:.25rem;align-items:center}',
-      '.fl-note{font-size:.78rem;color:var(--ot-muted);margin:0 0 .75rem}'
+      '.fl-note{font-size:.78rem;color:var(--ot-muted);margin:0 0 .75rem}',
+      '.fl-diary-page{font-family:Georgia,"Times New Roman",serif;font-size:1.05rem;line-height:1.75;color:#e8f0ee;',
+      'background:linear-gradient(180deg,rgba(18,28,32,.92),rgba(8,14,18,.96));',
+      'border:1px solid rgba(46,230,214,.22);padding:1.1rem 1.25rem;margin:.55rem 0;',
+      'box-shadow:inset 0 0 40px rgba(46,230,214,.04)}',
+      '.fl-diary-page .when{font-family:var(--ot-mono);font-size:.68rem;letter-spacing:.08em;color:var(--ot-muted);margin:0 0 .55rem}',
+      '.fl-room-war .fl-strip{gap:.75rem}',
+      '.fl-gauge{min-width:88px;padding:.55rem .7rem;border:1px solid rgba(255,77,154,.35);background:rgba(20,8,14,.55)}',
+      '.fl-gauge .n{font-size:1.25rem;color:#ff8fb8;font-weight:700}',
+      '.fl-gauge .l{font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ot-muted)}'
     ].join('');
     document.head.appendChild(s);
   }
 
   function foundationShellBanner() {
-    return '<div class="fl-panel" style="margin-bottom:.75rem"><span class="fl-pill warn">EXPANSION</span>' +
-      '<p class="fl-note">Premium Expansion surfaces. Genome Voice Trainer and Video Studio go live when their ' +
-      'runtime is present (GPU Genome on :8765; ComfyUI via OTACON_COMFYUI_URL). Thin pills mean that runtime is not up yet — not that the feature is Keep-only.</p></div>';
+    return '';
   }
 
   function floorShell(title, kicker, bodyHtml, extraMeta) {
@@ -620,16 +627,11 @@
             if (typeof r === 'string') return r;
             return (r.target || r.agent_id || '') + ':' + (r.label || r.dim || '');
           }).join(', ');
-          return '<article class="fl-diary-entry"><p>' + esc(e.text || '') + '</p>' +
-            '<p class="muted" style="font-style:normal;font-family:var(--ot-mono)">snapshot: ' +
-            esc(top || '—') + '</p>' +
-            '<p class="muted" style="font-style:normal;font-family:var(--ot-mono)">relationships: ' +
-            esc(refs || '—') + '</p>' +
-            '<p class="muted" style="font-style:normal;font-family:var(--ot-mono)">journals: ' +
-            esc((e.source_journal_ids || []).join(', ') || '—') + ' · events: ' +
-            esc((e.source_event_ids || []).join(', ') || '—') + ' · ' + fmtTs(e.timestamp) + '</p>' +
+          return '<article class="fl-diary-page"><p class="when">' + esc(fmtTs(e.timestamp)) + '</p><p>' + esc(e.text || '(empty — diary not populated yet)') + '</p>' +
+            '<p class="muted" style="font-style:normal;font-family:var(--ot-mono);font-size:.7rem">snapshot: ' +
+            esc(top || '—') + ' · rel: ' + esc(refs || '—') + '</p>' +
             btn('WHY', oc('floorDiaryWhy', block.agent_id, e.diary_id), true) + '</article>';
-        }, 'No diary entries for this agent yet.');
+        }, 'No diary entries for this agent yet — live meaning accumulates as they journal.');
     }
     floorShell('Diary Browser', 'WHAT IT MEANT',
       '<p class="fl-note">' + esc(d.rule || 'DIARY = subjective meaning; Journal = objective facts.') + '</p>' +
@@ -724,7 +726,10 @@
       var stress = (detail && detail.stress_behavior) || '';
       var recovery = (detail && detail.recovery_behavior) || '';
       var id = a.agent_id;
-      blocks.push('<section class="fl-panel"><h3 class="fl-h">' + esc(a.display_name || id) + '</h3>' +
+      blocks.push('<section class="fl-panel"><div style="display:flex;gap:12px;align-items:center;margin-bottom:.75rem">' +
+        '<img src="/assets/' + esc(id) + '/' + esc(id) + '.webp" alt="" width="56" height="56" style="object-fit:cover;border:1px solid rgba(46,230,214,.35);background:#020508" onerror="this.style.opacity=.2">' +
+        '<div><h3 class="fl-h" style="margin:0">' + esc(a.display_name || id) + '</h3>' +
+        '<p class="muted" style="margin:4px 0 0">affect board</p></div></div>' +
         '<div class="fl-grid"><div><h4 class="fl-h">primary</h4>' +
         ((primary || []).map(function (kv) {
           return bar(kv[0], kv[1], { onclick: oc('floorEmotionWhy', id, kv[0]) });
@@ -771,12 +776,12 @@
     var rework = (rex.rework && rex.rework.cards) || (d.recovery && d.recovery.rework_cards) || [];
     var hard = (rex.hard_blocked && rex.hard_blocked.cards) || [];
     var metrics = rex.metrics || {};
-    var strip = '<div class="fl-strip">' +
-      metric(metrics.active != null ? metrics.active : (ops.active || []).length, 'active') +
-      metric((ops.failed || []).length, 'failed') +
-      metric(verifying.length, 'verifying') +
-      metric(rework.length, 'rework') +
-      metric(hard.length, 'hard block') + '</div>';
+    var strip = '<div class="fl-strip fl-room-war">' +
+      '<div class="fl-gauge"><div class="n">' + esc(String(metrics.active != null ? metrics.active : (ops.active || []).length)) + '</div><div class="l">active</div></div>' +
+      '<div class="fl-gauge"><div class="n">' + esc(String((ops.failed || []).length)) + '</div><div class="l">failed</div></div>' +
+      '<div class="fl-gauge"><div class="n">' + esc(String(verifying.length)) + '</div><div class="l">verifying</div></div>' +
+      '<div class="fl-gauge"><div class="n">' + esc(String(rework.length)) + '</div><div class="l">rework</div></div>' +
+      '<div class="fl-gauge"><div class="n">' + esc(String(hard.length)) + '</div><div class="l">hard block</div></div></div>';
     var trace = listCards(d.decision_trace || [], function (j) {
       return '<div class="fl-card"><b>' + esc(j.job_id) + '</b> · ' + esc(j.status) + ' · ' +
         esc(j.assigned_agent || '') + '<p class="muted">' + esc(j.request || '') + '</p>' +

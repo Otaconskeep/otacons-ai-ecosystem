@@ -92,20 +92,25 @@ def probe_voice_trainer() -> CapabilityReport:
             config_keys_present=keys, discovery=disc,
         )
     if installed or image:
+        # Installed but UI down — Start is valid even if nvidia-smi is flaky in WSL.
         return CapabilityReport(
             CAPABILITY_ID, OWNER_AGENT, CapabilityState.DEGRADED.value,
-            detail='Genome installed but UI not listening on :8765 — start Voice Trainer.',
+            detail='Genome installed but UI not listening on :8765 — Start Genome (WSL GPU optional for UI).',
             config_keys_present=keys, discovery=disc,
         )
     if not gpu:
         return CapabilityReport(
             CAPABILITY_ID, OWNER_AGENT, CapabilityState.UNAVAILABLE.value,
-            detail='Genome (Expansion premium) needs a usable NVIDIA GPU (nvidia-smi).',
+            detail=(
+                'Genome training needs NVIDIA visible in WSL (nvidia-smi). '
+                'If Windows shows a GPU but WSL does not, run Fix-Otacon-GPU.bat, then re-open Ubuntu. '
+                'You can still open Setup for guided steps.'
+            ),
             config_keys_present=keys, discovery=disc,
         )
     return CapabilityReport(
         CAPABILITY_ID, OWNER_AGENT, CapabilityState.NOT_CONFIGURED.value,
-        detail='Genome Voice Trainer not installed — Expansion premium; run Voice Trainer installer.',
+        detail='Genome Voice Trainer not installed — Expansion premium; run guided Setup.',
         config_keys_present=keys, discovery=disc,
     )
 
