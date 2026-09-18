@@ -513,7 +513,7 @@
       ['emotion', 'Emotions', 'Affective state'],
       ['intel', 'Intel', 'Continuity'],
       ['reports', 'Reports', 'Per-agent depth'],
-      ['creative', 'Workshop', 'Muse · anime / comic / cinema'],
+      ['creative', 'Creative', 'Muse · Keep Workshop UI'],
       ['ops', 'Ops', 'Sentry'],
       ['rooms', 'Page Builder', 'Registry'],
       ['learning', 'Learning', 'Claims + WHY']
@@ -1567,9 +1567,9 @@
   }
 
   async function renderCreativeFloor() {
-    // Full Keep Workshop lives at /video-studio (vendored page), not this SPA sketch.
-    try { window.location.href = '/video-studio'; return; } catch (_e) {}
-    floorShell('The Workshop', 'Muse', empty('Redirecting to Muse Workshop…'), '', 'studio');
+    // Creative is the Keep Workshop UI — same page as /video-studio.
+    try { window.location.href = '/creative'; return; } catch (_e) {}
+    floorShell('Creative', 'Muse', empty('Opening Muse Creative…'), '', 'studio');
   }
 
   /* —— Ops —— */

@@ -91,7 +91,7 @@ def build_default_roster() -> list:
         role='Creative & Media Curation', domain='creative', archetype='curator',
         reporting_to='aria', authority_rank=2, presentation='female',
         voice=Voice(piper_voice='en_US-hfc_female-medium', gender='female'),
-        room=Room(route='/video-studio', title='Workshop'),
+        room=Room(route='/creative', title='Creative'),
     )
     sentry = _agent(
         'sentry', 'Sentry',

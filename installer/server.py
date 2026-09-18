@@ -571,16 +571,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split('?', 1)[0]
         # Keep Workshop — full page (vendored), not Expansion SPA floor sketch.
-        if path in ('/video-studio', '/video-studio/'):
+        # Muse Creative === Keep Workshop UI (same page at every alias).
+        if path in (
+            '/video-studio', '/video-studio/',
+            '/creative', '/creative/',
+            '/muse', '/muse/',
+            '/studio', '/studio/',
+        ):
             self.path = '/video-studio/index.html'
             self.serve()
-            return
-        # Creative and Workshop are the same Muse surface.
-        if path in ('/creative', '/creative/', '/muse', '/muse/', '/studio', '/studio/'):
-            self.send_response(302)
-            self.send_header('Location', '/video-studio')
-            self.send_header('Cache-Control', 'no-store')
-            self.end_headers()
             return
         if path.startswith('/video-studio/api/'):
             from expansion.capabilities.workshop_api import handle_workshop_get
@@ -804,8 +803,7 @@ class Handler(BaseHTTPRequestHandler):
             '/relationships', '/emotion', '/command', '/command-center',
             '/expansion', '/genome', '/voice-trainer',
         }
-        # /creative · /muse · /studio redirect to /video-studio (Keep Workshop).
-        # /video-studio is the Keep Workshop page (ui/video-studio/), not SPA.
+        # /creative · /muse · /studio · /video-studio all serve Keep Workshop HTML.
         return path.rstrip('/') in known or path in known
 
     def do_POST(self):

@@ -692,7 +692,7 @@ async function showHome(){
   const railChips=expOn?`
     <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('transmit');showChat()"><span>CODEC</span><em class="${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'DOWN'}</em></button>
     <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':'showGenomeSetup()'}"><span>GENOME</span><em class="${gnmChip}">${vtOk?'OPEN':(vtOffline?'START':'SETUP')}</em></button>
-    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${videoOk?'openMuseWorkshop()':'showVideoStudioSetup()'}"><span>STUDIO</span><em class="${stuChip}">${videoOk?'READY':'SETUP'}</em></button>
+    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${videoOk?'openMuseWorkshop()':'showVideoStudioSetup()'}"><span>CREATIVE</span><em class="${stuChip}">${videoOk?'READY':'SETUP'}</em></button>
     <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('war-room')"><span>WAR</span><em class="ok">ENTER</em></button>
     <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('command')"><span>COMMAND</span><em class="ok">ENTER</em></button>
   `:`
@@ -749,7 +749,7 @@ async function showHome(){
             <div class="hud-cta-row">
               <button type="button" class="hud-cta primary" onclick="otArmAudio();otSfx('transmit');showChat()">Open Codec</button>
               ${expOn?`<button type="button" class="hud-cta" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':'showGenomeSetup()'}">Genome</button>
-              <button type="button" class="hud-cta warn" onclick="otArmAudio();otSfx('click');${videoOk?'openMuseWorkshop()':'showVideoStudioSetup()'}">Studio</button>`:''}
+              <button type="button" class="hud-cta warn" onclick="otArmAudio();otSfx('click');${videoOk?'openMuseWorkshop()':'showVideoStudioSetup()'}">Creative</button>`:''}
             </div>
             <div class="hud-prio-rail">${railChips}</div>
           </div>
@@ -1319,9 +1319,9 @@ function openComfyStudio(){
   const url=videoStudioUrl();
   try{ window.open(url,'_blank','noopener'); }catch(_e){}
 }
-/** Full Keep Workshop page (vendored) — not the SPA creative floor sketch. */
+/** Muse Creative — Keep Workshop UI (same page as /video-studio). */
 function openMuseWorkshop(){
-  try{ window.location.href='/video-studio'; }catch(_e){ window.open('/video-studio','_self'); }
+  try{ window.location.href='/creative'; }catch(_e){ window.open('/creative','_self'); }
 }
 async function openVoiceTrainer(){
   // When Genome is ready, open the live lab URL directly (:8765).
@@ -1603,7 +1603,7 @@ async function showVideoStudioSetup(){
     openMuseWorkshop();
     return;
   }
-  const aria=setup.aria||"Video Studio isn't running yet. Tap the big button — I'll download and start what it needs. You don't need Docker skills or command lines. First time can take a few minutes.";
+  const aria=setup.aria||"Creative isn't running yet. Tap the big button — I'll download and start what it needs. You don't need Docker skills or command lines. First time can take a few minutes.";
   const steps=Array.isArray(setup.steps)?setup.steps:[];
   const stepHtml=steps.length
     ?`<ul class="guide-steps" id="studioSetupSteps" style="list-style:none;padding-left:0">${steps.map(s=>
@@ -1630,7 +1630,7 @@ async function showVideoStudioSetup(){
       ${canProceed?`<button type="button" class="hud-cta primary" id="studioProceedBtn" onclick="otSfx('ok');proceedStudioUnderSpec()">I understand — proceed anyway</button>`:''}
     </div>`:'';
   appRoot().innerHTML=`<div class="home">
-  <header class="home-header"><div><p class="home-kicker">Expansion · Muse</p><h1 class="home-greeting">Video Studio</h1></div>
+  <header class="home-header"><div><p class="home-kicker">Expansion · Muse</p><h1 class="home-greeting">Creative</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
   <section class="home-group">
     <div class="guide-aria">
@@ -1649,10 +1649,10 @@ async function showVideoStudioSetup(){
     <div class="hud-cta-row" style="margin-top:14px">
       ${ready
         ?`<button type="button" class="hud-cta primary" onclick="otSfx('ok');openComfyStudio()">Open ComfyUI · 8188</button>`+
-          `<button type="button" class="hud-cta" onclick="otSfx('ok');openMuseWorkshop()">Open Muse Workshop</button>`
+          `<button type="button" class="hud-cta" onclick="otSfx('ok');openMuseWorkshop()">Open Creative</button>`
         :(underSpec
           ?`<button type="button" class="hud-cta" id="comfyStartBtn" disabled>Waiting for your OK…</button>`
-          :`<button type="button" class="hud-cta primary" id="comfyStartBtn" onclick="otSfx('ok');startStudioSetup()">${setup.running?'Working…':'Set Up Video Studio'}</button>`)}
+          :`<button type="button" class="hud-cta primary" id="comfyStartBtn" onclick="otSfx('ok');startStudioSetup()">${setup.running?'Working…':'Set Up Creative'}</button>`)}
       <button type="button" class="hud-cta" onclick="otSfx('click');showVideoStudioSetup()">Refresh</button>
       <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
     </div>
