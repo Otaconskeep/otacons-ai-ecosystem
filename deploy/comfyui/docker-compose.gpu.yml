@@ -1,8 +1,10 @@
 # Otacon Expansion — GPU ComfyUI sidecar when Studio profile selects comfy_runtime=gpu.
-# Selected automatically by hardware_profile / comfy_sidecar (VRAM-first).
+# Image is generation-aware via OTACON_COMFY_GPU_IMAGE (set by hardware_profile / ensure_comfy):
+#   RTX 50 (Blackwell) → cu130-slim-v2; RTX 20/30/40 → cu126-slim (fallbacks include cu124-slim).
+# NEVER use bare :cu124 — that tag 404s on Docker Hub.
 services:
   otacon-comfyui:
-    image: yanwk/comfyui-boot:cu124
+    image: ${OTACON_COMFY_GPU_IMAGE:-yanwk/comfyui-boot:cu126-slim}
     container_name: otacon-comfyui
     ports:
       - "8188:8188"

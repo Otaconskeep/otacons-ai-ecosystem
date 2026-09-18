@@ -1579,7 +1579,7 @@ EOF
 # VRAM-first Video Studio / music profile (Z-Image, Wan/LTX-2, ACE-Step)
 if [[ -n "${VPY:-}" ]] && [[ -f "$INSTALL_DIR/core/hardware_profile.py" ]]; then
   log "Detecting Video Studio hardware profile (VRAM → RAM → GPU gen)"
-  "$VPY" - <<'PY' || true
+  PYTHONPATH="$INSTALL_DIR${PYTHONPATH:+:$PYTHONPATH}" "$VPY" - <<'PY' || true
 from core.hardware_profile import detect_studio_profile, persist_studio_profile, profile_asset_manifest
 p = detect_studio_profile()
 path = persist_studio_profile(p)

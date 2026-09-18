@@ -222,10 +222,15 @@ def _compose_failure_hint(err: str) -> tuple[str, str]:
                 'This is not a bad yanwk/comfyui-boot image — the pull never reached the registry.'
             ),
         )
-    if 'pull access denied' in low or 'not found' in low and 'manifest' in low:
+    if 'pull access denied' in low or ('manifest' in low and 'not found' in low) or 'failed to resolve reference' in low:
         return (
             'image_pull_denied',
-            'Docker could not pull yanwk/comfyui-boot:cpu — check network / Hub login, or use ComfyUI portable.',
+            (
+                'Docker could not pull the Comfy GPU/CPU image (tag missing or Hub blocked). '
+                'Studio picks generation-aware tags '
+                '(RTX 50→cu130-slim-v2; RTX 20/30/40→cu126-slim; fallbacks cu124-slim/cu128/cu121) — '
+                'never bare :cu124. Set OTACON_COMFY_GPU_IMAGE to a Hub-real tag, or use ComfyUI portable.'
+            ),
         )
     if 'no space' in low or 'disk' in low:
         return 'disk_full', 'Free disk space on the Docker drive, then Start Comfy again.'
@@ -317,6 +322,25 @@ def ensure_comfy_sidecar(
         run_env = None
         docker = None
 
+    # Generation-aware GPU image (RTX 20/30/40/50). Bare :cu124 does not exist on Hub.
+    gpu_images: list[str] = []
+    if 'gpu' in compose.name:
+        try:
+            from core.hardware_profile import comfy_gpu_image_candidates, detect_studio_profile
+            prof = detect_studio_profile()
+            gpu_images = comfy_gpu_image_candidates(prof.gpu_model, generation=prof.gpu_generation)
+        except Exception:
+            gpu_images = [
+                'yanwk/comfyui-boot:cu126-slim',
+                'yanwk/comfyui-boot:cu124-slim',
+                'yanwk/comfyui-boot:cu130-slim-v2',
+                'yanwk/comfyui-boot:cu121',
+            ]
+        if not gpu_images:
+            gpu_images = ['yanwk/comfyui-boot:cu126-slim']
+    else:
+        gpu_images = ['']
+
     # Heal Restarting / wrong-image managed container (common after CPU→GPU profile flip).
     if docker:
         try:
@@ -328,7 +352,7 @@ def ensure_comfy_sidecar(
             )
             if insp.returncode == 0:
                 status, running, image = (insp.stdout or '').strip().split('|', 2)
-                want_gpu = 'gpu' in compose.name or 'cu' in (compose.read_text(encoding='utf-8', errors='ignore')[:800].lower())
+                want_gpu = 'gpu' in compose.name
                 wrong = want_gpu and 'cpu' in (image or '').lower() and 'cu' not in (image or '').lower()
                 unhealthy = status.lower() in ('restarting', 'exited', 'dead') or running.lower() not in ('true', '1')
                 if wrong or unhealthy:
@@ -340,39 +364,66 @@ def ensure_comfy_sidecar(
         except (OSError, subprocess.TimeoutExpired, ValueError):
             pass
 
-    try:
-        up = subprocess.run(
-            cmd_base + ['up', '-d', '--force-recreate'],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
-            cwd=str(compose.parent),
-            env=run_env,
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            'ok': False,
-            'action': 'start_timeout',
-            'error': 'docker compose up timed out (first image pull can be large)',
-            'hint': (
-                'Leave Docker Desktop running and try again. '
-                'Or install ComfyUI portable if pulls keep timing out.'
-            ),
-            'docker': docker_st,
-        }
-    except OSError as exc:
-        return {'ok': False, 'action': 'start_failed', 'error': str(exc), 'docker': docker_st}
+    last_err = ''
+    last_image = ''
+    up = None
+    for img in gpu_images:
+        env = dict(run_env or os.environ)
+        if img:
+            env['OTACON_COMFY_GPU_IMAGE'] = img
+            os.environ['OTACON_COMFY_GPU_IMAGE'] = img
+            last_image = img
+        try:
+            up = subprocess.run(
+                cmd_base + ['up', '-d', '--force-recreate'],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+                cwd=str(compose.parent),
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                'ok': False,
+                'action': 'start_timeout',
+                'error': f'docker compose up timed out while pulling {img or "image"}',
+                'hint': (
+                    'Leave Docker Desktop running and try again. '
+                    'First GPU image pull is large. Or install ComfyUI portable if pulls keep timing out.'
+                ),
+                'docker': docker_st,
+                'image': img,
+            }
+        except OSError as exc:
+            return {'ok': False, 'action': 'start_failed', 'error': str(exc), 'docker': docker_st}
 
-    if up.returncode != 0:
-        err = (up.stderr or up.stdout or 'compose failed')[:800]
+        if up.returncode == 0:
+            break
+        last_err = (up.stderr or up.stdout or 'compose failed')[:800]
+        low = last_err.lower()
+        # Retry next candidate only on missing-manifest / not-found pulls.
+        if not (
+            'manifest unknown' in low
+            or 'not found' in low
+            or 'failed to resolve reference' in low
+            or 'pull access denied' in low
+        ):
+            break
+
+    if up is None or up.returncode != 0:
+        err = last_err or 'compose failed'
         action, hint = _compose_failure_hint(err)
+        if last_image:
+            hint = f'{hint} (tried image: {last_image})'
         return {
             'ok': False,
             'action': action,
             'error': err,
             'hint': hint,
             'docker': docker_st,
+            'image': last_image,
+            'tried': gpu_images,
         }
 
     deadline = time.time() + max(5.0, wait_sec)

@@ -55,6 +55,7 @@ class StudioHardwareProfile:
     video: CreativePath
     music: CreativePath
     ltx2_eligible: bool
+    comfy_gpu_image: str = ''  # yanwk/comfyui-boot:… when runtime=gpu
     under_spec: bool = False
     under_spec_reasons: list[str] = field(default_factory=list)
     performance_disclaimer: str = ''
@@ -459,6 +460,90 @@ def _profile_id(vram_gb: float, model: str, ltx2: bool) -> str:
     return '8GB_FAST' if fast or gen in ('Ada', 'Blackwell') else '8GB'
 
 
+# Hub-verified yanwk/comfyui-boot tags (bare :cu124 does NOT exist — 404).
+# YanWenKun CUDA matrix (2026): cu126 supports Turing→Ada (NOT Blackwell);
+# cu130 supports Turing→Blackwell. Prefer slim (root mounts like CPU compose).
+# https://github.com/YanWenKun/ComfyUI-Docker
+COMFY_GPU_IMAGE_BY_GEN = {
+    # RTX 50xx — cu126 has no Blackwell sm_120; official recommend is cu130-slim-v2
+    'Blackwell': 'yanwk/comfyui-boot:cu130-slim-v2',
+    'Ada': 'yanwk/comfyui-boot:cu126-slim',       # RTX 40xx
+    'Ampere': 'yanwk/comfyui-boot:cu126-slim',    # RTX 30xx
+    'Turing': 'yanwk/comfyui-boot:cu126-slim',    # RTX 20xx (+ GTX 16xx)
+    'NVIDIA': 'yanwk/comfyui-boot:cu126-slim',
+    'unknown': 'yanwk/comfyui-boot:cu126-slim',
+}
+
+# Gen-aware pull fallbacks (never include bare :cu124).
+COMFY_GPU_IMAGE_FALLBACKS_BY_GEN = {
+    'Blackwell': (
+        'yanwk/comfyui-boot:cu130-slim',
+        'yanwk/comfyui-boot:cu128-slim',
+    ),
+    # 20/30/40: older tags for older host drivers, then cu130 if driver is new enough
+    'Ada': (
+        'yanwk/comfyui-boot:cu124-slim',
+        'yanwk/comfyui-boot:cu130-slim-v2',
+        'yanwk/comfyui-boot:cu121',
+    ),
+    'Ampere': (
+        'yanwk/comfyui-boot:cu124-slim',
+        'yanwk/comfyui-boot:cu130-slim-v2',
+        'yanwk/comfyui-boot:cu121',
+    ),
+    'Turing': (
+        'yanwk/comfyui-boot:cu124-slim',
+        'yanwk/comfyui-boot:cu121',
+        'yanwk/comfyui-boot:cu130-slim-v2',
+    ),
+}
+COMFY_GPU_IMAGE_FALLBACKS_DEFAULT = (
+    'yanwk/comfyui-boot:cu124-slim',
+    'yanwk/comfyui-boot:cu130-slim-v2',
+    'yanwk/comfyui-boot:cu128-slim',
+    'yanwk/comfyui-boot:cu121',
+)
+
+# Legacy floating tag that 404s on Hub — ignore if present in env/bootstrap.
+_DEAD_COMFY_GPU_TAGS = frozenset({'yanwk/comfyui-boot:cu124', 'cu124'})
+
+
+def _sanitize_comfy_gpu_image(tag: str) -> str:
+    t = (tag or '').strip()
+    if not t:
+        return ''
+    low = t.lower().rstrip('/')
+    if low in _DEAD_COMFY_GPU_TAGS or low.endswith(':cu124'):
+        return ''
+    return t
+
+
+def resolve_comfy_gpu_image(gpu_model: str = '', *, generation: str | None = None) -> str:
+    """Pick a Docker Hub–real Comfy GPU image for this GPU generation.
+
+    Covers RTX 20 (Turing), 30 (Ampere), 40 (Ada), 50 (Blackwell).
+    Override anytime with env OTACON_COMFY_GPU_IMAGE (bare :cu124 is ignored).
+    """
+    override = _sanitize_comfy_gpu_image(os.environ.get('OTACON_COMFY_GPU_IMAGE') or '')
+    if override:
+        return override
+    gen = generation or _gpu_generation(gpu_model)
+    return COMFY_GPU_IMAGE_BY_GEN.get(gen, COMFY_GPU_IMAGE_BY_GEN['unknown'])
+
+
+def comfy_gpu_image_candidates(gpu_model: str = '', *, generation: str | None = None) -> list[str]:
+    """Preferred image first, then Hub-real gen-aware fallbacks (deduped)."""
+    gen = generation or _gpu_generation(gpu_model)
+    primary = resolve_comfy_gpu_image(gpu_model, generation=gen)
+    fallbacks = COMFY_GPU_IMAGE_FALLBACKS_BY_GEN.get(gen, COMFY_GPU_IMAGE_FALLBACKS_DEFAULT)
+    out: list[str] = []
+    for tag in (primary, *fallbacks):
+        clean = _sanitize_comfy_gpu_image(tag)
+        if clean and clean not in out:
+            out.append(clean)
+    return out
+
+
 def _cuda_available() -> bool:
     # nvidia-smi presence is a practical CUDA-path signal for WSL/Desktop.
     try:
@@ -540,6 +625,7 @@ def classify_studio_profile(
     comfy = 'gpu' if (cuda and vram_m >= 6) else 'cpu'
     if not cuda:
         comfy = 'cpu'
+    comfy_img = resolve_comfy_gpu_image(gpu_model, generation=gen) if comfy == 'gpu' else ''
 
     under_spec = bool(under_reasons)
     # Auto-install when packs exist and RAM is at least the soft floor OR user can proceed anyway.
@@ -586,6 +672,7 @@ def classify_studio_profile(
         ram_tier=ram_tier,
         auto_install_studio=bool(auto_ok),
         comfy_runtime=comfy,
+        comfy_gpu_image=comfy_img,
         image=image,
         video=video,
         music=music,
@@ -677,6 +764,7 @@ def persist_studio_profile(
             'OTACON_STUDIO_VRAM_GB': f'{profile.vram_gb:.1f}',
             'OTACON_STUDIO_RAM_GB': f'{profile.ram_gb:.1f}',
             'OTACON_STUDIO_COMFY': profile.comfy_runtime,
+            'OTACON_COMFY_GPU_IMAGE': profile.comfy_gpu_image or '',
             'OTACON_STUDIO_IMAGE': profile.image.engine if profile.image.enabled else 'off',
             'OTACON_STUDIO_VIDEO': profile.video.engine if profile.video.enabled else 'off',
             'OTACON_STUDIO_MUSIC': profile.music.engine if profile.music.enabled else 'off',
