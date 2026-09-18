@@ -304,7 +304,13 @@ function formatNow(){
 }
 
 /* WebAudio pack — boot sting, transmit thump, codec ring, ambient bed */
-let _otAudioCtx=null,_otAmb=null;
+let _otAudioCtx=null,_otAmb=null,_otAudioArmed=false;
+function otArmAudio(){
+  if(_otAudioArmed) return;
+  _otAudioArmed=true;
+  const ctx=otAudio();
+  if(ctx&&ctx.state==='suspended') ctx.resume().catch(()=>{});
+}
 function otAudio(){
   try{
     const AC=window.AudioContext||window.webkitAudioContext;
@@ -321,7 +327,7 @@ function otTone(ctx,type,f0,f1,t0,atk,dur,vol){
   o.frequency.setValueAtTime(f0, t0);
   if(f1 && f1!==f0) o.frequency.exponentialRampToValueAtTime(Math.max(40,f1), t0+dur);
   g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(vol||0.04, t0+atk);
+  g.gain.exponentialRampToValueAtTime(vol||0.07, t0+atk);
   g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
   o.start(t0); o.stop(t0+dur+0.03);
 }
@@ -333,7 +339,7 @@ function otNoiseThump(ctx,t0,dur,vol){
   const src=ctx.createBufferSource(), g=ctx.createGain(), f=ctx.createBiquadFilter();
   f.type='lowpass'; f.frequency.value=180;
   src.buffer=buf; src.connect(f); f.connect(g); g.connect(ctx.destination);
-  g.gain.setValueAtTime(vol||0.12, t0);
+  g.gain.setValueAtTime(vol||0.22, t0);
   g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
   src.start(t0); src.stop(t0+dur+0.02);
 }
@@ -342,14 +348,14 @@ function otAmbientStart(){
   if(!ctx||_otAmb) return;
   try{
     const master=ctx.createGain();
-    master.gain.value=0.012;
+    master.gain.value=0.028;
     master.connect(ctx.destination);
     const mk=(freq,type,detune)=>{
       const o=ctx.createOscillator(), g=ctx.createGain(), lfo=ctx.createOscillator(), lg=ctx.createGain();
       o.type=type; o.frequency.value=freq; o.detune.value=detune||0;
-      g.gain.value=0.35;
+      g.gain.value=0.4;
       lfo.frequency.value=0.07+Math.random()*0.05;
-      lg.gain.value=0.12;
+      lg.gain.value=0.14;
       lfo.connect(lg); lg.connect(g.gain);
       o.connect(g); g.connect(master);
       o.start(); lfo.start();
@@ -368,71 +374,95 @@ function otAmbientStop(){
 }
 function otSfx(kind){
   try{
+    otArmAudio();
     const ctx=otAudio();
     if(!ctx) return;
     const t=ctx.currentTime;
     if(kind==='boot'){
-      [[196,0],[247,0.07],[294,0.14],[392,0.22],[523,0.32]].forEach(([f,off])=>{
-        otTone(ctx,'square',f,f*1.02,t+off,0.02,0.16,0.035);
+      [[196,0],[247,0.06],[294,0.12],[392,0.2],[523,0.3],[784,0.4]].forEach(([f,off])=>{
+        otTone(ctx,'square',f,f*1.02,t+off,0.015,0.18,0.055);
       });
-      otTone(ctx,'sawtooth',98,196,t,0.04,0.45,0.02);
+      otTone(ctx,'sawtooth',98,220,t,0.04,0.55,0.035);
+      otNoiseThump(ctx,t+0.05,0.12,0.1);
       return;
     }
     if(kind==='transmit'){
-      otNoiseThump(ctx,t,0.14,0.14);
-      otTone(ctx,'square',620,180,t+0.02,0.01,0.1,0.05);
+      otNoiseThump(ctx,t,0.16,0.28);
+      otTone(ctx,'square',620,160,t+0.02,0.01,0.12,0.08);
+      otTone(ctx,'triangle',980,420,t+0.04,0.01,0.1,0.04);
       return;
     }
     if(kind==='switch'||kind==='ring'){
-      // Codec agent-switch ring
-      otTone(ctx,'square',880,880,t,0.01,0.08,0.05);
-      otTone(ctx,'square',660,660,t+0.1,0.01,0.1,0.045);
-      otTone(ctx,'triangle',1320,990,t+0.22,0.01,0.16,0.03);
+      otTone(ctx,'square',990,990,t,0.01,0.09,0.08);
+      otTone(ctx,'square',740,740,t+0.11,0.01,0.11,0.07);
+      otTone(ctx,'triangle',1480,1100,t+0.24,0.01,0.18,0.05);
       return;
     }
     if(kind==='error'){
-      otTone(ctx,'sawtooth',180,70,t,0.02,0.22,0.055);
+      otTone(ctx,'sawtooth',180,70,t,0.02,0.26,0.09);
       return;
     }
     if(kind==='ok'){
-      otTone(ctx,'square',440,660,t,0.02,0.12,0.04);
-      otTone(ctx,'triangle',660,880,t+0.08,0.02,0.14,0.03);
+      otTone(ctx,'square',440,660,t,0.02,0.12,0.07);
+      otTone(ctx,'triangle',660,990,t+0.08,0.02,0.16,0.05);
       return;
     }
-    // click default
-    otTone(ctx,'square',720,380,t,0.008,0.05,0.028);
+    otTone(ctx,'square',820,360,t,0.006,0.045,0.045);
   }catch(_e){}
 }
-function hudGauge(label, pct, tone){
+function hudGauge(label, pct, tone, valueText){
   const p=Math.max(0,Math.min(100,Number(pct)||0));
   const r=34, c=40, circ=2*Math.PI*r;
   const dash=circ*((100-p)/100);
   const col=tone==='warn'?'var(--ot-amber)':(tone==='bad'?'var(--ot-magenta)':'var(--ot-cyan)');
+  const shown=valueText!=null?valueText:String(p|0);
   return `<div class="hud-gauge" title="${escapeHtml(label)}">
     <svg viewBox="0 0 80 80" aria-hidden="true">
       <circle class="g-bg" cx="${c}" cy="${c}" r="${r}"/>
       <circle class="g-fg" cx="${c}" cy="${c}" r="${r}" style="stroke:${col};stroke-dasharray:${circ};stroke-dashoffset:${dash}"/>
+      <line class="g-tick" x1="40" y1="6" x2="40" y2="14"/>
     </svg>
-    <b>${p|0}</b><span>${escapeHtml(label)}</span>
+    <b>${escapeHtml(shown)}</b><span>${escapeHtml(label)}</span>
   </div>`;
 }
 function hudRadarHtml(threat){
-  const blips=[[38,22],[62,48],[28,58],[70,28],[48,70]].map((xy,i)=>
-    `<i class="blip" style="left:${xy[0]}%;top:${xy[1]}%;animation-delay:${i*0.4}s"></i>`).join('');
+  const blips=[[38,22],[62,48],[28,58],[70,28],[48,70],[55,35]].map((xy,i)=>
+    `<i class="blip" style="left:${xy[0]}%;top:${xy[1]}%;animation-delay:${i*0.35}s"></i>`).join('');
   return `<div class="hud-radar ${threat?'threat':''}">
-    <div class="radar-face"><div class="radar-sweep"></div>${blips}</div>
+    <div class="radar-face"><div class="radar-ring"></div><div class="radar-sweep"></div>${blips}</div>
     <div class="radar-lbl">SCAN · ${threat?'AMBER':'CLEAR'}</div>
   </div>`;
 }
-function hudSeqHtml(){
-  const bars=Array.from({length:16},(_,i)=>`<i style="--h:${30+((i*37)%70)}%;animation-delay:${(i%8)*0.08}s"></i>`).join('');
+function hudSeqHtml(seed){
+  const s=Number(seed)||40;
+  const bars=Array.from({length:24},(_,i)=>{
+    const h=18+((i*37+s*3)%72);
+    return `<i style="--h:${h}%;animation-delay:${(i%8)*0.07}s"></i>`;
+  }).join('');
   return `<div class="hud-seq" aria-hidden="true">${bars}</div>`;
 }
 function hudTeleHtml(lines){
   const row=(lines||[]).map(l=>`<span>${escapeHtml(l)}</span>`).join('');
   return `<div class="hud-tele"><div class="hud-tele-track">${row}${row}</div></div>`;
 }
+function operatorSilSvg(){
+  return `<svg class="op-sil" viewBox="0 0 120 140" aria-hidden="true">
+    <defs>
+      <linearGradient id="opFill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#2ee6d6" stop-opacity=".9"/>
+        <stop offset="100%" stop-color="#14b8a6" stop-opacity=".25"/>
+      </linearGradient>
+      <filter id="opGlow"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+    <ellipse cx="60" cy="42" rx="26" ry="30" fill="url(#opFill)" filter="url(#opGlow)"/>
+    <path d="M22 128 C22 88 40 72 60 72 C80 72 98 88 98 128 Z" fill="url(#opFill)" filter="url(#opGlow)"/>
+    <circle cx="50" cy="40" r="3" fill="#03070a" opacity=".55"/>
+    <circle cx="70" cy="40" r="3" fill="#03070a" opacity=".55"/>
+    <path d="M52 52 Q60 58 68 52" stroke="#03070a" stroke-width="2" fill="none" opacity=".4"/>
+  </svg>`;
+}
 async function linkOperatorCam(){
+  otArmAudio();
   otSfx('click');
   const port=document.getElementById('port-operator');
   if(!port) return;
@@ -449,7 +479,7 @@ async function linkOperatorCam(){
     otSfx('ok');
   }catch(_e){
     port.innerHTML=`<div class="op-port-fill op-port-live">
-      <div class="op-sil"></div>
+      ${operatorSilSvg()}
       <span>OPERATOR · LINK DENIED</span>
       <button type="button" class="op-cam-btn" onclick="linkOperatorCam()">Retry camera</button>
     </div><div class="codec-port-crt"></div><div class="codec-port-lbl">YOU</div>`;
@@ -458,8 +488,9 @@ async function linkOperatorCam(){
 }
 function operatorPortHtml(){
   return `<div class="op-port-fill op-port-live">
-    <div class="op-sil" aria-hidden="true"></div>
+    ${operatorSilSvg()}
     <div class="op-scan"></div>
+    <div class="op-grid" aria-hidden="true"></div>
     <span>OPERATOR · STANDBY</span>
     <button type="button" class="op-cam-btn" onclick="linkOperatorCam()">Link camera</button>
   </div>
@@ -563,22 +594,33 @@ async function showHome(){
   const hScan=(scanPack&&scanPack.hardware)||{};
   const cpuCoresN=hScan.cpu&&hScan.cpu.cores?Number(hScan.cpu.cores):0;
   const ramGbN=Number(hScan.ram_gb||0);
+  // OPS = readiness pressure (not cores*8 — that pegged at 100 on any modern CPU)
+  let opsLoad=14;
+  if(!chatOk) opsLoad+=32;
+  if(!ttsOk) opsLoad+=18;
+  if(expOn&&!videoOk) opsLoad+=16;
+  if(expOn&&!vtOk) opsLoad+=14;
+  if(threat) opsLoad+=8;
+  opsLoad=Math.max(8,Math.min(92,opsLoad));
+  const memPct=ramGbN?Math.min(92,Math.round(28+Math.log2(Math.max(2,ramGbN))*14)):10;
+  const gnmLbl=vtOk?'LIVE':(vtOffline?'STRT':(expEntitled?'SETUP':'LOCK'));
   const instruments=`<div class="hud-instruments">
     ${hudRadarHtml(threat)}
     <div class="hud-gauge-row">
-      ${hudGauge('CORE', chatOk?88:22, chatOk?'':'bad')}
-      ${hudGauge('VOICE', ttsOk?76:18, ttsOk?'':'warn')}
-      ${hudGauge('LOAD', cpuCoresN?Math.min(100,cpuCoresN*8):12, '')}
-      ${hudGauge('MEM', ramGbN?Math.min(100,Math.round((ramGbN/64)*100)):8, '')}
+      ${hudGauge('LINK', chatOk?86:18, chatOk?'':'bad')}
+      ${hudGauge('VOX', ttsOk?78:16, ttsOk?'':'warn')}
+      ${hudGauge('OPS', opsLoad, opsLoad>55?'warn':'', String(opsLoad))}
+      ${hudGauge('MEM', memPct, '', ramGbN?Math.round(ramGbN)+'G':'—')}
     </div>
-    ${hudSeqHtml()}
+    ${hudSeqHtml(opsLoad)}
     ${hudTeleHtml([
       'LINK '+ (chatOk?'UP':'DOWN'),
       'TTS '+ (ttsOk?'READY':'WAIT'),
-      'GENOME '+ (vtOk?'LIVE':(vtOffline?'START':'SETUP')),
-      'STUDIO '+ (videoOk?'READY':'LIMITED'),
-      'MODEL '+ String(model).slice(0,24),
-      gpuHomeLine.slice(0,28)
+      'GENOME '+ gnmLbl,
+      'STUDIO '+ (videoOk?'READY':(videoStatus==='limited'?'LIMITED':'SETUP')),
+      'CPU '+ (cpuCoresN?cpuCoresN+'C':'—'),
+      'MODEL '+ String(model).slice(0,22),
+      gpuHomeLine.slice(0,26)
     ])}
   </div>`;
 
@@ -662,19 +704,25 @@ async function showHome(){
       <p class="muted" style="font-size:9px;margin-top:10px;letter-spacing:.06em">GPU ${escapeHtml(gpuHomeLine)} · model ${escapeHtml(String(model))}</p>
     </aside>
     <main class="hud-center">
-      <div class="hud-hero">
-        <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
-        <div>
-          <p class="sub">Aria // Command</p>
-          <p class="line">${escapeHtml(ariaLine)}</p>
-          <div class="hud-cta-row">
-            <button type="button" class="hud-cta primary" onclick="otSfx('transmit');showChat()">Open Codec</button>
-            ${expOn?`<button type="button" class="hud-cta" onclick="otSfx('click');${vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()')}">Genome</button>
-            <button type="button" class="hud-cta warn" onclick="otSfx('click');showVideoStudioSetup()">Studio</button>`:''}
+      <div class="hud-cockpit">
+        <div class="hud-cockpit-corners" aria-hidden="true"></div>
+        <div class="hud-hero">
+          <div class="hud-portrait">
+            <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
+            <i class="hud-portrait-scan"></i>
+          </div>
+          <div>
+            <p class="sub">Aria // Command · CH ${chatOk?'01':'00'}</p>
+            <p class="line">${escapeHtml(ariaLine)}</p>
+            <div class="hud-cta-row">
+              <button type="button" class="hud-cta primary" onclick="otArmAudio();otSfx('transmit');showChat()">Open Codec</button>
+              ${expOn?`<button type="button" class="hud-cta" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()')}">Genome</button>
+              <button type="button" class="hud-cta warn" onclick="otArmAudio();otSfx('click');showVideoStudioSetup()">Studio</button>`:''}
+            </div>
           </div>
         </div>
+        ${instruments}
       </div>
-      ${instruments}
     </main>
     <aside class="hud-agents">
       <h3>${expOn?'Roster':'Agent'}</h3>
@@ -692,14 +740,23 @@ async function showHome(){
   },1000);
 
   if(!document.getElementById('ot-boot') && !sessionStorage.getItem('ot_boot_done')){
+    otArmAudio();
     otSfx('boot');
     const boot=document.createElement('div');
     boot.id='ot-boot';
     boot.innerHTML=`<div class="frame"><div class="kicker">Otaconskeep</div><div class="title">Command Deck</div><div class="sub">Booting ${expOn?'Expansion':'Lite'} HUD…</div></div>`;
     document.body.appendChild(boot);
     setTimeout(()=>{ boot.classList.add('done'); sessionStorage.setItem('ot_boot_done','1'); setTimeout(()=>boot.remove(),700); },900);
+  }else{
+    otArmAudio();
   }
   otAmbientStart();
+  if(!window.__otAudioArmBound){
+    window.__otAudioArmBound=1;
+    const arm=()=>{ otArmAudio(); otAmbientStart(); };
+    document.addEventListener('pointerdown', arm, {once:false, passive:true});
+    document.addEventListener('keydown', arm, {once:false, passive:true});
+  }
 }
 
 /* ---------------- Setup wizard ---------------- */
@@ -1018,6 +1075,8 @@ async function showChat(){
   const vtStatus=capStatus('voice_trainer');
   const vtOk=vtStatus==='ready';
   const vtOffline=vtStatus==='offline';
+  const expOn=!!(state.expansion&&state.expansion.enabled);
+  const expEntitled=!!(state.expansion&&(state.expansion.expansion_entitled||state.expansion.surfaces_ready||expOn));
   const voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
   const roster=state.roster&&state.roster.length?state.roster:[{id:aid,display_name:currentAgentName()}];
   const agentBtns=roster.map(a=>{
@@ -1101,7 +1160,7 @@ async function showChat(){
           <div class="cc-led ${chatOk?'on':''}"><b></b><span>CHAT</span><em>${chatOk?'RDY':'DN'}</em></div>
           <div class="cc-led ${ttsOk?'on':''}"><b></b><span>VOICE</span><em>${ttsOk?'RDY':'DN'}</em></div>
           <div class="cc-led ${sttOk?'on':''}"><b></b><span>MIC</span><em>${sttOk?'RDY':'OFF'}</em></div>
-          <div class="cc-led ${vtOk?'on':(vtOffline?'warn':'')}"><b></b><span>GNM</span><em>${vtOk?'LIVE':(vtOffline?'STRT':'—')}</em></div>
+          <div class="cc-led ${vtOk?'on':(vtOffline||expEntitled?'warn':'')}"><b></b><span>GNM</span><em>${vtOk?'LIVE':(vtOffline?'STRT':(expEntitled?'SETUP':'LOCK'))}</em></div>
         </div>
         <div class="cc-mini-meters">
           <div class="cc-mm"><span>TX</span><i style="width:${chatOk?72:12}%"></i></div>
