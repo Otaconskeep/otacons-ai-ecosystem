@@ -243,6 +243,87 @@ class WorkshopApiTests(unittest.TestCase):
                 self.assertEqual(saved[0].get('portrait_job_id'), 'pjob1')
                 self.assertEqual(saved[0].get('portrait_status'), 'generating')
 
+    def test_cancel_running_job_interrupts_comfy(self):
+        with TemporaryDirectory() as td:
+            with mock.patch.dict(os.environ, {
+                'OTACON_EXPANSION_DATA_ROOT': str(Path(td) / 'data'),
+                'OTACON_EXPANSION_CONFIG_ROOT': str(Path(td) / 'cfg'),
+            }):
+                from expansion.state_layout import resolve_layout
+                layout = resolve_layout()
+                layout.ensure_user_dirs()
+                job = {
+                    'id': 'run1',
+                    'type': 'image_v1',
+                    'job_type': 'image_v1',
+                    'status': 'running',
+                    'prompt_id': 'pid-run',
+                    'endpoint': 'http://127.0.0.1:8188',
+                    'created_at': 1,
+                }
+                wa._save_jobs([job], layout)
+                got = {}
+
+                def send(data, status=200):
+                    got['data'] = data
+                    got['status'] = status
+
+                with mock.patch.object(wa, 'resolve_layout', return_value=layout), \
+                     mock.patch(
+                         'expansion.capabilities.comfy_submit.cancel_comfy_prompt',
+                         return_value={
+                             'ok': True,
+                             'gpu_stopped': True,
+                             'queue_state': 'running',
+                             'action': 'interrupt',
+                         },
+                     ):
+                    ok = wa.handle_workshop_write(
+                        'POST', '/video-studio/api/jobs/run1/cancel', {}, send,
+                    )
+                self.assertTrue(ok)
+                self.assertEqual(got.get('status'), 200)
+                self.assertTrue(got['data'].get('ok'))
+                self.assertTrue(got['data'].get('gpu_stopped'))
+                saved = wa._get_job('run1', layout)
+                self.assertEqual(saved.get('status'), 'cancelled')
+
+    def test_cancel_completed_job_refuses(self):
+        with TemporaryDirectory() as td:
+            with mock.patch.dict(os.environ, {
+                'OTACON_EXPANSION_DATA_ROOT': str(Path(td) / 'data'),
+                'OTACON_EXPANSION_CONFIG_ROOT': str(Path(td) / 'cfg'),
+            }):
+                from expansion.state_layout import resolve_layout
+                layout = resolve_layout()
+                layout.ensure_user_dirs()
+                wa._save_jobs([{
+                    'id': 'done1', 'status': 'completed', 'prompt_id': 'x', 'created_at': 1,
+                }], layout)
+                got = {}
+
+                def send(data, status=200):
+                    got['data'] = data
+                    got['status'] = status
+
+                with mock.patch.object(wa, 'resolve_layout', return_value=layout):
+                    ok = wa.handle_workshop_write(
+                        'DELETE', '/video-studio/api/jobs/done1', {}, send,
+                    )
+                self.assertTrue(ok)
+                self.assertEqual(got.get('status'), 409)
+                self.assertEqual(got['data'].get('error'), 'already_finished')
+
+    def test_vendored_page_has_no_requesting_agent(self):
+        html = (
+            Path(__file__).resolve().parents[1] / 'ui' / 'video-studio' / 'index.html'
+        ).read_text(encoding='utf-8')
+        self.assertNotIn('Requesting agent', html)
+        self.assertNotIn('value="albedo"', html)
+        self.assertNotIn('value="otacon"', html)
+        self.assertIn('jobs/${jobId}/cancel', html)
+        self.assertIn('VS_WORKSHOP_CLIENT', html)
+
 
 if __name__ == '__main__':
     unittest.main()

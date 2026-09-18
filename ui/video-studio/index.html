@@ -421,9 +421,9 @@
       <div class="vs-radar-wrap"><canvas data-mf-radar width="120" height="120" aria-hidden="true"></canvas></div>
       <div>
         <h1>CREATIVE</h1>
-        <p>Muse’s maker space — the Keep Workshop UI. Write, generate images, and generate video on the household GPU. Create a character once, then call them into every scene that follows.</p>
+        <p>Creative Workshop — the Keep Workshop UI. Write, generate images, and generate video on the household GPU. Create a character once, then call them into every scene that follows.</p>
       </div>
-      <div id="vs-telem-host" class="mf-telem-host" data-mf-cyberdeck="full" data-telem-title="SYS // VIDEO STUDIO CYBERDECK · PROC otacon-executor" data-telem-endpoint="/video-studio/api/telemetry"></div>
+      <div id="vs-telem-host" class="mf-telem-host" data-mf-cyberdeck="full" data-telem-title="SYS // VIDEO STUDIO CYBERDECK · PROC workshop" data-telem-endpoint="/video-studio/api/telemetry"></div>
     </div>
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1.1rem">
       <div class="vs-gpu-badge" id="vs-gpu-badge"><div class="vs-gpu-dot" id="vs-gpu-dot"></div><span id="vs-gpu-text">checking GPU…</span></div>
@@ -581,18 +581,6 @@
         </div>
       </div>
       <div class="vs-row">
-        <div class="vs-field">
-          <label>Requesting agent</label>
-          <select id="vs-agent">
-            <option value="albedo">Albedo</option>
-            <option value="otacon">Otacon</option>
-            <option value="mei_ling">Mei Ling</option>
-            <option value="solid_snake">Solid Snake</option>
-            <option value="naomi_hunter">Naomi Hunter</option>
-            <option value="kurumi">Kurumi</option>
-            <option value="gray_fox">Gray Fox</option>
-          </select>
-        </div>
         <div class="vs-field" id="vs-resolution-field">
           <label>Resolution</label>
           <select id="vs-resolution">
@@ -1028,6 +1016,8 @@
 </div>
 
 <script>
+// Workshop jobs are unattributed — no Keep/OtaconsKeep agent roster here.
+const VS_WORKSHOP_CLIENT = 'workshop';
 // CODEC static in place of the browser's broken-image icon — any <img> on
 // this page (present or added later by the JS below) that 404s or fails to
 // decode gets this instead. `error` doesn't bubble, so this listens in the
@@ -1546,7 +1536,10 @@ function vsActorImgCandidates(a) {
     if (u && u !== gen) push(u);
   });
   push(gen);
-  if (a && a.portrait_job_id) push('/video-studio/api/generate-image-v1/' + a.portrait_job_id + '/output');
+  if (a && a.portrait_status === 'ready' && a.portrait_job_id) {
+    push('/video-studio/api/generate-image-v1/' + a.portrait_job_id + '/output');
+  }
+  if (a && a.images && a.images.portrait) push(a.images.portrait);
   return urls;
 }
 function vsActorGenerationRef(a) {
@@ -1712,7 +1705,7 @@ async function vsMovieAutoPlan(oneClick = false) {
     const res = await (await fetch('/video-studio/api/projects/movie/auto-plan', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        one_click_movie: oneClick, story_text: storyText, agent_id: document.getElementById('vs-agent').value,
+        one_click_movie: oneClick, story_text: storyText, agent_id: VS_WORKSHOP_CLIENT,
         style_id: document.getElementById('vs-style-select').value || null,
       }),
     })).json();
@@ -1768,7 +1761,7 @@ async function vsMovieImportPlan() {
   try {
     const res = await (await fetch('/video-studio/api/projects/movie/import-plan', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({plan, agent_id: document.getElementById('vs-agent').value, style_id: document.getElementById('vs-style-select').value || null}),
+      body: JSON.stringify({plan, agent_id: VS_WORKSHOP_CLIENT, style_id: document.getElementById('vs-style-select').value || null}),
     })).json();
     if (!res.ok) {
       note.innerHTML = 'Error: ' + vsEsc(res.error || 'unknown')
@@ -1957,13 +1950,15 @@ async function vsRefreshActors() {
             </label>
           </div>
           <div class="vs-actor-name">${a.name}</div>
-          <div class="vs-actor-desc">${(a.description||'').slice(0,80)}</div>
+          <div class="vs-actor-desc">${(a.description||a.note||'').slice(0,80)}</div>
           <button type="button"
                   class="vs-submit vs-submit-sm vs-actor-generate"
                   data-id="${a.id}"
+                  ${a.portrait_status === 'generating' ? 'disabled' : ''}
                   style="margin-top:.45rem">
-            Generate Portrait
+            ${a.portrait_status === 'generating' ? 'Generating…' : (a.portrait_status === 'ready' ? 'Regenerate Portrait' : 'Generate Portrait')}
           </button>
+          ${a.portrait_status === 'failed' ? `<div class="vs-note">${(a.portrait_error||'portrait failed').slice(0,120).replace(/</g,'&lt;')}</div>` : ''}
         </div>`;
       }).join('');
   grid.querySelectorAll('.vs-actor-del').forEach(el => {
@@ -1987,21 +1982,39 @@ async function vsRefreshActors() {
   grid.querySelectorAll('.vs-actor-generate').forEach(el => {
     el.addEventListener('click', async () => {
       const originalText = el.textContent;
+      const actorId = el.dataset.id;
       el.disabled = true;
       el.textContent = 'Queuing…';
       try {
-        const resp = await fetch(`/video-studio/api/actors/${el.dataset.id}/generate-portrait`, {
+        const resp = await fetch(`/video-studio/api/actors/${actorId}/generate-portrait`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            agent_id: document.getElementById('vs-agent').value
-          })
+          body: JSON.stringify({}),
         });
+        const body = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          throw new Error(err.error || `HTTP ${resp.status}`);
+          throw new Error(body.error || body.detail || `HTTP ${resp.status}`);
         }
-        await vsRefreshActors();
+        el.textContent = 'Generating…';
+        // Poll until portrait_status is ready/failed so the card paints the PNG.
+        const deadline = Date.now() + 180000;
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 2500));
+          await vsRefreshActors();
+          const a = (vsActors || []).find(x => x.id === actorId);
+          if (!a) break;
+          if (a.portrait_status === 'ready') {
+            el.textContent = 'Portrait ready';
+            el.disabled = false;
+            setTimeout(() => { el.textContent = originalText; }, 2500);
+            return;
+          }
+          if (a.portrait_status === 'failed') {
+            throw new Error(a.portrait_error || 'portrait failed');
+          }
+        }
+        el.disabled = false;
+        el.textContent = originalText;
       } catch (e) {
         el.disabled = false;
         el.textContent = originalText;
@@ -2031,7 +2044,7 @@ document.getElementById('vs-actor-create-btn').addEventListener('click', async (
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         name, description: descEl.value.trim(), personality: persEl.value.trim(),
-        agent_id: document.getElementById('vs-agent').value,
+        agent_id: VS_WORKSHOP_CLIENT,
       }),
     })).json();
     if (res.id) {
@@ -2086,7 +2099,7 @@ document.getElementById('vs-style-create-btn').addEventListener('click', async (
   try {
     const res = await (await fetch('/video-studio/api/styles', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name, description: descEl.value.trim(), agent_id: document.getElementById('vs-agent').value}),
+      body: JSON.stringify({name, description: descEl.value.trim(), agent_id: VS_WORKSHOP_CLIENT}),
     })).json();
     if (res.id) {
       note.textContent = `${res.name} created.`;
@@ -2208,7 +2221,7 @@ async function vsRefreshJobs() {
     let extra = '', meta = '';
     if (jt === 'text') {
       extra = `<div class="vs-write-output">${(j.output_text||'').replace(/</g,'&lt;')}</div>`;
-      meta = `<span class="agent-pill">${j.agent_id||'albedo'}</span> · write · ${created}`;
+      meta = `write · ${created}`;
     } else if (jt === 'script') {
       const scenes = (j.scenes || []).map((sc, i) => {
         const dialogue = (sc.dialogue || []).map(d =>
@@ -2232,7 +2245,7 @@ async function vsRefreshJobs() {
         <button type="button" class="vs-submit vs-submit-sm vs-open-job-scenes" data-src="vs-job-scenes-${j.id}" data-title="SCRIPT SCENES">View ${sceneCount} scene${sceneCount===1?'':'s'}</button>
         <div id="vs-job-scenes-${j.id}" hidden>${scenes}</div>
         ${stillsBtn}`;
-      meta = `<span class="agent-pill">${j.agent_id||'albedo'}</span> · script · ${sceneCount} scenes · ${created}`;
+      meta = `script · ${sceneCount} scenes · ${created}`;
     } else if (jt === 'video_v2' || jt === 'video_v2_start_end' || jt === 'video_v2_auto_start_end' || jt === 'video_v2_direct_t2v' || jt === 'video_v2_ltx25' || jt === 'h3_final_render') {
       // h3_final_render / video_v2_ltx25 (2026-08-29 fix): both were falling
       // through to the generic else-branch below, which serves outUrl --
@@ -2270,7 +2283,7 @@ async function vsRefreshJobs() {
         extra = `${anchors}<div class="vs-note">${((VS_V2_STAGES[j.stage]||{}).label || j.stage || 'working…')}${attemptSuffix}</div>${vsJobClockHtml(j)}`;
       }
       const pipeline = jt === 'h3_final_render' ? 'OtaconsKeep Engine Foxhound V3' : 'Otacons Video Gen X';
-      meta = `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${j.width}×${j.height} · ${j.duration}s · ${pipeline} · ${created}`;
+      meta = `${j.width}×${j.height} · ${j.duration}s · ${pipeline} · ${created}`;
     } else if (jt === 'image_v1' || jt === 'hidream_v1') {
       const imgOutUrl = jt === 'image_v1'
         ? `/video-studio/api/generate-image-v1/${j.id}/output`
@@ -2284,7 +2297,7 @@ async function vsRefreshJobs() {
       } else {
         extra = `<div class="vs-note">${(j.stage||j.status||'working…').replace(/</g,'&lt;')}</div>${vsJobClockHtml(j)}`;
       }
-      meta = `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${j.width}×${j.height} · ${engineLabel} · ${created}`;
+      meta = `${j.width}×${j.height} · ${engineLabel} · ${created}`;
     } else if (jt === 'music_v1') {
       const musicOutUrl = `/video-studio/api/generate-music-v1/${j.id}/output`;
       if (j.status === 'completed') {
@@ -2294,7 +2307,7 @@ async function vsRefreshJobs() {
       } else {
         extra = `<div class="vs-note">${(j.stage||j.status||'working…').replace(/</g,'&lt;')}</div>${vsJobClockHtml(j)}`;
       }
-      meta = `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${j.duration}s · Keep Score · ${(j.audio_format||'mp3').toUpperCase()} · ${created}`;
+      meta = `${j.duration}s · Keep Score · ${(j.audio_format||'mp3').toUpperCase()} · ${created}`;
     } else if (jt === 'project') {
       const isMovieMode = j.project_mode === 'movie';
       if (j.status === 'completed' || j.status === 'needs_attention') {
@@ -2333,7 +2346,7 @@ async function vsRefreshJobs() {
       const movieMeta = isMovieMode
         ? `${(j.scenes || []).length} scene(s), ${(j.scenes || []).reduce((n, sc) => n + (sc.shots || []).length, 0)} shot(s)`
         : `${j.requested_duration_minutes||'?'} min`;
-      meta = `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${isMovieMode ? 'movie project' : 'story project'} · ${movieMeta} · ${created}`;
+      meta = `${isMovieMode ? 'movie project' : 'story project'} · ${movieMeta} · ${created}`;
     } else {
       if (j.status === 'completed') {
         extra = jt === 'image' || jt === 'image_v1' || jt === 'hidream_v1'
@@ -2347,8 +2360,8 @@ async function vsRefreshJobs() {
       const framesBit = (!isImg && j.num_frames != null && j.num_frames !== '')
         ? ` · ${j.num_frames}f` : '';
       meta = isImg
-        ? `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${j.width||'?'}×${j.height||'?'} · image · ${created}`
-        : `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${j.width||'?'}×${j.height||'?'}${framesBit} · ${created}`;
+        ? `${j.width||'?'}×${j.height||'?'} · image · ${created}`
+        : `${j.width||'?'}×${j.height||'?'}${framesBit} · ${created}`;
     }
     const deleteBtn = isPurgeable
       ? `<button type="button" class="vs-submit vs-submit-sm vs-job-delete-btn" data-id="${j.id}"
@@ -2963,7 +2976,7 @@ document.getElementById('vs-form').addEventListener('submit', async (e) => {
   btn.disabled = true;
   note.textContent = vsMode === 'write' ? 'Writing…' : vsMode === 'script' ? 'Generating script…' : 'Queuing…';
 
-  const agentId = document.getElementById('vs-agent').value;
+  const agentId = VS_WORKSHOP_CLIENT;
   const rawPrompt = document.getElementById('vs-prompt').value;
   // Non-video modes (write/script/image/project) still ground on a single
   // actor -- use the first multi-picked one for backward-compatible
@@ -4394,14 +4407,30 @@ async function vsResumeActiveVideoJob() {
 
 document.getElementById('vs-cancel-btn').addEventListener('click', async () => {
   if (!vsActiveJobId) return;
+  const jobId = vsActiveJobId;
   const cancelBtn = document.getElementById('vs-cancel-btn');
+  const note = document.getElementById('vs-submit-note') || document.getElementById('vs-v2-result');
   cancelBtn.disabled = true;
   cancelBtn.textContent = 'Cancelling…';
+  let data = null;
+  let ok = false;
   try {
-    await fetch(`/video-studio/api/jobs/${vsActiveJobId}`, {method: 'DELETE'});
-  } catch (e) { /* best-effort -- job store update below still runs on next poll */ }
+    const resp = await fetch(`/video-studio/api/jobs/${jobId}/cancel`, {method: 'POST'});
+    data = await resp.json().catch(() => ({}));
+    ok = resp.ok && data && data.ok;
+  } catch (e) {
+    data = {error: String(e)};
+  }
+  if (!ok) {
+    const why = (data && (data.detail || data.error)) || 'Cancel failed — job still running.';
+    if (note) note.textContent = why;
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.display = '';
+    return;
+  }
   vsProgressStop();
-  document.getElementById('vs-v2-result').innerHTML = '<div style="color:#d99;">Cancelled.</div>';
+  document.getElementById('vs-v2-result').innerHTML = '<div style="color:#d99;">Cancelled — GPU stop confirmed.</div>';
   document.getElementById('vs-v2-bar').style.background = '#a05050';
   cancelBtn.style.display = 'none';
   cancelBtn.disabled = false;

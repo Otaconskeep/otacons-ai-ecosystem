@@ -116,16 +116,19 @@ def _portrait_prompt_for_actor(actor: dict[str, Any]) -> str:
     desc = str(
         actor.get('description')
         or actor.get('note')
-        or actor.get('personality')
         or ''
     ).strip()
+    personality = str(actor.get('personality') or '').strip()
     base = (
         f"identity-preserving portrait of {name}, natural lighting, sharp eyes, "
-        "clean background, single subject, head and shoulders"
+        "clean background, single subject, head and shoulders, high detail"
     )
+    bits = [base]
     if desc:
-        return f"{base}. {desc}"
-    return base
+        bits.append(desc)
+    if personality:
+        bits.append(f"personality cues: {personality}")
+    return '. '.join(bits)
 
 
 
@@ -180,12 +183,48 @@ def _seed_actors_styles(layout: Optional[StateLayout] = None) -> None:
                 'id': aid,
                 'name': a.get('label') or a.get('name') or aid,
                 'note': a.get('note') or a.get('tag') or '',
+                'description': a.get('note') or '',
                 'images': {},
                 'ref_slots': {},
                 'reference_images': [],
                 'created_at': time.time(),
             })
         _save_list(ap, actors)
+    else:
+        # Scrub seeded OtaconsKeep / Metal Gear agent cameos from Workshop cast.
+        scrub_ids = {
+            'muse_self', 'aria_cameo', 'vector_cameo', 'ledger_cameo', 'sentry_cameo',
+            'albedo', 'otacon', 'mei_ling', 'solid_snake', 'naomi_hunter', 'kurumi', 'gray_fox',
+            'muse', 'aria', 'vector', 'ledger', 'sentry',
+        }
+        scrub_names = {
+            'muse', 'aria', 'vector', 'ledger', 'sentry', 'albedo', 'otacon',
+            'mei ling', 'solid snake', 'naomi hunter', 'kurumi', 'gray fox',
+        }
+        existing_actors = _load_list(ap)
+        cleaned = []
+        changed_actors = False
+        for a in existing_actors:
+            aid = str(a.get('id') or '').lower()
+            name = str(a.get('name') or a.get('label') or '').strip().lower()
+            if aid in scrub_ids or name in scrub_names:
+                changed_actors = True
+                continue
+            cleaned.append(a)
+        if changed_actors:
+            if not cleaned:
+                for a in defaults.get('actors') or []:
+                    cleaned.append({
+                        'id': str(a.get('id') or uuid.uuid4().hex[:10]),
+                        'name': a.get('label') or a.get('name') or 'Actor',
+                        'note': a.get('note') or '',
+                        'description': a.get('note') or '',
+                        'images': {},
+                        'ref_slots': {},
+                        'reference_images': [],
+                        'created_at': time.time(),
+                    })
+            _save_list(ap, cleaned)
 
     desired = _style_rows()
     if not desired:
@@ -449,7 +488,7 @@ def _create_image_job(
         'height': height,
         'actor_ids': actor_ids or [],
         'style_id': style_id or '',
-        'agent_id': 'muse',
+        'agent_id': 'workshop',
         'created_at': now,
         'created_ts': now,
         'stage': 'submitting',
@@ -733,6 +772,121 @@ def handle_workshop_get(
     return True
 
 
+def _cancel_job(jid: str, layout: Optional[StateLayout] = None) -> tuple[dict[str, Any], int]:
+    """Cancel a Workshop/Expansion image job and stop GPU work in Comfy when possible."""
+    from expansion.capabilities.comfy_submit import cancel_comfy_prompt
+
+    layout = layout or resolve_layout()
+    job = _get_job(jid, layout)
+    expansion_job = None
+    try:
+        from expansion.jobs import JobStore, JobStatus
+        expansion_job = JobStore(layout=layout).get(jid)
+    except Exception:
+        expansion_job = None
+
+    if not job and not expansion_job:
+        return {'ok': False, 'error': 'not found'}, 404
+
+    status = ''
+    if job:
+        status = str(job.get('status') or '')
+    elif expansion_job:
+        status = str(getattr(expansion_job, 'status', '') or '').lower()
+        if status == 'complete':
+            status = 'completed'
+        elif status == 'failed':
+            status = 'failed'
+        elif status == 'cancelled':
+            status = 'cancelled'
+
+    if status in ('completed', 'failed', 'cancelled', 'complete'):
+        return {
+            'ok': False,
+            'error': 'already_finished',
+            'detail': f'Job is already {status}; refusing to fake a cancel.',
+            'status': status,
+        }, 409
+
+    prompt_id = ''
+    endpoint = ''
+    if job:
+        prompt_id = str(job.get('prompt_id') or '')
+        endpoint = str(job.get('endpoint') or '')
+    if expansion_job and not prompt_id:
+        try:
+            from expansion.capabilities.comfy_submit import prompt_id_from_job, endpoint_from_job
+            prompt_id = prompt_id_from_job(expansion_job)
+            endpoint = endpoint_from_job(expansion_job)
+        except Exception:
+            pass
+
+    if not prompt_id:
+        # Never reached Comfy — local cancel is enough.
+        if job:
+            job = dict(job)
+            job['status'] = 'cancelled'
+            job['stage'] = 'cancelled'
+            job['error'] = 'Cancelled before Comfy received the prompt.'
+            _upsert_job(job, layout)
+        if expansion_job:
+            try:
+                from expansion.jobs import JobStore, JobStatus
+                JobStore(layout=layout).transition(
+                    jid, JobStatus.CANCELLED.value, error='Cancelled before Comfy submit',
+                )
+            except Exception:
+                pass
+        return {
+            'ok': True,
+            'gpu_stopped': False,
+            'queue_state': 'not_submitted',
+            'action': 'mark_cancelled',
+            'id': jid,
+        }, 200
+
+    result = cancel_comfy_prompt(prompt_id=prompt_id, endpoint=endpoint or None)
+    if not result.get('ok'):
+        return {
+            'ok': False,
+            'error': result.get('error') or 'cancel_failed',
+            'detail': result.get('detail') or '',
+            'queue_state': result.get('queue_state') or '',
+            'prompt_id': prompt_id,
+        }, int(result.get('http_status') or 502)
+
+    if job:
+        job = dict(job)
+        job['status'] = 'cancelled'
+        job['stage'] = 'cancelled'
+        job['error'] = 'Cancelled — GPU stop requested.'
+        job['cancel'] = {
+            'queue_state': result.get('queue_state'),
+            'action': result.get('action'),
+            'gpu_stopped': result.get('gpu_stopped'),
+        }
+        _upsert_job(job, layout)
+    if expansion_job:
+        try:
+            from expansion.jobs import JobStore, JobStatus
+            JobStore(layout=layout).transition(
+                jid,
+                JobStatus.CANCELLED.value,
+                error='Cancelled by Workshop — Comfy interrupt/queue delete',
+            )
+        except Exception:
+            pass
+
+    return {
+        'ok': True,
+        'gpu_stopped': bool(result.get('gpu_stopped')),
+        'queue_state': result.get('queue_state') or '',
+        'action': result.get('action') or '',
+        'prompt_id': prompt_id,
+        'id': jid,
+    }, 200
+
+
 def handle_workshop_write(
     method: str,
     path: str,
@@ -755,6 +909,7 @@ def handle_workshop_write(
             'name': str(data.get('name') or data.get('label') or 'Actor'),
             'note': str(data.get('note') or ''),
             'description': str(data.get('description') or data.get('note') or ''),
+            'personality': str(data.get('personality') or ''),
             'images': data.get('images') or {},
             'ref_slots': data.get('ref_slots') or {},
             'reference_images': data.get('reference_images') or [],
@@ -1000,6 +1155,19 @@ def handle_workshop_write(
             'error': 'movie_production_pending',
             'detail': 'Project / movie production API is Keep-parity UI-ready; worker wiring follows.',
         }, 501)
+        return True
+
+    m = re.match(r'jobs/([^/]+)/cancel$', rel)
+    if m and method in ('POST', 'DELETE'):
+        body, code = _cancel_job(unquote(m.group(1)), layout)
+        send_json(body, code)
+        return True
+
+    m = re.match(r'jobs/([^/]+)$', rel)
+    if m and method == 'DELETE':
+        # Legacy Cancel button sent bare DELETE /jobs/<id> (not purge).
+        body, code = _cancel_job(unquote(m.group(1)), layout)
+        send_json(body, code)
         return True
 
     m = re.match(r'jobs/([^/]+)/purge$', rel)

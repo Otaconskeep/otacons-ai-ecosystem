@@ -634,6 +634,102 @@ def poll_creative_jobs_once(*, layout: Optional[StateLayout] = None) -> dict[str
     return {'ok': True, 'completed': completed, 'failed': failed}
 
 
+def cancel_comfy_prompt(
+    *,
+    prompt_id: str,
+    endpoint: Optional[str] = None,
+) -> dict[str, Any]:
+    """Stop a Comfy prompt: delete from pending queue or interrupt if running.
+
+    Returns ok + queue_state + gpu_stopped. Does not invent success when Comfy
+    is unreachable or the prompt is already finished.
+    """
+    pid = str(prompt_id or '').strip()
+    if not pid:
+        return {
+            'ok': False,
+            'error': 'no_prompt_id',
+            'detail': 'Job has no Comfy prompt_id to cancel.',
+            'http_status': 409,
+        }
+    ep = (endpoint or _studio_endpoint()).rstrip('/')
+    code, q = _http_json('GET', f'{ep}/queue', timeout=5.0)
+    if code != 200 or not isinstance(q, dict):
+        return {
+            'ok': False,
+            'error': 'comfy_unreachable',
+            'detail': f'Could not read Comfy queue ({code}).',
+            'endpoint': ep,
+            'http_status': 503,
+        }
+
+    def _ids(rows) -> list[str]:
+        out: list[str] = []
+        for row in rows or []:
+            if isinstance(row, (list, tuple)) and len(row) > 1:
+                out.append(str(row[1]))
+            elif isinstance(row, dict) and row.get('prompt_id'):
+                out.append(str(row['prompt_id']))
+        return out
+
+    running_ids = _ids(q.get('queue_running'))
+    pending_ids = _ids(q.get('queue_pending'))
+    if pid in running_ids:
+        icode, _ = _http_json('POST', f'{ep}/interrupt', body={}, timeout=8.0)
+        # Also try delete in case interrupt leaves a residue
+        _http_json('POST', f'{ep}/queue', body={'delete': [pid]}, timeout=8.0)
+        if icode not in (200, 204) and icode != 0:
+            # Some Comfy builds return empty 200 with no JSON
+            pass
+        return {
+            'ok': True,
+            'gpu_stopped': True,
+            'queue_state': 'running',
+            'action': 'interrupt',
+            'prompt_id': pid,
+            'endpoint': ep,
+        }
+    if pid in pending_ids:
+        dcode, _ = _http_json('POST', f'{ep}/queue', body={'delete': [pid]}, timeout=8.0)
+        if dcode not in (200, 204) and dcode != 0:
+            return {
+                'ok': False,
+                'error': 'queue_delete_failed',
+                'detail': f'Comfy refused queue delete ({dcode}).',
+                'queue_state': 'pending',
+                'prompt_id': pid,
+                'http_status': 502,
+            }
+        return {
+            'ok': True,
+            'gpu_stopped': True,
+            'queue_state': 'pending',
+            'action': 'queue_delete',
+            'prompt_id': pid,
+            'endpoint': ep,
+        }
+    # Not in live queue — may already be done or never queued.
+    hist = _history_outputs(ep, pid)
+    if hist:
+        return {
+            'ok': False,
+            'error': 'already_finished',
+            'detail': 'Comfy already finished this prompt; nothing to cancel on the GPU.',
+            'queue_state': 'completed',
+            'prompt_id': pid,
+            'http_status': 409,
+        }
+    return {
+        'ok': True,
+        'gpu_stopped': False,
+        'queue_state': 'absent',
+        'action': 'mark_cancelled',
+        'detail': 'Prompt not in Comfy queue; marking job cancelled locally.',
+        'prompt_id': pid,
+        'endpoint': ep,
+    }
+
+
 def ensure_creative_poller() -> None:
     global _POLL_STARTED
     with _POLL_LOCK:

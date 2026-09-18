@@ -49,14 +49,10 @@
     ]
   },
   "actors": [
-    {"id": "muse_self", "label": "Muse", "tag": "creator", "note": "Default Muse identity — workshop lead"},
-    {"id": "aria_cameo", "label": "Aria", "tag": "guide", "note": "Command cameo for explainers"},
-    {"id": "vector_cameo", "label": "Vector", "tag": "ops", "note": "Systems / war-room energy"},
-    {"id": "ledger_cameo", "label": "Ledger", "tag": "intel", "note": "Quiet continuity presence"},
-    {"id": "sentry_cameo", "label": "Sentry", "tag": "security", "note": "Perimeter watchfulness"},
     {"id": "custom_a", "label": "Actor A", "tag": "slot", "note": "Drop a face / style reference"},
     {"id": "custom_b", "label": "Actor B", "tag": "slot", "note": "Second cast slot"},
-    {"id": "custom_c", "label": "Actor C", "tag": "slot", "note": "Third cast slot"}
+    {"id": "custom_c", "label": "Actor C", "tag": "slot", "note": "Third cast slot"},
+    {"id": "custom_d", "label": "Actor D", "tag": "slot", "note": "Fourth cast slot"}
   ],
   "styles": [
     {"id": "anime", "label": "Anime", "prompt": "modern anime feature style, clean linework, expressive eyes, cel shading, stable character design"},

@@ -155,6 +155,34 @@ class ComfySubmitTests(unittest.TestCase):
                 self.assertIn('Migrated stuck', store.get(stuck.job_id).error or '')
 
 
+    def test_cancel_comfy_prompt_pending_deletes_queue(self):
+        with mock.patch.object(cs, '_studio_endpoint', return_value='http://127.0.0.1:8188'), \
+             mock.patch.object(cs, '_http_json') as http, \
+             mock.patch.object(cs, '_history_outputs', return_value=[]):
+            http.side_effect = [
+                (200, {'queue_running': [], 'queue_pending': [[1, 'pid-p']]}),
+                (200, {}),
+            ]
+            out = cs.cancel_comfy_prompt(prompt_id='pid-p')
+        self.assertTrue(out['ok'])
+        self.assertEqual(out['queue_state'], 'pending')
+        self.assertTrue(out['gpu_stopped'])
+
+    def test_cancel_comfy_prompt_running_interrupts(self):
+        with mock.patch.object(cs, '_studio_endpoint', return_value='http://127.0.0.1:8188'), \
+             mock.patch.object(cs, '_http_json') as http, \
+             mock.patch.object(cs, '_history_outputs', return_value=[]):
+            http.side_effect = [
+                (200, {'queue_running': [[0, 'pid-r']], 'queue_pending': []}),
+                (200, {}),  # interrupt
+                (200, {}),  # queue delete best-effort
+            ]
+            out = cs.cancel_comfy_prompt(prompt_id='pid-r')
+        self.assertTrue(out['ok'])
+        self.assertEqual(out['queue_state'], 'running')
+        self.assertEqual(out['action'], 'interrupt')
+
+
 class ReleaseInfoTests(unittest.TestCase):
     def test_release_identity_keys(self):
         from expansion.release_info import release_identity
