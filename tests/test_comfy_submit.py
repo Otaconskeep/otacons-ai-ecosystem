@@ -1,0 +1,71 @@
+"""Comfy submitter honesty + Z-Image graph builder."""
+from __future__ import annotations
+
+import os
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import mock
+
+from expansion.capabilities import comfy_submit as cs
+from expansion.jobs import JobStatus, JobStore
+
+
+class ComfySubmitTests(unittest.TestCase):
+    def test_build_z_image_prompt_has_required_nodes(self):
+        g = cs.build_z_image_prompt(positive='a lantern in rain', steps=8)
+        self.assertEqual(g['28']['class_type'], 'UNETLoader')
+        self.assertEqual(g['27']['inputs']['text'], 'a lantern in rain')
+        self.assertEqual(g['3']['inputs']['steps'], 8)
+
+    def test_submit_refuses_without_models(self):
+        with mock.patch.object(cs, 'probe_video_studio') as pvs, \
+             mock.patch.object(cs, 'image_workflow_status', return_value={
+                 'ok': False,
+                 'detail': 'missing models',
+                 'missing': ['z_image'],
+             }):
+            pvs.return_value = mock.Mock(state='READY', discovery={'endpoint': 'http://127.0.0.1:8188'})
+            out = cs.submit_image_job(prompt='test')
+        self.assertFalse(out['ok'])
+        self.assertFalse(out['queued'])
+        self.assertEqual(out['error'], 'creative workflow submitter missing')
+        self.assertEqual(out.get('http_status'), 501)
+
+    def test_submit_requires_prompt_id_before_ok(self):
+        with mock.patch.object(cs, 'probe_video_studio') as pvs, \
+             mock.patch.object(cs, 'image_workflow_status', return_value={
+                 'ok': True, 'unet': 'z.safetensors', 'clip': 'c.safetensors', 'vae': 'ae.safetensors',
+             }), \
+             mock.patch.object(cs, '_http_json', return_value=(200, {'prompt_id': 'abc-123'})):
+            pvs.return_value = mock.Mock(state='READY', discovery={'endpoint': 'http://127.0.0.1:8188'})
+            out = cs.submit_image_job(prompt='hero portrait')
+        self.assertTrue(out['ok'])
+        self.assertEqual(out['prompt_id'], 'abc-123')
+
+    def test_fail_stale_fake_creative_jobs(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            with mock.patch.dict(os.environ, {
+                'OTACON_EXPANSION_DATA_ROOT': str(root / 'data'),
+                'OTACON_EXPANSION_CONFIG_ROOT': str(root / 'cfg'),
+            }):
+                from expansion.state_layout import resolve_layout
+                layout = resolve_layout()
+                layout.ensure_user_dirs()
+                store = JobStore(layout=layout)
+                fake = store.create('fake creative', domain='creative', assigned_agent='muse')
+                store.transition(fake.job_id, JobStatus.RUNNING.value)
+                real = store.create('real creative', domain='creative', assigned_agent='muse')
+                store.transition(
+                    real.job_id, JobStatus.RUNNING.value,
+                    evidence=['comfy:prompt_id=keep-me'],
+                )
+                out = cs.fail_stale_fake_creative_jobs(layout=layout)
+                self.assertEqual(out['marked_failed'], 1)
+                self.assertEqual(store.get(fake.job_id).status, JobStatus.FAILED.value)
+                self.assertEqual(store.get(real.job_id).status, JobStatus.RUNNING.value)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1483,7 +1483,7 @@
       actors: Object.keys(FL_STUDIO.actors || {}).filter(function (k) { return FL_STUDIO.actors[k]; }),
       ref_image: (document.getElementById('fl-vs-ref-name') || {}).textContent || ''
     };
-    say('Queuing for Muse…');
+    say('Submitting to ComfyUI…');
     try {
       if (typeof otSfx === 'function') otSfx('ok');
       var r = await api('/api/expansion/creative/generate', {
@@ -1493,12 +1493,17 @@
         engine: engine,
         tuning: tuning
       });
-      if (!r.ok) {
-        say('Rejected: ' + ((r.data && r.data.error) || r.status));
+      if (!r.ok || !(r.data && r.data.ok)) {
+        var err = (r.data && (r.data.detail || r.data.error)) || r.status;
+        say('Not queued: ' + err);
         return;
       }
-      say((r.data && r.data.message) || 'Queued.');
-      setTimeout(function () { renderCreativeFloor(); }, 600);
+      if (!(r.data.prompt_id || r.data.queued)) {
+        say('Not queued: ComfyUI did not return a prompt_id.');
+        return;
+      }
+      say((r.data.message || ('Submitted · prompt_id=' + r.data.prompt_id)));
+      setTimeout(function () { renderCreativeFloor(); }, 800);
     } catch (e) {
       say(String(e));
     }
@@ -1568,6 +1573,17 @@
     var optPacks = (studio.optimal_prompts && studio.optimal_prompts[FL_STUDIO.modality]) || [];
     var vram = hw.marketed_vram_gb || hw.vram_gb || '?';
     var chips = ['identity-preserving', 'cinematic lighting', 'stable subject', 'natural motion', 'clean background', 'film grain'];
+    var genOk = studio.generate_enabled !== false && !!studio.generate_enabled;
+    // When field absent (older tips), fall back to READY + workflow.ok
+    if (studio.generate_enabled == null) {
+      genOk = ready && !!(studio.workflow && studio.workflow.ok);
+    }
+    var genBlock = studio.generate_blocked_reason ||
+      (FL_STUDIO.modality !== 'image'
+        ? 'Studio connected, but ' + FL_STUDIO.modality + ' workflow is not installed yet.'
+        : (studio.workflow && studio.workflow.detail) ||
+          'Studio connected, but image workflow is not installed yet.');
+    var canGenerate = genOk && FL_STUDIO.modality === 'image';
 
     if (needsSetup) {
       floorShell('The Workshop', 'Muse · Video Studio',
@@ -1671,10 +1687,14 @@
       }).join('') + '</div></div>' +
 
       '<div class="fl-rail" style="margin-top:12px">' +
-      '<button type="button" class="fl-vs-submit" onclick="floorStudioGenerate()">Generate</button>' +
+      (canGenerate
+        ? '<button type="button" class="fl-vs-submit" onclick="floorStudioGenerate()">Generate</button>'
+        : '<button type="button" class="fl-vs-submit" disabled title="' + esc(genBlock) + '">Generate unavailable</button>') +
       '<button type="button" class="fl-vs-submit ghost" onclick="floorStudioSetModality((window.FL_STUDIO&&window.FL_STUDIO.modality)||\'image\')">Optimal defaults</button>' +
       btn('Setup / Advanced', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", true) +
-      '</div><p id="fl-studio-msg" class="muted" style="margin-top:8px"></p></div>' +
+      btn('Open ComfyUI', "window.open(" + JSON.stringify(endpoint || 'http://127.0.0.1:8188/') + ",'_blank','noopener')", true) +
+      '</div><p id="fl-studio-msg" class="muted" style="margin-top:8px">' +
+      (canGenerate ? '' : esc(genBlock)) + '</p></div>' +
 
       '<div class="fl-vs-card"><h3>Tuning Parameters</h3>' +
       '<div class="fl-vs-tune-grid" id="fl-tune-image">' +

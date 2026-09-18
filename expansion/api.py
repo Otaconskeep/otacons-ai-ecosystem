@@ -79,10 +79,22 @@ def handle_expansion_get(path: str, send_json) -> bool:
         from expansion.jobs import JobStore
         from expansion.capabilities.video_studio import probe_video_studio, studio_runtime_context
         from expansion.capabilities.comfy_sidecar import detect_local_comfy
+        from expansion.capabilities.comfy_submit import (
+            ensure_creative_poller,
+            fail_stale_fake_creative_jobs,
+            image_workflow_status,
+            poll_creative_jobs_once,
+        )
         from expansion.capabilities.studio_setup import setup_status, studio_hardware_snapshot
         from expansion.persist import read_json
         from expansion.state_layout import resolve_layout
         from expansion.readiness import evaluate_foundation
+        ensure_creative_poller()
+        fail_stale_fake_creative_jobs()
+        try:
+            poll_creative_jobs_once()
+        except Exception:
+            pass
         jobs = [j for j in JobStore().list(agent_id='muse', limit=40)]
         vs = probe_video_studio()
         detected = detect_local_comfy()
@@ -108,6 +120,7 @@ def handle_expansion_get(path: str, send_json) -> bool:
             or detected.get('endpoint')
             or ''
         )
+        workflow = image_workflow_status(endpoint or None)
         send_json({
             'surface': 'muse_creative',
             'creative_queue': [asdict(j) for j in jobs
@@ -117,9 +130,10 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'recent_creative_jobs': [asdict(j) for j in jobs if j.domain in ('creative', 'media')][:15],
             'recent_output': [asdict(j) for j in jobs if j.status == 'COMPLETE' and j.domain in ('creative', 'media')][:10],
             'capabilities': {
-                'generation': 'local_template_ready',
+                'generation': 'comfy_prompt' if workflow.get('ok') else 'workflow_missing',
                 'video_studio': vs.state,
                 'voice_motion': 'readiness_dependent',
+                'image_workflow': workflow,
             },
             'video_studio': vs.to_dict(),
             'video_studio_readiness': vs.state,
@@ -144,6 +158,15 @@ def handle_expansion_get(path: str, send_json) -> bool:
                 'styles': (defaults.get('styles') or []),
                 'music_advanced': (defaults.get('music_advanced') or {}),
                 'image_widgets': (defaults.get('image_widgets') or []),
+                'workflow': workflow,
+                'generate_enabled': bool(vs.state == 'READY' and workflow.get('ok')),
+                'generate_blocked_reason': (
+                    '' if (vs.state == 'READY' and workflow.get('ok'))
+                    else (
+                        workflow.get('detail')
+                        or 'Studio connected, but image workflow is not installed yet.'
+                    )
+                ),
                 'modalities': [
                     {
                         'id': 'image',
@@ -152,6 +175,7 @@ def handle_expansion_get(path: str, send_json) -> bool:
                                    or ((creative_settings.get('image') or {}).get('engine'))
                                    or 'z-image-turbo'),
                         'tier': ((hw.get('image') or {}).get('tier') or 'local'),
+                        'workflow_ready': bool(workflow.get('ok')),
                     },
                     {
                         'id': 'video',
@@ -160,6 +184,7 @@ def handle_expansion_get(path: str, send_json) -> bool:
                                    or ((creative_settings.get('video') or {}).get('engine'))
                                    or 'wan-2.2-5b'),
                         'tier': ((hw.get('video') or {}).get('tier') or 'local'),
+                        'workflow_ready': False,
                     },
                     {
                         'id': 'music',
@@ -168,14 +193,15 @@ def handle_expansion_get(path: str, send_json) -> bool:
                                    or ((creative_settings.get('music') or {}).get('engine'))
                                    or 'ace-step-1.5'),
                         'tier': ((hw.get('music') or {}).get('tier') or 'local'),
+                        'workflow_ready': False,
                     },
                 ],
             },
             'honest_note': (
                 'Expansion Video Studio — READY when ComfyUI is connected. '
-                'Use Set Up Video Studio; OtaconsKeep provisions the sidecar automatically.'
+                'Generate submits real /prompt jobs only when Z-Image models are present.'
             ),
-            'note': 'Muse owns Video Studio. Set Up owns Docker/Comfy — Advanced is diagnostics only.',
+            'note': 'Muse owns Video Studio. Generate requires a ComfyUI prompt_id — never fake RUNNING.',
         })
         return True
     if path == '/api/expansion/video-studio/detect':
@@ -634,53 +660,108 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
         ))
         return True
     if path == '/api/expansion/creative/generate':
+        from expansion.capabilities.comfy_submit import (
+            ensure_creative_poller,
+            fail_stale_fake_creative_jobs,
+            submit_image_job,
+        )
+        from expansion.capabilities.video_studio import probe_video_studio
+        from expansion.events import new_event
+        from expansion.jobs import JobStatus, JobStore
         from expansion.pipeline import LivingPipeline
+
+        ensure_creative_poller()
+        fail_stale_fake_creative_jobs()
+
         modality = str((data or {}).get('modality') or 'image').strip().lower()
         if modality not in ('image', 'video', 'music', 'script'):
             modality = 'image'
         prompt = str((data or {}).get('prompt') or (data or {}).get('request') or '').strip()
         if not prompt:
-            send_json({'ok': False, 'error': 'prompt required'}, 400)
+            send_json({'ok': False, 'queued': False, 'error': 'prompt required'}, 400)
             return True
         engine = str((data or {}).get('engine') or '').strip()
         negative = str((data or {}).get('negative') or '').strip()
         tuning = (data or {}).get('tuning') or {}
+        vs = probe_video_studio()
+        endpoint = ((vs.discovery or {}).get('endpoint') or 'http://127.0.0.1:8188')
+
+        if modality != 'image':
+            send_json({
+                'ok': False,
+                'queued': False,
+                'error': 'creative workflow submitter missing',
+                'detail': (
+                    f'{modality} workflow is not installed yet — ComfyUI is '
+                    f'{"READY" if vs.state == "READY" else vs.state} at {endpoint}.'
+                ),
+                'modality': modality,
+                'studio_state': vs.state,
+                'endpoint': endpoint,
+            }, 501)
+            return True
+
+        submitted = submit_image_job(
+            prompt=prompt,
+            negative=negative,
+            tuning=tuning if isinstance(tuning, dict) else {},
+            endpoint=endpoint,
+        )
+        if not submitted.get('ok') or not submitted.get('prompt_id'):
+            send_json({
+                'ok': False,
+                'queued': False,
+                'error': submitted.get('error') or 'creative workflow submitter missing',
+                'detail': submitted.get('detail') or '',
+                'missing': submitted.get('missing') or [],
+                'modality': modality,
+                'engine': engine or 'z-image-turbo',
+                'studio_state': submitted.get('studio_state') or vs.state,
+                'endpoint': submitted.get('endpoint') or endpoint,
+            }, int(submitted.get('http_status') or 501))
+            return True
+
+        prompt_id = str(submitted['prompt_id'])
         request = (
             f'[Muse Studio · {modality}'
-            + (f' · {engine}' if engine else '')
+            + f' · {engine or "z-image-turbo"}'
             + f'] {prompt}'
         )
         if negative:
             request += f' | negative: {negative[:240]}'
-        if isinstance(tuning, dict) and tuning:
-            bits = []
-            for k in (
-                'steps', 'cfg', 'duration', 'fps', 'resolution', 'seed', 'quality',
-                'bpm', 'key', 'bars', 'aspect', 'identity_lock', 'batch', 'style',
-            ):
-                if tuning.get(k) not in (None, ''):
-                    bits.append(f'{k}={tuning.get(k)}')
-            actors = tuning.get('actors')
-            if isinstance(actors, list) and actors:
-                bits.append('actors=' + ','.join(str(a) for a in actors[:8]))
-            if bits:
-                request += ' | ' + ', '.join(bits)
         pipe = LivingPipeline()
-        out = pipe.create_and_run_job(
+        job = pipe.jobs.create(
             request,
             domain='creative',
             assigned_agent='muse',
-            queue_only=True,
-            simulate=False,
         )
-        job = out.get('job')
+        created = new_event(
+            'job.created', actor='aria', subject='muse',
+            payload={
+                'job_id': job.job_id,
+                'domain': 'creative',
+                'request': request,
+                'comfy_prompt_id': prompt_id,
+            },
+        )
+        pipe.apply_event(created, write_diary=False)
+        pipe.jobs.transition(job.job_id, JobStatus.ASSIGNED.value, event_id=created.event_id)
+        pipe.jobs.transition(
+            job.job_id,
+            JobStatus.RUNNING.value,
+            evidence=[f'comfy:prompt_id={prompt_id}', f'comfy:endpoint={endpoint}'],
+            event_id=created.event_id,
+        )
+        job = pipe.jobs.get(job.job_id)
         send_json({
             'ok': True,
             'queued': True,
             'modality': modality,
-            'engine': engine,
+            'engine': engine or 'z-image-turbo',
+            'prompt_id': prompt_id,
+            'endpoint': endpoint,
             'job': asdict(job) if job else None,
-            'message': 'Queued for Muse. Packs/workflows continue to land with Studio deps.',
+            'message': submitted.get('message') or f'Submitted to ComfyUI · prompt_id={prompt_id}',
         })
         return True
     if path == '/api/expansion/jobs/create':

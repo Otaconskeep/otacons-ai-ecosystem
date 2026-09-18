@@ -1,0 +1,11 @@
+{
+  "id": "z_image_turbo_api",
+  "modality": "image",
+  "engine": "z-image-turbo",
+  "required_models": {
+    "unet": "z_image_turbo_bf16.safetensors",
+    "clip": "qwen_3_4b.safetensors",
+    "vae": "ae.safetensors"
+  },
+  "notes": "API-format Z-Image Turbo graph (Keep workshop parity)."
+}

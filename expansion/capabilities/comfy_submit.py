@@ -1,0 +1,432 @@
+"""ComfyUI prompt submitter for Expansion Muse Creative.
+
+Honest contract:
+  - Never invent RUNNING creative jobs without a Comfy /prompt prompt_id.
+  - Probe required models before queueing.
+  - Fail stale fake creative jobs that lack prompt_id evidence.
+"""
+from __future__ import annotations
+
+import json
+import os
+import random
+import threading
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any, Optional
+
+from expansion.capabilities.video_studio import probe_video_studio
+from expansion.jobs import JobStatus, JobStore
+from expansion.state_layout import StateLayout, resolve_layout
+
+_DEFAULT_UNET = 'z_image_turbo_bf16.safetensors'
+_DEFAULT_CLIP = 'qwen_3_4b.safetensors'
+_DEFAULT_VAE = 'ae.safetensors'
+_EVIDENCE_PROMPT = 'comfy:prompt_id='
+_POLL_LOCK = threading.Lock()
+_POLL_STARTED = False
+
+
+def _studio_endpoint() -> str:
+    vs = probe_video_studio()
+    disc = vs.discovery or {}
+    return str(disc.get('endpoint') or os.environ.get('OTACON_COMFY_URL') or 'http://127.0.0.1:8188').rstrip('/')
+
+
+def _http_json(method: str, url: str, body: Optional[dict] = None, timeout: float = 30.0) -> tuple[int, Any]:
+    data = None
+    headers = {'Accept': 'application/json'}
+    if body is not None:
+        data = json.dumps(body).encode('utf-8')
+        headers['Content-Type'] = 'application/json'
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode('utf-8', errors='replace')
+            try:
+                parsed = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                parsed = {'raw': raw}
+            return int(resp.status), parsed
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode('utf-8', errors='replace') if exc.fp else ''
+        try:
+            parsed = json.loads(raw) if raw else {'error': str(exc)}
+        except json.JSONDecodeError:
+            parsed = {'error': raw or str(exc)}
+        return int(exc.code), parsed
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return 0, {'error': str(exc)}
+
+
+def list_models(endpoint: str, kind: str) -> list[str]:
+    code, data = _http_json('GET', f'{endpoint}/models/{kind}', timeout=8.0)
+    if code == 200 and isinstance(data, list):
+        return [str(x) for x in data]
+    return []
+
+
+def image_workflow_status(endpoint: Optional[str] = None) -> dict[str, Any]:
+    """Probe whether Z-Image Turbo assets exist on the live ComfyUI."""
+    ep = (endpoint or _studio_endpoint()).rstrip('/')
+    unets = list_models(ep, 'diffusion_models') or list_models(ep, 'unet')
+    clips = list_models(ep, 'text_encoders') or list_models(ep, 'clip')
+    vaes = list_models(ep, 'vae')
+    unet = next((u for u in unets if 'z_image' in u.lower()), '')
+    clip = next((c for c in clips if c == _DEFAULT_CLIP or 'qwen_3_4b' in c.lower()), '')
+    vae = next((v for v in vaes if v == _DEFAULT_VAE or v.endswith('/ae.safetensors') or v == 'ae.safetensors'), '')
+    if not unet and _DEFAULT_UNET in unets:
+        unet = _DEFAULT_UNET
+    if not clip and _DEFAULT_CLIP in clips:
+        clip = _DEFAULT_CLIP
+    if not vae and _DEFAULT_VAE in vaes:
+        vae = _DEFAULT_VAE
+    ready = bool(unet and clip and vae)
+    missing = []
+    if not unet:
+        missing.append('diffusion_models/z_image_turbo_*.safetensors')
+    if not clip:
+        missing.append('text_encoders/qwen_3_4b.safetensors')
+    if not vae:
+        missing.append('vae/ae.safetensors')
+    return {
+        'ok': ready,
+        'modality': 'image',
+        'engine': 'z-image-turbo',
+        'endpoint': ep,
+        'unet': unet,
+        'clip': clip,
+        'vae': vae,
+        'missing': missing,
+        'detail': (
+            'Z-Image Turbo workflow ready'
+            if ready
+            else ('Studio connected, but image workflow models are not installed yet: ' + ', '.join(missing))
+        ),
+    }
+
+
+def build_z_image_prompt(
+    *,
+    positive: str,
+    negative: str = '',
+    width: int = 1024,
+    height: int = 1024,
+    steps: int = 8,
+    cfg: float = 1.0,
+    seed: Optional[int] = None,
+    unet: str = _DEFAULT_UNET,
+    clip: str = _DEFAULT_CLIP,
+    vae: str = _DEFAULT_VAE,
+    filename_prefix: str = 'otacon_muse',
+) -> dict[str, Any]:
+    """API-format graph matching Keep workshop Z-Image Turbo."""
+    seed_i = int(seed) if seed is not None else random.randint(1, 2**31 - 1)
+    # Negative conditioning: zero-out positive when no negative text (Keep pattern).
+    graph = {
+        '30': {
+            'class_type': 'CLIPLoader',
+            'inputs': {'clip_name': clip, 'type': 'lumina2', 'device': 'default'},
+        },
+        '29': {
+            'class_type': 'VAELoader',
+            'inputs': {'vae_name': vae},
+        },
+        '28': {
+            'class_type': 'UNETLoader',
+            'inputs': {'unet_name': unet, 'weight_dtype': 'default'},
+        },
+        '27': {
+            'class_type': 'CLIPTextEncode',
+            'inputs': {'text': positive, 'clip': ['30', 0]},
+        },
+        '33': {
+            'class_type': 'ConditioningZeroOut',
+            'inputs': {'conditioning': ['27', 0]},
+        },
+        '13': {
+            'class_type': 'EmptySD3LatentImage',
+            'inputs': {'width': int(width), 'height': int(height), 'batch_size': 1},
+        },
+        '11': {
+            'class_type': 'ModelSamplingAuraFlow',
+            'inputs': {'model': ['28', 0], 'shift': 3},
+        },
+        '3': {
+            'class_type': 'KSampler',
+            'inputs': {
+                'model': ['11', 0],
+                'positive': ['27', 0],
+                'negative': ['33', 0],
+                'latent_image': ['13', 0],
+                'seed': seed_i,
+                'steps': int(steps),
+                'cfg': float(cfg),
+                'sampler_name': 'res_multistep',
+                'scheduler': 'simple',
+                'denoise': 1,
+            },
+        },
+        '8': {
+            'class_type': 'VAEDecode',
+            'inputs': {'samples': ['3', 0], 'vae': ['29', 0]},
+        },
+        '9': {
+            'class_type': 'SaveImage',
+            'inputs': {'images': ['8', 0], 'filename_prefix': filename_prefix},
+        },
+    }
+    if (negative or '').strip():
+        graph['34'] = {
+            'class_type': 'CLIPTextEncode',
+            'inputs': {'text': negative.strip(), 'clip': ['30', 0]},
+        }
+        graph['3']['inputs']['negative'] = ['34', 0]
+    return graph
+
+
+def submit_image_job(
+    *,
+    prompt: str,
+    negative: str = '',
+    tuning: Optional[dict] = None,
+    endpoint: Optional[str] = None,
+    client_id: str = 'otacon-expansion-muse',
+) -> dict[str, Any]:
+    """Submit Z-Image to ComfyUI. Returns ok+prompt_id or honest error (no job side effects)."""
+    ep = (endpoint or _studio_endpoint()).rstrip('/')
+    vs = probe_video_studio()
+    if vs.state != 'READY':
+        return {
+            'ok': False,
+            'queued': False,
+            'error': 'creative workflow submitter: Video Studio not READY',
+            'studio_state': vs.state,
+            'endpoint': ep,
+            'http_status': 503,
+        }
+    probe = image_workflow_status(ep)
+    if not probe.get('ok'):
+        return {
+            'ok': False,
+            'queued': False,
+            'error': 'creative workflow submitter missing',
+            'detail': probe.get('detail') or 'image workflow models not installed',
+            'missing': probe.get('missing') or [],
+            'studio_state': vs.state,
+            'endpoint': ep,
+            'http_status': 501,
+        }
+    tuning = tuning if isinstance(tuning, dict) else {}
+    width, height = 1024, 1024
+    res = str(tuning.get('resolution') or '').lower()
+    if '1280x720' in res or res == '1280x720':
+        width, height = 1280, 720
+    elif '768x1344' in res:
+        width, height = 768, 1344
+    elif 'x' in res:
+        try:
+            a, b = res.split('x', 1)
+            width, height = int(a), int(b)
+        except ValueError:
+            pass
+    aspect = str(tuning.get('aspect') or '')
+    if aspect == '16:9':
+        width, height = 1280, 720
+    elif aspect == '9:16':
+        width, height = 768, 1344
+    elif aspect == '1:1':
+        width, height = 1024, 1024
+    seed = tuning.get('seed')
+    try:
+        seed_i = int(seed) if seed not in (None, '', 'random') else None
+    except (TypeError, ValueError):
+        seed_i = None
+    try:
+        steps = int(tuning.get('steps') or 8)
+    except (TypeError, ValueError):
+        steps = 8
+    try:
+        cfg = float(tuning.get('cfg') or 1)
+    except (TypeError, ValueError):
+        cfg = 1.0
+
+    graph = build_z_image_prompt(
+        positive=prompt,
+        negative=negative,
+        width=width,
+        height=height,
+        steps=max(1, min(steps, 50)),
+        cfg=cfg,
+        seed=seed_i,
+        unet=probe['unet'],
+        clip=probe['clip'],
+        vae=probe['vae'],
+    )
+    code, data = _http_json(
+        'POST',
+        f'{ep}/prompt',
+        {'prompt': graph, 'client_id': client_id},
+        timeout=60.0,
+    )
+    prompt_id = ''
+    if isinstance(data, dict):
+        prompt_id = str(data.get('prompt_id') or '')
+    if code != 200 or not prompt_id:
+        err = ''
+        if isinstance(data, dict):
+            err = str(data.get('error') or data.get('node_errors') or data)
+        return {
+            'ok': False,
+            'queued': False,
+            'error': 'ComfyUI rejected prompt',
+            'detail': err[:800],
+            'studio_state': vs.state,
+            'endpoint': ep,
+            'http_status': 502 if code else 503,
+            'comfy_status': code,
+        }
+    return {
+        'ok': True,
+        'queued': True,
+        'prompt_id': prompt_id,
+        'endpoint': ep,
+        'studio_state': vs.state,
+        'engine': 'z-image-turbo',
+        'modality': 'image',
+        'workflow': probe,
+        'message': f'Submitted to ComfyUI · prompt_id={prompt_id}',
+    }
+
+
+def prompt_id_from_job(job) -> str:
+    for item in (getattr(job, 'evidence', None) or []):
+        s = str(item)
+        if s.startswith(_EVIDENCE_PROMPT):
+            return s[len(_EVIDENCE_PROMPT):]
+    return ''
+
+
+def fail_stale_fake_creative_jobs(
+    *,
+    layout: Optional[StateLayout] = None,
+    reason: str = (
+        'Creative job never received a ComfyUI prompt_id '
+        '(was accepted by UI but never submitted to ComfyUI).'
+    ),
+) -> dict[str, Any]:
+    """Mark QUEUED/ASSIGNED/RUNNING creative jobs without prompt_id as FAILED."""
+    store = JobStore(layout=layout)
+    marked: list[str] = []
+    for job in store.list(limit=500):
+        if job.domain not in ('creative', 'media'):
+            continue
+        if job.status not in (
+            JobStatus.QUEUED.value,
+            JobStatus.ASSIGNED.value,
+            JobStatus.RUNNING.value,
+            JobStatus.WAITING.value,
+        ):
+            continue
+        if prompt_id_from_job(job):
+            continue
+        store.transition(
+            job.job_id,
+            JobStatus.FAILED.value,
+            error=reason,
+            evidence=list(job.evidence or []) + ['comfy:never_submitted'],
+        )
+        marked.append(job.job_id)
+    return {'ok': True, 'marked_failed': len(marked), 'job_ids': marked}
+
+
+def _history_outputs(endpoint: str, prompt_id: str) -> list[str]:
+    code, data = _http_json('GET', f'{endpoint}/history/{prompt_id}', timeout=8.0)
+    if code != 200 or not isinstance(data, dict):
+        return []
+    entry = data.get(prompt_id) if prompt_id in data else data
+    if not isinstance(entry, dict):
+        return []
+    outputs = entry.get('outputs') or {}
+    files: list[str] = []
+    if isinstance(outputs, dict):
+        for node_out in outputs.values():
+            if not isinstance(node_out, dict):
+                continue
+            for img in node_out.get('images') or []:
+                if isinstance(img, dict) and img.get('filename'):
+                    files.append(str(img.get('filename')))
+    return files
+
+
+def poll_creative_jobs_once(*, layout: Optional[StateLayout] = None) -> dict[str, Any]:
+    """Advance RUNNING creative jobs that have Comfy prompt_ids."""
+    store = JobStore(layout=layout)
+    ep = _studio_endpoint()
+    completed = 0
+    failed = 0
+    for job in store.list(limit=200):
+        if job.domain not in ('creative', 'media'):
+            continue
+        if job.status != JobStatus.RUNNING.value:
+            continue
+        pid = prompt_id_from_job(job)
+        if not pid:
+            continue
+        files = _history_outputs(ep, pid)
+        if files:
+            store.transition(
+                job.job_id,
+                JobStatus.COMPLETE.value,
+                result=f'ComfyUI outputs: {", ".join(files[:6])}',
+                evidence=list(job.evidence or []) + [f'comfy:output={f}' for f in files[:8]],
+                confidence=0.9,
+            )
+            completed += 1
+            continue
+        # Still queued/running in Comfy — leave RUNNING.
+        code, q = _http_json('GET', f'{ep}/queue', timeout=5.0)
+        if code != 200:
+            continue
+        running_ids = []
+        pending_ids = []
+        if isinstance(q, dict):
+            for row in q.get('queue_running') or []:
+                if isinstance(row, (list, tuple)) and len(row) > 1:
+                    running_ids.append(str(row[1]))
+            for row in q.get('queue_pending') or []:
+                if isinstance(row, (list, tuple)) and len(row) > 1:
+                    pending_ids.append(str(row[1]))
+        if pid not in running_ids and pid not in pending_ids and not files:
+            # Not in queue and no history yet — brief grace; if aged, fail.
+            age = time.time() - (job.started_at or job.created_at or time.time())
+            if age > 120:
+                store.transition(
+                    job.job_id,
+                    JobStatus.FAILED.value,
+                    error=f'ComfyUI prompt {pid} left queue without outputs',
+                    evidence=list(job.evidence or []),
+                )
+                failed += 1
+    return {'ok': True, 'completed': completed, 'failed': failed}
+
+
+def ensure_creative_poller() -> None:
+    global _POLL_STARTED
+    with _POLL_LOCK:
+        if _POLL_STARTED:
+            return
+        _POLL_STARTED = True
+
+        def _loop() -> None:
+            while True:
+                try:
+                    fail_stale_fake_creative_jobs()
+                    poll_creative_jobs_once()
+                except Exception:
+                    pass
+                time.sleep(4.0)
+
+        threading.Thread(target=_loop, daemon=True, name='muse-comfy-poll').start()
