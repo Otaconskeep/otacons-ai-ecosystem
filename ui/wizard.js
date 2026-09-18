@@ -634,7 +634,7 @@ async function showHome(){
     :'Otaconskeep Lite · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX';
   const ariaLine=expOn
     ?'Priority channels live. Codec first — Genome / Studio when those sidecars are up.'
-    :'Core deck online. Expansion unlocks the five-agent roster.';
+    :'Core deck online — same HUD as Expansion. Unlock the five-agent roster with Expansion Setup.';
   const threat=!chatOk||!ttsOk||(expOn&&!videoOk);
   const hScan=(scanPack&&scanPack.hardware)||{};
   const cpuCoresN=hScan.cpu&&hScan.cpu.cores?Number(hScan.cpu.cores):0;
@@ -656,6 +656,10 @@ async function showHome(){
   const stuChip=videoOk?'ok':'warn';
   const chatChip=chatOk?'ok':'bad';
   const ttsChip=ttsOk?'ok':'warn';
+  // Lite: same HUD chrome — omit Genome/Studio status chips (premium surfaces).
+  const statusChips=expOn
+    ? `${chip('CHAT '+(chatOk?'RDY':'DN'), chatChip)}${chip('VOX '+(ttsOk?'RDY':'WAIT'), ttsChip)}${chip(gnmLbl, gnmChip)}${chip(stuLbl, stuChip)}`
+    : `${chip('CHAT '+(chatOk?'RDY':'DN'), chatChip)}${chip('VOX '+(ttsOk?'RDY':'WAIT'), ttsChip)}${chip('LITE', 'ok')}`;
 
   const agentStrip=(state.roster||[]).map(a=>{
     const id=a.id||a.agent_id;
@@ -698,10 +702,7 @@ async function showHome(){
     </div>
     <div class="home-meta">
       <div class="hud-chip-row tight">
-        ${chip('CHAT '+(chatOk?'RDY':'DN'), chatChip)}
-        ${chip('VOX '+(ttsOk?'RDY':'WAIT'), ttsChip)}
-        ${chip(gnmLbl, gnmChip)}
-        ${chip(stuLbl, stuChip)}
+        ${statusChips}
       </div>
       <div class="home-datetime" id="homeClock">${escapeHtml(formatNow())}</div>
     </div>
