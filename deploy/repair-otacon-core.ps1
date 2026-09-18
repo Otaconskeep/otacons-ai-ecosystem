@@ -621,7 +621,7 @@ exit 0
         Write-RepairLog ("UPDATE FAILED at stage={0} exit={1} class={2}" -f $run.Stage, $run.ExitCode, $run.FailureClass)
         # ONLY true transport/syntax failures abort as OtaconWslTransportExit.
         # Script exit 8 (E2E_HEALTH_FAIL) and other payload failures must fall through
-        # to marker-based classification below — do not mislabel as bash transport.
+        # to marker-based classification below - do not mislabel as bash transport.
         $cls = [string]$run.FailureClass
         if ($cls -eq 'transport' -or $cls -eq 'syntax' -or $run.Stage -eq 'bash -n' -or $run.Stage -eq 'exception' -or $run.Stage -eq 'wslpath') {
             $script:OtaconWslTransportExit = [int]$run.ExitCode
@@ -750,7 +750,7 @@ if ([int]$script:OtaconWslTransportExit -ne 0) {
     Write-RepairLog "UPDATE FAILED: WSL bash file transport/syntax (stage exit=$($script:OtaconWslTransportExit))"
     Write-Host ""
     Write-Host "  UPDATE FAILED - WSL Bash transport error (temp .sh / bash -n)." -ForegroundColor Red
-    Write-Host "  This is an installer machinery problem — not Otacon app health." -ForegroundColor Yellow
+    Write-Host "  This is an installer machinery problem - not Otacon app health." -ForegroundColor Yellow
     Write-Host "  Re-run OtaconsKeep-Setup.bat (refreshes cached helpers), then retry Update." -ForegroundColor Yellow
     Write-Host "  Log: $LogFile" -ForegroundColor Yellow
     Write-Host ""

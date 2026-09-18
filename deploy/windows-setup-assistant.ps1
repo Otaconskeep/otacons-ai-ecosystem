@@ -861,9 +861,9 @@ function Invoke-OtaconCoreRepair {
     }
     # Keep Josh (Windows transport) vs app-health exits distinct for logs/UI.
     if ($code -eq 8) {
-        Write-KeepLog "UPDATE FAILED: E2E health after repair (exit 8) — not a WSL bash transport/syntax error" -Level "ERROR" -Stage "REPAIR"
+        Write-KeepLog "UPDATE FAILED: E2E health after repair (exit 8) - not a WSL bash transport/syntax error" -Level "ERROR" -Stage "REPAIR"
     } elseif ($code -eq 1 -or $code -eq 2) {
-        Write-KeepLog "UPDATE FAILED: possible WSL transport/syntax or missing distro (exit $code) — re-run Setup to refresh helpers" -Level "ERROR" -Stage "REPAIR"
+        Write-KeepLog "UPDATE FAILED: possible WSL transport/syntax or missing distro (exit $code) - re-run Setup to refresh helpers" -Level "ERROR" -Stage "REPAIR"
     } else {
         Write-KeepLog "UPDATE FAILED: Linux application revision/health not proven (exit $code)" -Level "ERROR" -Stage "REPAIR"
     }

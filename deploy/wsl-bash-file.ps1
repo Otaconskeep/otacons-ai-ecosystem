@@ -54,7 +54,7 @@ function Invoke-OtaconWslBashFile {
         # Refuse UTF-8 BOM in the payload file (bash can choke on BOM as syntax).
         [System.IO.File]::WriteAllText($winTmp, $lf, $utf8NoBom)
 
-        # Prefer a native Linux /tmp path — /mnt/c temps can hit mount/permission quirks.
+        # Prefer a native Linux /tmp path - /mnt/c temps can hit mount/permission quirks.
         $result.Stage = "stage-to-/tmp"
         $winLinux = $null
         try {
