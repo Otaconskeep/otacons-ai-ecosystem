@@ -50,11 +50,9 @@ def _save_list(path: Path, items: list[dict[str, Any]]) -> None:
 
 
 def _seed_actors_styles(layout: Optional[StateLayout] = None) -> None:
-    """Seed from keep_defaults.json once if empty."""
+    """Seed from keep_defaults.json; refresh when still on legacy Keep Film set."""
     ap = _actors_path(layout)
     sp = _styles_path(layout)
-    if ap.is_file() and sp.is_file():
-        return
     defaults: dict[str, Any] = {}
     try:
         dpath = Path(__file__).resolve().parents[1] / 'product' / 'studio' / 'keep_defaults.json'
@@ -62,6 +60,21 @@ def _seed_actors_styles(layout: Optional[StateLayout] = None) -> None:
             defaults = json.loads(dpath.read_text(encoding='utf-8'))
     except Exception:
         defaults = {}
+
+    def _style_rows() -> list[dict[str, Any]]:
+        styles = []
+        for s in defaults.get('styles') or []:
+            sid = str(s.get('id') or uuid.uuid4().hex[:10])
+            prompt = str(s.get('prompt') or s.get('note') or '')
+            styles.append({
+                'id': sid,
+                'name': s.get('label') or s.get('name') or sid,
+                'prompt': prompt,
+                'description': prompt,
+                'created_at': time.time(),
+            })
+        return styles
+
     if not ap.is_file():
         actors = []
         for a in defaults.get('actors') or []:
@@ -76,17 +89,29 @@ def _seed_actors_styles(layout: Optional[StateLayout] = None) -> None:
                 'created_at': time.time(),
             })
         _save_list(ap, actors)
+
+    desired = _style_rows()
+    if not desired:
+        return
     if not sp.is_file():
-        styles = []
-        for s in defaults.get('styles') or []:
-            sid = str(s.get('id') or uuid.uuid4().hex[:10])
-            styles.append({
-                'id': sid,
-                'name': s.get('label') or s.get('name') or sid,
-                'prompt': s.get('prompt') or s.get('note') or '',
-                'created_at': time.time(),
-            })
-        _save_list(sp, styles)
+        _save_list(sp, desired)
+        return
+    existing = _load_list(sp)
+    ids = {str(s.get('id') or '') for s in existing}
+    # Legacy Keep Film / noir set without anime → replace with anime/comic/cinema defaults.
+    legacy = bool(ids & {'keep_film', 'noir', 'docu', 'editorial', 'handheld', 'anamorphic'})
+    modern = bool(ids & {'anime', 'comic', 'cinema', 'anime_cinema'})
+    if legacy and not modern:
+        _save_list(sp, desired)
+        return
+    # Ensure description mirrors prompt for Workshop prompt composition.
+    changed = False
+    for s in existing:
+        if s.get('prompt') and not s.get('description'):
+            s['description'] = s['prompt']
+            changed = True
+    if changed:
+        _save_list(sp, existing)
 
 
 def _workshop_jobs(layout: Optional[StateLayout] = None) -> list[dict[str, Any]]:
@@ -552,7 +577,8 @@ def handle_workshop_write(
         style = {
             'id': sid,
             'name': str(data.get('name') or data.get('label') or 'Style'),
-            'prompt': str(data.get('prompt') or data.get('note') or ''),
+            'prompt': str(data.get('prompt') or data.get('note') or data.get('description') or ''),
+            'description': str(data.get('description') or data.get('prompt') or data.get('note') or ''),
             'created_at': time.time(),
         }
         styles.insert(0, style)

@@ -513,7 +513,7 @@
       ['emotion', 'Emotions', 'Affective state'],
       ['intel', 'Intel', 'Continuity'],
       ['reports', 'Reports', 'Per-agent depth'],
-      ['creative', 'Creative', 'Muse / Studio'],
+      ['creative', 'Workshop', 'Muse · anime / comic / cinema'],
       ['ops', 'Ops', 'Sentry'],
       ['rooms', 'Page Builder', 'Registry'],
       ['learning', 'Learning', 'Claims + WHY']

@@ -4,12 +4,12 @@
     "z-image-turbo": {
       "role": "identity-preserving image",
       "default_positive": "identity-preserving portrait, natural lighting, sharp eyes, consistent face, clean background, high detail",
-      "default_negative": "blurry, deformed face, extra limbs, watermark, text, low quality, oversaturated"
+      "default_negative": "blurry, deformed face, extra limbs, watermark, text, low quality, oversaturated, 1980s paperback horror cover, Tim Jacobus style"
     },
     "wan-2.2-5b": {
       "role": "consumer local video (default under 32 GB VRAM)",
       "default_positive": "cinematic motion, smooth camera, natural physics, coherent subject, stable identity across frames",
-      "default_negative": "jitter, morphing face, flicker, text overlay, watermark, low fps look"
+      "default_negative": "jitter, morphing face, flicker, text overlay, watermark, low fps look, VHS, paperback horror paint"
     },
     "ltx-2": {
       "role": "official high-VRAM video (32 GB+)",
@@ -27,24 +27,24 @@
   },
   "optimal_prompts": {
     "image": [
-      {"id": "portrait", "label": "Portrait", "text": "identity-preserving portrait, soft key light, sharp eyes, natural skin, clean bokeh background"},
-      {"id": "product", "label": "Product", "text": "studio product shot, softbox lighting, reflective table, crisp edges, commercial catalog look"},
-      {"id": "env", "label": "Environment", "text": "wide establishing shot, atmospheric depth, coherent architecture, cinematic color grade"},
-      {"id": "noir", "label": "Noir alley", "text": "rain-slick noir alley, rim light, cigarette smoke, anamorphic bokeh, identity-stable face"},
-      {"id": "keep", "label": "Keep film still", "text": "Keep Production still, teal-gold grade, shallow DOF, hero framing, film grain"}
+      {"id": "anime_portrait", "label": "Anime portrait", "text": "anime character portrait, clean linework, expressive eyes, soft cel shading, detailed hair, gentle rim light"},
+      {"id": "comic_hero", "label": "Comic hero", "text": "graphic novel hero portrait, bold ink lines, flat comic color, dramatic three-quarter pose, clean silhouette"},
+      {"id": "cinema_still", "label": "Cinema still", "text": "theatrical cinema still, motivated lighting, shallow depth of field, filmic color, identity-stable face"},
+      {"id": "anime_wide", "label": "Anime wide", "text": "theatrical anime establishing shot, lush background, volumetric light, character small in frame, emotional atmosphere"},
+      {"id": "comic_action", "label": "Comic action", "text": "dynamic comic action panel, speed lines restrained, bold inks, readable anatomy, single continuous scene"}
     ],
     "video": [
-      {"id": "walk", "label": "Walk cycle", "text": "subject walking toward camera, stable identity, natural gait, smooth camera push-in"},
-      {"id": "orbit", "label": "Orbit", "text": "slow orbit around subject, cinematic lighting, coherent motion, no morphing"},
-      {"id": "dialogue", "label": "Dialogue beat", "text": "two-shot conversation, subtle head motion, lip sync friendly, filmic framing"},
-      {"id": "drone", "label": "Drone reveal", "text": "slow aerial reveal over landscape, stable horizon, cinematic color, gentle push"},
-      {"id": "action", "label": "Action beat", "text": "dynamic chase beat, coherent physics, stable identity, motion blur controlled"}
+      {"id": "anime_walk", "label": "Anime walk", "text": "anime character walking toward camera, stable design, natural gait, soft parallax background, cinematic anime finish"},
+      {"id": "comic_orbit", "label": "Comic orbit", "text": "slow orbit around comic-illustrated subject, inked edges hold, coherent motion, graphic-novel lighting"},
+      {"id": "cinema_dialogue", "label": "Cinema dialogue", "text": "two-shot cinematic conversation, subtle head motion, filmic framing, motivated practical light"},
+      {"id": "anime_reveal", "label": "Anime reveal", "text": "slow anime cinema reveal over city or landscape, layered parallax, golden-hour haze, emotional wide"},
+      {"id": "comic_beat", "label": "Comic beat", "text": "graphic novel action beat, decisive motion, stable ink, single camera viewpoint, no multi-panel collage"}
     ],
     "music": [
       {"id": "bed", "label": "Score bed", "text": "warm instrumental bed, soft pads, gentle pulse, loopable 8-bar phrase, no vocals"},
+      {"id": "anime_op", "label": "Anime OP", "text": "bright anime opening energy, driving drums, hopeful synths, clean mix, instrumental"},
       {"id": "tension", "label": "Tension", "text": "low drones, rising strings, sparse percussion, cinematic tension without climax"},
       {"id": "uplift", "label": "Uplift", "text": "bright piano motif, light percussion, hopeful major key, clean mix"},
-      {"id": "synthwave", "label": "Synthwave", "text": "1980s synthwave, pulsing bass, neon atmosphere, instrumental"},
       {"id": "choir", "label": "Choir pad", "text": "ethereal choir pad, slow bloom, sacred hall reverb, no lyrics"}
     ]
   },
@@ -59,22 +59,22 @@
     {"id": "custom_c", "label": "Actor C", "tag": "slot", "note": "Third cast slot"}
   ],
   "styles": [
-    {"id": "keep_film", "label": "Keep Film"},
-    {"id": "noir", "label": "Noir"},
-    {"id": "anime_soft", "label": "Soft anime"},
-    {"id": "docu", "label": "Documentary"},
-    {"id": "neon", "label": "Neon night"},
-    {"id": "editorial", "label": "Editorial"},
-    {"id": "handheld", "label": "Handheld doc"},
-    {"id": "anamorphic", "label": "Anamorphic"}
+    {"id": "anime", "label": "Anime", "prompt": "modern anime feature style, clean linework, expressive eyes, cel shading, stable character design"},
+    {"id": "anime_cinema", "label": "Anime cinema", "prompt": "theatrical anime cinema, lush backgrounds, volumetric light, emotional wide staging"},
+    {"id": "comic", "label": "Comic", "prompt": "graphic novel comic look, bold ink lines, flat color or screentone, clear silhouettes"},
+    {"id": "comic_noir", "label": "Comic noir", "prompt": "high-contrast comic noir, stark inks, limited palette, dramatic shadow shapes"},
+    {"id": "cinema", "label": "Cinema", "prompt": "modern theatrical cinema, motivated lighting, filmic color, shallow DOF, natural motion"},
+    {"id": "soft_anime", "label": "Soft anime", "prompt": "soft anime illustration, gentle pastels, airy backgrounds, delicate linework"},
+    {"id": "neon_anime", "label": "Neon anime", "prompt": "night city anime, neon reflections, rain-slick streets, vibrant rim light"},
+    {"id": "storyboard", "label": "Storyboard", "prompt": "clean production storyboard frames, clear staging, readable acting, minimal shading"}
   ],
   "music_advanced": {
-    "bpm": 90,
-    "key": "Am",
+    "bpm": 110,
+    "key": "C",
     "bars": 8,
     "vocals": false,
     "stem_split": false,
-    "moods": ["calm", "tense", "hopeful", "dark", "playful", "sacred", "synthwave"]
+    "moods": ["calm", "tense", "hopeful", "bright", "anime", "cinematic", "playful"]
   },
   "image_widgets": [
     {"id": "aspect", "label": "Aspect", "options": ["1:1", "16:9", "9:16", "4:3", "21:9"]},

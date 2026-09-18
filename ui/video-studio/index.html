@@ -506,7 +506,7 @@
     </div>
     <div class="vs-styles" id="vs-styles"><div class="vs-empty">No styles yet.</div></div>
     <div class="vs-style-form">
-      <input type="text" id="vs-style-name" placeholder="Name — e.g. 1980s Comic-Noir">
+      <input type="text" id="vs-style-name" placeholder="Name — e.g. Soft Anime · Comic Ink · Cinema">
       <input type="text" id="vs-style-desc" placeholder="Description — lighting, linework, grain, framing...">
       <button type="button" class="vs-submit vs-submit-sm" id="vs-style-create-btn">+ Create</button>
     </div>
@@ -762,7 +762,7 @@
       <div class="vs-ptab-panel" data-panel="simple">
         <div class="vs-field" style="margin-bottom:.8rem">
           <label>Describe the music</label>
-          <textarea id="vs-music-simple-desc" placeholder="Dark 1980s psychological thriller score, slow pulsing synth bass, uneasy atmosphere"></textarea>
+          <textarea id="vs-music-simple-desc" placeholder="Anime opening energy, bright synths, driving drums, hopeful chorus lift"></textarea>
         </div>
         <div class="vs-row">
           <div class="vs-field" style="max-width:160px">
@@ -1072,237 +1072,110 @@ document.addEventListener('error', (e) => {
 // selection, or the existing Simple Scene Mode checkbox/flow.
 const VIDEO_PROMPT_PRESETS = [
   {
-    id: 'real_cinema',
-    name: 'REAL CINEMA',
-    short_description: 'Modern feature-film realism. Natural photographic response, believable lighting, controlled depth of field and restrained cinematic texture.',
+    id: 'cinema',
+    name: 'CINEMA',
+    short_description: 'Modern feature-film look — motivated lighting, believable motion, theatrical framing.',
     category: 'live_action',
-    quickMap: {subject: 'SUBJECT', action: 'ACTION', location: 'LOCATION', time: 'TIME / WEATHER CONDITIONS', beat: 'IMPORTANT ACTION OR STORY BEAT'},
-    template: `A photorealistic live-action cinematic shot of [[SUBJECT]] [[ACTION]] in [[LOCATION]], [[TIME / WEATHER CONDITIONS]].
+    quickMap: {subject: 'SUBJECT', action: 'ACTION', location: 'LOCATION', time: 'TIME / WEATHER', beat: 'STORY BEAT'},
+    template: `A photorealistic live-action cinematic shot of [[SUBJECT]] [[ACTION]] in [[LOCATION]], [[TIME / WEATHER]].
 
-The scene is photographed as a real feature-film production using grounded physical cinematography rather than stylized AI imagery.
+Photographed as a real theatrical feature using grounded cinematography — not stylized AI kitsch.
 
 CAMERA:
-[[CAMERA FRAMING — default: medium-wide shot]], camera positioned at [[CAMERA POSITION — default: natural human eye level]], using a [[LENS — default: 40mm spherical cinema lens]]. Subtle perspective compression, realistic spatial depth, natural foreground-to-background scale, physically plausible parallax.
+[[FRAMING — default: medium-wide shot]], [[CAMERA POSITION — default: eye level]], [[LENS — default: 40mm spherical cinema lens]]. Believable depth, natural parallax, professional operator inertia.
 
 CAMERA MOVEMENT:
-[[CAMERA MOVEMENT — default: slow controlled dolly movement following the subject]]. Movement has believable camera mass and inertia, smooth professional operator behavior, no floating camera, no impossible acceleration, no robotic stabilization.
+[[CAMERA MOVEMENT — default: slow dolly following the subject]]. Smooth mass and acceleration; no floating drone chaos.
 
-COMPOSITION:
-Intentional feature-film composition, strong subject separation, natural negative space, layered foreground / midground / background, realistic blocking. Composition remains coherent throughout the shot rather than constantly reframing.
-
-FOCUS:
-Natural cinematic depth of field. Focus remains motivated by the subject. Subtle organic focus breathing and realistic focus pulls only when required by subject movement. No random focus hunting.
-
-LIGHTING:
-Motivated practical lighting appropriate to [[LOCATION / TIME]], physically believable key/fill relationships, realistic falloff, subtle bounce illumination, controlled highlights, detailed shadow information. Skin and environmental materials react naturally to light.
-
-EXPOSURE:
-Highlight rolloff similar to a modern cinema camera, preserved shadow detail, realistic dynamic range, no artificial HDR glow, no crushed synthetic blacks.
-
-COLOR:
-Natural cinematic color separation, restrained saturation, realistic skin tones, subtle warm/cool contrast where motivated by the environment, film-print-inspired highlight handling without exaggerated teal-and-orange grading.
-
-TEXTURE:
-Very fine restrained 35mm-inspired grain structure, subtle luminance grain rather than digital noise, delicate halation around only the brightest practical lights, minimal chromatic aberration, realistic optical softness.
-
-MOTION:
-Natural 24 fps cinematic motion cadence, approximately 180-degree shutter behavior, realistic motion blur on moving subjects and camera motion. Human movement retains realistic body weight, acceleration, foot planting and fabric response.
-
-ENVIRONMENT:
-[[ENVIRONMENTAL MOTION — default: subtle movement appropriate to the scene]]. Environmental elements obey real-world physics.
-
-DETAIL:
-Real materials, believable surface roughness, microscopic imperfections, practical wardrobe behavior, authentic reflections and shadows.
-
-AVOID:
-plastic skin, excessive sharpening, video-game rendering, overprocessed HDR, waxy surfaces, floating objects, malformed hands, duplicated background people, excessive slow motion, constant camera drift, random zooming, impossible reflections, frame warping, temporal flicker, texture crawling, morphing architecture.
+LIGHTING / COLOR:
+Motivated practical light for [[LOCATION]], realistic skin response, restrained cinematic grade, fine 35mm-inspired grain, natural motion blur at 24 fps.
 
 SCENE PRIORITY:
-The central visual event is [[IMPORTANT ACTION OR STORY BEAT]].`
-  },
-  {
-    id: 'cinema_1980s',
-    name: '1980s CINEMA',
-    short_description: 'Authentic photochemical 1980s feature-film appearance — a genuine period theatrical look, not a modern image with a retro filter.',
-    category: 'live_action',
-    quickMap: {subject: 'SUBJECT', action: 'ACTION', location: 'LOCATION', time: 'TIME / WEATHER', beat: 'IMPORTANT ACTION / EMOTION / STORY BEAT'},
-    template: `A live-action [[GENRE — default: dramatic thriller]] feature-film scene from approximately [[YEAR — default: 1985]], showing [[SUBJECT]] [[ACTION]] in [[LOCATION]] during [[TIME / WEATHER]].
-
-The image should feel photographed during the actual 1980s rather than digitally created and retro-filtered afterward.
-
-CAMERA:
-[[FRAMING — default: medium-wide]], photographed using period-appropriate spherical cinema glass around [[LENS — default: 35mm]], natural optical softness, mild edge falloff and restrained period lens imperfections.
-
-CAMERA POSITION:
-[[CAMERA POSITION — default: slightly below eye level]].
-
-CAMERA MOVEMENT:
-[[CAMERA MOVEMENT — default: deliberate dolly movement]], heavier physical camera behavior, restrained operating style, no drone-like floating movement, no modern gimbal perfection.
-
-FILM STOCK CHARACTER:
-35mm motion-picture negative appearance, approximately 1980s Kodak-era color response, visible but controlled organic grain, slightly denser grain in shadow regions, subtle photochemical softness and naturally imperfect grain distribution.
-
-EXPOSURE:
-Period-appropriate latitude, slightly denser shadows than modern digital cinema, gentle highlight bloom, bright practical lamps occasionally approaching exposure limits naturally.
-
-HALATION:
-Subtle reddish/orange halation around intense practical lights and specular highlights, restrained and optical rather than a digital glow effect.
-
-COLOR:
-Slightly warm photochemical skin response, muted cyan/green tendencies in certain shadows where appropriate, rich but not digitally oversaturated reds, modest contrast, no contemporary teal/orange blockbuster grade.
-
-LIGHTING:
-Motivated practical lighting using [[LIGHT SOURCES — default: tungsten lamps, sodium-vapor streetlights and practical fixtures]]. Pools of light and deeper shadow are acceptable. Avoid modern ultra-clean shadow recovery.
-
-PRODUCTION DESIGN:
-Authentic [[1980s ENVIRONMENT DETAILS]], era-appropriate vehicles, architecture, signage, fixtures, hairstyles, wardrobe and props. Nothing visibly post-1989 unless explicitly requested.
-
-FOCUS:
-Manual cinema focus behavior, shallow-to-moderate depth of field, occasional tiny focus imperfections acceptable, but never distracting.
-
-MOTION:
-24 fps theatrical cadence, traditional motion blur, human movement with natural weight. No modern hyper-sharp high-frame-rate appearance.
-
-IMAGE TEXTURE:
-Fine gate-like instability only at an extremely subtle level, analog photochemical texture, slight exposure variation if physically plausible. Do NOT turn this into damaged-film footage.
-
-IMPORTANT:
-This should resemble a clean theatrical 35mm print or high-quality film scan from the 1980s.
-
-DO NOT automatically add:
-VHS noise
-tracking errors
-scan lines
-CRT effects
-camcorder timestamps
-extreme scratches
-dust storms
-fake projector flicker
-
-Those belong to degraded home-video footage, not ordinary 1980s cinema.
+[[STORY BEAT]].
 
 AVOID:
-modern LED lighting signatures, contemporary vehicles, modern signage, digital sharpness, smartphone-style HDR, perfect gimbal motion, artificial VHS filters, excessive film damage, fake sepia grading, AI morphing, temporal instability.
-
-SCENE PRIORITY:
-[[IMPORTANT ACTION / EMOTION / STORY BEAT]].`
+plastic skin, VHS filters, 1980s retro pastiche, paperback-horror cover posing, comic-book panels unless requested, text, logos, morphing faces.`
   },
   {
-    id: 'painted_horror',
-    name: 'PAINTED HORROR',
-    short_description: 'Dimensional 1990s supernatural paperback-horror artwork brought to life — strong perspective, theatrical color, hand-painted surface character.',
-    category: 'painted',
-    quickMap: {subject: 'SUBJECT', action: 'ACTION', location: 'LOCATION', beat: 'MAIN STORY EVENT'},
-    template: `A cinematic moving scene depicting [[SUBJECT]] [[ACTION]] at [[LOCATION]], transformed into a richly painted 1990s supernatural paperback-horror world.
+    id: 'anime',
+    name: 'ANIME',
+    short_description: 'Modern anime feature style — clean linework, expressive eyes, cel-shaded color, cinematic staging.',
+    category: 'anime',
+    quickMap: {subject: 'SUBJECT', action: 'ACTION', location: 'LOCATION', time: 'TIME / WEATHER', beat: 'EMOTIONAL BEAT'},
+    template: `A cinematic anime scene of [[SUBJECT]] [[ACTION]] in [[LOCATION]] during [[TIME / WEATHER]].
 
-VISUAL LANGUAGE:
-Highly dimensional hand-painted illustration aesthetics, dramatic perspective, richly modeled forms, exaggerated but believable depth, crisp silhouettes, expressive architecture and theatrical supernatural atmosphere.
-
-The environment should feel like a classic painted horror paperback cover that has become a physical moving world rather than a flat book illustration.
-
-COMPOSITION:
-[[FRAMING — default: dramatic wide-angle medium shot]], strong foreground exaggeration, deep perspective, slightly surreal scale relationships, intentionally staged focal point.
+Modern theatrical anime look: crisp linework, expressive eyes, clean cel shading, rich color keys, soft atmospheric depth.
 
 CAMERA:
-[[CAMERA ANGLE — default: low three-quarter angle]], using the visual equivalent of a [[LENS — default: 28mm wide-angle lens]], providing strong perspective without fisheye distortion.
+[[FRAMING — default: dynamic medium shot]], [[CAMERA ANGLE — default: slight low angle]], anime layout sensibility with readable silhouettes.
 
 CAMERA MOVEMENT:
-[[CAMERA MOVEMENT — default: slow ominous push-in]]. Movement should preserve the integrity of the painted forms. Avoid objects continuously repainting themselves or morphing between frames.
-
-LIGHTING:
-Theatrical moonlight and motivated practical light from [[LIGHT SOURCE]], strong rim illumination, glowing windows or supernatural accents where appropriate, deep blue/cyan night shadows contrasted against warmer practical highlights.
-
-COLOR PALETTE:
-Deep midnight blues, saturated blue-greens, eerie violets, selective toxic greens, warm amber windows, controlled crimson accents. Rich painted color separation while retaining readable forms.
-
-PAINT CHARACTER:
-Visible but refined brush-painted texture in surfaces, hand-rendered gradients, illustrated edge control, subtly exaggerated material highlights, painterly clouds and foliage.
-
-Do NOT create obvious canvas texture over the entire image.
-
-ATMOSPHERE:
-[[ATMOSPHERIC ELEMENT — default: curling mist, dramatic clouds and wind-touched foliage]], heightened supernatural tension without requiring an actual monster.
-
-SKY:
-Dramatic painted night sky, sculpted clouds, luminous moonlight where appropriate, strong silhouette readability.
-
-CHARACTERS:
-Characters retain stable identity, realistic anatomy and readable facial structure while being rendered as dimensional painted figures. Clothing has stylized painted folds but moves consistently.
-
-MOTION:
-Deliberate cinematic movement. Wind affects hair, clothing, fog, trees and environmental elements coherently. Preserve hand-painted aesthetic frame-to-frame rather than reverting to photorealism.
-
-GRAIN / TEXTURE:
-Fine printed-illustration texture and subtle pigment variation, extremely restrained paper-print character, no modern digital cleanliness.
-
-TONE:
-Playful menace, eerie mystery, heightened suspense and lurid supernatural energy — unsettling without automatically becoming grotesque.
-
-AVOID:
-flat vector illustration, anime appearance, generic digital concept art, glossy 3D rendering, photorealism, constant object morphing, melting faces, changing clothing, unstable architecture, excessive gore, random monsters, text, logos, book-title lettering.
-
-SCENE PRIORITY:
-[[MAIN STORY EVENT]].`
-  },
-  {
-    id: 'midnight_dark_fantasy_pulp',
-    name: 'MIDNIGHT DARK FANTASY PULP',
-    short_description: 'Dark fantasy painted pulp cinema: moonlit ruins, torchlight, heavy atmosphere, ancient stone, dangerous silhouettes, mature fantasy-horror energy.',
-    category: 'painted',
-    quickMap: {subject: 'SUBJECT', action: 'ACTION', location: 'LOCATION', time: 'SKY / TIME / WEATHER', beat: 'IMPORTANT STORY BEAT / REVEAL'},
-    template: `A dark fantasy cinematic scene showing [[SUBJECT]] [[ACTION]] within [[LOCATION]], beneath [[SKY / TIME / WEATHER]].
-
-The scene should feel like a forbidden midnight fantasy pulp painting brought to life: ancient, dangerous, tactile, mysterious and physically present.
-
-CAMERA:
-[[FRAMING — default: wide environmental medium shot]], [[CAMERA ANGLE — default: low three-quarter view]], visual equivalent of a [[LENS — default: 32mm cinema lens]].
-
-CAMERA MOVEMENT:
-[[MOVEMENT — default: slow creeping dolly forward]], heavy deliberate movement with strong foreground parallax and a sense of physically moving through the environment.
-
-COMPOSITION:
-Large foreground silhouettes, layered ruins or landscape elements, strong triangular composition, deep background recession, strategically obscured information, subject positioned against readable negative space.
-
-LIGHTING:
-Predominantly low-key moonlight mixed with [[PRACTICAL SOURCE — default: firelight / torchlight]], strong directional rim light, localized warm illumination against cold nocturnal surroundings, deep pools of darkness, selective specular highlights.
-
-Do not flatten the image by illuminating everything.
-
-COLOR:
-Near-black indigo shadows, moonlit steel-blue stone, muted earth pigments, desaturated skin, dirty bronze, ember orange, selective crimson and sickly green accents.
-
-BLACK LEVEL:
-Rich dense blacks while retaining selective material detail. Darkness is an active compositional element.
-
-ATMOSPHERE:
-[[ATMOSPHERE — default: ground fog drifting between ancient stones]], particulate air, distant haze, smoke or mist catching narrow beams of light.
-
-MATERIALS:
-Wet ancient stone, tarnished metal, rough leather, aged cloth, cracked wood, bone, mud and weathered surfaces. Everything has physical age and texture.
-
-CHARACTER:
-[[CHARACTER DESCRIPTION]], grounded anatomy, weathered wardrobe, believable equipment weight, silhouette readable before facial detail.
-
-MOVEMENT:
-Measured physical motion with strong body weight. Cloaks, smoke, fire and hair react naturally to wind. No weightless fantasy animation.
-
-OPTICAL CHARACTER:
-Subtle vintage optical softness, modest highlight bloom, fine dark-grain structure, painterly tonal transitions mixed with cinematic depth.
-
-FILM TEXTURE:
-Fine-to-moderate organic grain strongest in darker regions, delicate gate-like texture if appropriate, subtle photochemical highlight response.
+[[CAMERA MOVEMENT — default: gentle push-in with parallax layers]]. Backgrounds hold; characters move with intentional anime timing.
 
 STYLE:
-Mature fantasy pulp illustration translated into cinematic motion: grim, romantic, dangerous, mysterious, sensual only when the scene calls for it, never clean corporate fantasy artwork.
+High-quality anime feature / OVA finish — stable character design, consistent hair and costume colors, detailed backgrounds without turning photoreal.
 
-ENVIRONMENTAL MOTION:
-[[ENVIRONMENTAL MOTION — default: torch flame movement, drifting mist, distant cloth or foliage moving in the wind]].
+LIGHTING / COLOR:
+[[LIGHT KEY — default: dramatic rim light and soft fill]], saturated but controlled palette, subtle bloom on highlights, no muddy gradients.
 
-AVOID:
-bright modern fantasy lighting, clean Marvel-style imagery, excessive RGB lighting, glossy armor, generic videogame concept art, cartoon rendering, plastic skin, weightless camera movement, glowing everything, unnecessary magic particles, unstable anatomy, temporal flicker, background morphing.
+MOTION:
+Anime motion language — held poses, decisive keyframes, wind in hair and cloth, particles only when motivated.
 
 SCENE PRIORITY:
-[[IMPORTANT STORY BEAT / REVEAL]].`
+[[EMOTIONAL BEAT]].
+
+AVOID:
+photoreal skin, live-action film grain, Tim Jacobus paperback horror, 1980s VHS, western comic halftone, chibi unless asked, text, watermarks, morphing faces.`
+  },
+  {
+    id: 'comic',
+    name: 'COMIC',
+    short_description: 'Bold comic / graphic-novel panels — inked lines, flat color or rich tones, graphic staging.',
+    category: 'comic',
+    quickMap: {subject: 'SUBJECT', action: 'ACTION', location: 'LOCATION', beat: 'PANEL BEAT'},
+    template: `A graphic-novel comic panel of [[SUBJECT]] [[ACTION]] in [[LOCATION]].
+
+Bold inked contours, confident comic illustration, clear silhouettes, graphic shapes, [[COLOR APPROACH — default: rich flat color with selective screentone]].
+
+COMPOSITION:
+[[FRAMING — default: heroic three-quarter medium]], strong diagonal energy, poster-clear focal hierarchy — still one continuous scene, not a multi-panel page unless asked.
+
+LINE & RENDER:
+Clean professional comic inking, controlled hatching or screentone, stable anatomy, readable faces, costume folds that stay consistent in motion.
+
+CAMERA MOVEMENT (if animated):
+[[CAMERA MOVEMENT — default: slight push with parallax layers]] while preserving inked edge integrity.
+
+SCENE PRIORITY:
+[[PANEL BEAT]].
+
+AVOID:
+photoreal cinema, anime cel style unless requested, 1980s paperback-horror paint, Goosebumps cover pastiche, muddy watercolor wash, text balloons unless requested, logos.`
+  },
+  {
+    id: 'anime_cinema',
+    name: 'ANIME CINEMA',
+    short_description: 'Theatrical anime cinema — lush backgrounds, volumetric light, emotional wide shots.',
+    category: 'anime',
+    quickMap: {subject: 'SUBJECT', action: 'ACTION', location: 'LOCATION', time: 'TIME / WEATHER', beat: 'CINEMATIC MOMENT'},
+    template: `A theatrical anime-cinema shot of [[SUBJECT]] [[ACTION]] in [[LOCATION]] at [[TIME / WEATHER]].
+
+Lush painted backgrounds, volumetric god-rays or city glow, emotional wide staging, feature-film anime finish (think modern anime cinema — not TV shortcuts).
+
+CAMERA:
+[[FRAMING — default: wide establishing into medium]], [[LENS FEEL — default: gentle wide cinematic]], deep layered parallax.
+
+CAMERA MOVEMENT:
+[[CAMERA MOVEMENT — default: slow crane or lateral glide]] with background depth holds.
+
+LIGHT / ATMOSPHERE:
+[[ATMOSPHERE — default: golden-hour haze or night neon rain]], soft bloom, rich environmental storytelling, stable character designs in the foreground.
+
+SCENE PRIORITY:
+[[CINEMATIC MOMENT]].
+
+AVOID:
+live-action photoreal, comic halftone, 1980s retro film stock, horror paperback covers, low-detail TV anime shortcuts, text, watermarks.`
   },
 ];
 

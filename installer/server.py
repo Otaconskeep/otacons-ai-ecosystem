@@ -575,6 +575,13 @@ class Handler(BaseHTTPRequestHandler):
             self.path = '/video-studio/index.html'
             self.serve()
             return
+        # Creative and Workshop are the same Muse surface.
+        if path in ('/creative', '/creative/', '/muse', '/muse/', '/studio', '/studio/'):
+            self.send_response(302)
+            self.send_header('Location', '/video-studio')
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            return
         if path.startswith('/video-studio/api/'):
             from expansion.capabilities.workshop_api import handle_workshop_get
 
@@ -792,11 +799,12 @@ class Handler(BaseHTTPRequestHandler):
             return False
         known = {
             '/dashboard', '/war-room', '/intel', '/ha',
-            '/codec', '/rex', '/learning', '/creative', '/ops', '/reports',
+            '/codec', '/rex', '/learning', '/ops', '/reports',
             '/dossiers', '/journal', '/diary', '/page-builder', '/rooms',
             '/relationships', '/emotion', '/command', '/command-center',
             '/expansion', '/genome', '/voice-trainer',
         }
+        # /creative · /muse · /studio redirect to /video-studio (Keep Workshop).
         # /video-studio is the Keep Workshop page (ui/video-studio/), not SPA.
         return path.rstrip('/') in known or path in known
 

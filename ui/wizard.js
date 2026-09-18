@@ -749,7 +749,7 @@ async function showHome(){
             <div class="hud-cta-row">
               <button type="button" class="hud-cta primary" onclick="otArmAudio();otSfx('transmit');showChat()">Open Codec</button>
               ${expOn?`<button type="button" class="hud-cta" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':'showGenomeSetup()'}">Genome</button>
-              <button type="button" class="hud-cta warn" onclick="otArmAudio();otSfx('click');showVideoStudioSetup()">Studio</button>`:''}
+              <button type="button" class="hud-cta warn" onclick="otArmAudio();otSfx('click');${videoOk?'openMuseWorkshop()':'showVideoStudioSetup()'}">Studio</button>`:''}
             </div>
             <div class="hud-prio-rail">${railChips}</div>
           </div>
@@ -1598,9 +1598,12 @@ async function showVideoStudioSetup(){
   try{ setup=await apiGet('/api/expansion/video-studio/setup-status', 8000); }catch(_e){}
   const st=capStatus('video');
   const ready=st==='ready'||setup.phase==='READY'||setup.ok;
-  const aria=setup.aria||(ready
-    ?'Done — Video Studio is ready. Tap Open Video Studio and you\'re in the Muse workshop.'
-    :"Video Studio isn't running yet. Tap the big button — I'll download and start what it needs. You don't need Docker skills or command lines. First time can take a few minutes.");
+  // Creative === Workshop — when Studio is READY, open it directly (no setup detour).
+  if(ready){
+    openMuseWorkshop();
+    return;
+  }
+  const aria=setup.aria||"Video Studio isn't running yet. Tap the big button — I'll download and start what it needs. You don't need Docker skills or command lines. First time can take a few minutes.";
   const steps=Array.isArray(setup.steps)?setup.steps:[];
   const stepHtml=steps.length
     ?`<ul class="guide-steps" id="studioSetupSteps" style="list-style:none;padding-left:0">${steps.map(s=>
