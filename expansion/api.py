@@ -324,16 +324,17 @@ def handle_expansion_get(path: str, send_json, send_bytes=None) -> bool:
         if callable(send_bytes):
             send_bytes(data, mime, name or files[0])
             return True
-        # Fallback JSON with same-origin URL (UI should hit this route as <img src>).
         send_json({
-            'ok': True,
-            'job_id': jid,
+            'ok': False,
+            'error': 'byte_sender_missing',
+            'detail': (
+                'Creative output proxy needs send_bytes from installer.server. '
+                'Soft-update Expansion and restart otacon.service.'
+            ),
             'filename': name or files[0],
-            'filenames': files,
-            'url': f'/api/expansion/creative/jobs/{jid}/output',
+            'job_id': jid,
             'content_type': mime,
-            'bytes': len(data),
-        })
+        }, 500)
         return True
     if path.startswith('/api/expansion/creative/jobs/'):
         from expansion.capabilities.comfy_submit import poll_creative_jobs_once, public_creative_job

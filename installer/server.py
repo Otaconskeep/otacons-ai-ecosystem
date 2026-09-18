@@ -602,10 +602,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('Cache-Control', 'no-store')
                 self.end_headers()
 
+            # Required for /jobs/<id>/output and generate-image-v1/.../output —
+            # without send_bytes those routes cannot return image/png to <img>.
             def _bytes(data: bytes, content_type: str = 'application/octet-stream', filename: str = '') -> None:
                 self.send_bytes(data, content_type, filename)
 
-            if handle_workshop_get(path, self.send_json, send_redirect=_redir, send_bytes=_bytes):
+            if handle_workshop_get(
+                path,
+                self.send_json,
+                send_redirect=_redir,
+                send_bytes=_bytes,
+            ):
                 return
             self.send_json({'error': 'not found'}, 404)
             return

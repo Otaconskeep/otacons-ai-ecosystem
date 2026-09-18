@@ -106,6 +106,72 @@ class WorkshopApiTests(unittest.TestCase):
         self.assertEqual(data.get('prompt'), 'hello workshop')
         self.assertEqual(data.get('width'), '1024')
 
+    def test_job_output_uses_send_bytes_for_png(self):
+        """Regression: output must be image/png bytes, never JSON, when send_bytes is wired."""
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            outdir = root / 'comfy_out'
+            outdir.mkdir()
+            png = outdir / 'burger.png'
+            png.write_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 24)
+            with mock.patch.dict(os.environ, {
+                'OTACON_EXPANSION_DATA_ROOT': str(root / 'data'),
+                'OTACON_EXPANSION_CONFIG_ROOT': str(root / 'cfg'),
+                'COMFYUI_OUTPUT_DIR': str(outdir),
+            }):
+                from expansion.state_layout import resolve_layout
+                layout = resolve_layout()
+                layout.ensure_user_dirs()
+                wa._upsert_job({
+                    'id': 'img1',
+                    'type': 'image_v1',
+                    'job_type': 'image_v1',
+                    'status': 'completed',
+                    'outputs': ['burger.png'],
+                    'output_file': 'burger.png',
+                    'endpoint': 'http://127.0.0.1:8188',
+                    'created_at': 1.0,
+                    'created_ts': 1.0,
+                }, layout)
+                got = {}
+
+                def send_json(data, status=200):
+                    got['json'] = data
+                    got['status'] = status
+
+                def send_bytes(data, content_type='application/octet-stream', filename=''):
+                    got['bytes'] = data
+                    got['ctype'] = content_type
+                    got['filename'] = filename
+
+                with mock.patch.object(wa, 'resolve_layout', return_value=layout):
+                    ok = wa.handle_workshop_get(
+                        '/video-studio/api/generate-image-v1/img1/output',
+                        send_json,
+                        send_redirect=None,
+                        send_bytes=send_bytes,
+                    )
+                self.assertTrue(ok)
+                self.assertNotIn('json', got)
+                self.assertEqual(got.get('ctype'), 'image/png')
+                self.assertTrue(got.get('bytes', b'').startswith(b'\x89PNG'))
+
+                # Without send_bytes → explicit 500, not a fake ok JSON body.
+                got2 = {}
+                def send_json2(data, status=200):
+                    got2['json'] = data
+                    got2['status'] = status
+                with mock.patch.object(wa, 'resolve_layout', return_value=layout):
+                    ok2 = wa.handle_workshop_get(
+                        '/video-studio/api/jobs/img1/output',
+                        send_json2,
+                        send_redirect=None,
+                        send_bytes=None,
+                    )
+                self.assertTrue(ok2)
+                self.assertEqual(got2.get('status'), 500)
+                self.assertEqual(got2['json'].get('error'), 'byte_sender_missing')
+
 
 if __name__ == '__main__':
     unittest.main()

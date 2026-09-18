@@ -396,14 +396,17 @@ def _send_job_output(
         if send_bytes:
             send_bytes(data, mime, name or fname)
             return True
-        # No byte sender (tests) — return same-origin relative hint, never Comfy :8188.
+        # Never fall back to JSON for media routes — browsers treat that as a
+        # broken <img>/<video>. Callers (installer.server) must pass send_bytes.
         send_json({
-            'ok': True,
+            'error': 'byte_sender_missing',
+            'detail': (
+                'Workshop output proxy needs send_bytes from installer.server. '
+                'Soft-update Expansion and restart otacon.service.'
+            ),
             'filename': name or fname,
-            'url': f'/video-studio/api/jobs/{jid}/output',
-            'bytes': len(data),
             'content_type': mime,
-        })
+        }, 500)
         return True
 
     job = _get_job(jid, layout)
