@@ -194,7 +194,9 @@ class TestDiskOfflineRepairBackup(P4Case):
             self.assertTrue(ctx.system_prompt)
             from expansion.capabilities.discord_n8n import probe_all_optional
             caps = probe_all_optional(self.layout)
-            self.assertIn(caps['discord']['state'], ('UNAVAILABLE', 'LIMITED', 'READY'))
+            self.assertIn(caps['discord']['state'], (
+                'UNAVAILABLE', 'LIMITED', 'READY', 'NEEDS_CREDENTIAL', 'NEEDS_AUTHORIZATION',
+            ))
 
     def test_repair_preserves_user_data(self):
         populate_rich_state(self.layout)

@@ -74,18 +74,23 @@ def probe_home_assistant(layout: Optional[StateLayout] = None) -> CapabilityRepo
         keys.append('token')
     if not cfg.get('url'):
         return CapabilityReport(
-            CAPABILITY_ID, OWNER_AGENT, CapabilityState.UNAVAILABLE.value,
-            detail='Home Assistant not configured (optional).',
-            config_keys_present=keys, discovery=cfg,
+            CAPABILITY_ID, OWNER_AGENT, CapabilityState.NEEDS_CREDENTIAL.value,
+            detail=(
+                'Home Assistant is supported. Otacon needs your HA URL and a '
+                'long-lived access token once — then it can verify and wire entities.'
+            ),
+            config_keys_present=keys, discovery={**cfg, 'auto_install': True, 'user_action': 'credential'},
         )
     if cfg.get('url') and not cfg.get('token_configured'):
         return CapabilityReport(
-            CAPABILITY_ID, OWNER_AGENT, CapabilityState.LIMITED.value,
-            detail='HA URL set but token missing.',
-            config_keys_present=keys, discovery=cfg,
+            CAPABILITY_ID, OWNER_AGENT, CapabilityState.NEEDS_CREDENTIAL.value,
+            detail='HA URL set but long-lived access token missing.',
+            config_keys_present=keys,
+            discovery={**cfg, 'auto_install': True, 'user_action': 'credential'},
         )
     return CapabilityReport(
         CAPABILITY_ID, OWNER_AGENT, CapabilityState.READY.value,
         detail='HA URL and token configured (connectivity not probed by Expansion core).',
-        config_keys_present=keys, discovery=cfg,
+        config_keys_present=keys,
+        discovery={**cfg, 'auto_install': True, 'user_action': 'none'},
     )

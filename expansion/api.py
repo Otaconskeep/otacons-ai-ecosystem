@@ -435,6 +435,36 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             'discovery': report.discovery,
         })
         return True
+    if path == '/api/expansion/discord/token':
+        from expansion.capabilities.discord_n8n import save_discord_bot_token, probe_discord
+        token = str((data or {}).get('token') or (data or {}).get('bot_token') or '').strip()
+        try:
+            result = save_discord_bot_token(token)
+        except ValueError as exc:
+            send_json({'ok': False, 'error': str(exc)}, 400)
+            return True
+        report = probe_discord()
+        send_json({**result, 'detail': report.detail, 'discovery': report.discovery})
+        return True
+    if path == '/api/expansion/discord/authorized':
+        from expansion.capabilities.discord_n8n import mark_discord_guild_authorized, probe_discord
+        guild = str((data or {}).get('guild_id') or '').strip()
+        result = mark_discord_guild_authorized(guild)
+        report = probe_discord()
+        send_json({**result, 'detail': report.detail, 'discovery': report.discovery})
+        return True
+    if path == '/api/expansion/home-assistant/config':
+        from expansion.capabilities.home_assistant import save_ha_config, probe_home_assistant
+        url = str((data or {}).get('url') or '').strip()
+        token = str((data or {}).get('token') or '').strip()
+        try:
+            cfg = save_ha_config(url, token=token)
+        except ValueError as exc:
+            send_json({'ok': False, 'error': str(exc)}, 400)
+            return True
+        report = probe_home_assistant()
+        send_json({'ok': True, 'config': cfg, 'state': report.state, 'detail': report.detail})
+        return True
     if path == '/api/expansion/video-studio/config':
         from expansion.capabilities.comfy_sidecar import save_studio_endpoint
         endpoint = str(

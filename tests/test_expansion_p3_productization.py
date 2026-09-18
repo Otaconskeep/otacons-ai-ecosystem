@@ -110,18 +110,18 @@ class TestP3A_Capabilities(P3LayoutCase):
 
     def test_ha_missing_does_not_break(self):
         r = probe_home_assistant(self.layout)
-        self.assertEqual(r.state, 'UNAVAILABLE')
+        self.assertEqual(r.state, 'NEEDS_CREDENTIAL')
         # Foundation still works
         self.assertTrue(ExpansionRuntime(self.layout).expansion_enabled())
 
-    def test_ha_config_ready_without_token_is_limited(self):
+    def test_ha_config_ready_without_token_is_needs_credential(self):
         save_ha_config('http://127.0.0.1:8123', token='', layout=self.layout)
         r = probe_home_assistant(self.layout)
-        self.assertEqual(r.state, 'LIMITED')
+        self.assertEqual(r.state, 'NEEDS_CREDENTIAL')
 
     def test_discord_n8n_optional(self):
-        self.assertEqual(probe_discord(self.layout).state, 'UNAVAILABLE')
-        self.assertEqual(probe_n8n(self.layout).state, 'UNAVAILABLE')
+        self.assertEqual(probe_discord(self.layout).state, 'NEEDS_CREDENTIAL')
+        self.assertEqual(probe_n8n(self.layout).state, 'NOT_INSTALLED')
         allc = probe_all_optional(self.layout)
         self.assertIn('video_studio', allc)
         self.assertIn('home_assistant', allc)

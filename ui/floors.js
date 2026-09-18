@@ -50,7 +50,7 @@
       var cls = 'warn';
       if (/ready|ok|true|live|online|pass|1/.test(state)) cls = 'ok';
       else if (/fail|error|down|false|unavailable|missing|0/.test(state)) cls = 'bad';
-      else if (/limited|degraded|offline|pending|setup|not_configured/.test(state)) cls = 'warn';
+      else if (/limited|degraded|offline|pending|setup|not_configured|not_installed|needs_credential|needs_authorization|needs_setup|installing/.test(state)) cls = 'warn';
       var label = state ? state.toUpperCase() : 'SIGNAL';
       return '<div class="fl-ready ' + cls + '"><div class="fl-ready-top"><b></b><span>' + esc(k.replace(/_/g, ' ')) +
         '</span><em>' + esc(label) + '</em></div><p>' + esc(detail || '—') + '</p></div>';

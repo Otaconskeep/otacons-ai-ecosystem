@@ -214,12 +214,16 @@ export PATH={shlex.quote(_GENOME_LINUX_PATH)}
 export LD_LIBRARY_PATH={shlex.quote(_GENOME_LINUX_LDLP)}
 export OTACON_VT_DIR={shlex.quote(vt_dir)}
 export OTACON_VT_SKIP_UI=1
+export OTACON_VT_OWNER={shlex.quote(owner)}
 export HOME={shlex.quote(str(Path.home()))}
 export DEBIAN_FRONTEND=noninteractive
+mkdir -p {shlex.quote(vt_dir)}
+chown -R {shlex.quote(owner)}:{shlex.quote(owner)} {shlex.quote(str(Path(vt_dir).parent))} 2>/dev/null || true
 set +e
 curl -fsSL --connect-timeout 30 --max-time 600 {shlex.quote(_INSTALLER_URL)} | bash
 rc=$?
 set -e
+# End chown — covers anything the installer re-created as root during docker build.
 chown -R {shlex.quote(owner)}:{shlex.quote(owner)} {shlex.quote(vt_dir)} 2>/dev/null || true
 usermod -aG docker {shlex.quote(owner)} 2>/dev/null || true
 exit $rc

@@ -62,6 +62,7 @@ class TestVoiceTrainerGpu(unittest.TestCase):
         self.assertEqual(cmd[-2:], ['bash', str(vt._GENOME_INSTALL_SCRIPT)])
         self.assertFalse(err)
         script = vt._GENOME_INSTALL_SCRIPT.read_text(encoding='utf-8')
+        self.assertIn('OTACON_VT_OWNER', script)
         self.assertIn('PATH=/usr/lib/wsl/lib:', script)
         self.assertNotIn('$PATH', script)
         self.assertNotIn('(x86)', script)

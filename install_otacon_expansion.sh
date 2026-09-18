@@ -444,7 +444,10 @@ export LD_LIBRARY_PATH=/usr/lib/wsl/lib
 export HOME=$(printf %q "$OWNER_HOME")
 export OTACON_VT_DIR=$(printf %q "$VT_HOME")
 export OTACON_VT_SKIP_UI=1
+export OTACON_VT_OWNER=$(printf %q "$OWNER")
 export DEBIAN_FRONTEND=noninteractive
+mkdir -p $(printf %q "$VT_HOME")
+chown -R $(printf %q "$OWNER"):$(printf %q "$OWNER") $(printf %q "$(dirname "$VT_HOME")") 2>/dev/null || true
 set +e
 curl -fsSL "$VOICE_TRAINER_INSTALLER_URL" | bash
 rc=\$?
