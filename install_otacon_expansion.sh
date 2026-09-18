@@ -417,17 +417,19 @@ else
     warn "Genome install needs root/docker — run Expansion via Windows Setup (privileged) or: wsl -u root"
     EXP_GENOME_STATE=needs_root
   fi
-  # Start status UI when installed so Expansion can report READY.
-  if [[ -d "$VT_HOME/ui" ]]; then
-    if ! (echo >/dev/tcp/127.0.0.1/8765) >/dev/null 2>&1; then
-      log "Starting Genome status UI on :8765"
-      run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" OTACON_VT_DIR="$VT_HOME" PYTHONPATH="$INSTALL_DIR" \
-        "$VPY" -c "from expansion.capabilities.voice_trainer import ensure_voice_trainer_ui; print(ensure_voice_trainer_ui())" \
-        || true
-    fi
+  # Always write/repair status.json and verify / + status.json (never READY on port alone).
+  if [[ -d "$VT_HOME" ]]; then
+    log "Ensuring Genome UI + status.json under $VT_HOME"
+    run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" OTACON_VT_DIR="$VT_HOME" PYTHONPATH="$INSTALL_DIR" \
+      "$VPY" -c "from expansion.capabilities.voice_trainer import ensure_voice_trainer_ui; import json; print(json.dumps(ensure_voice_trainer_ui()))" \
+      || true
     if (echo >/dev/tcp/127.0.0.1/8765) >/dev/null 2>&1; then
-      ok "Genome UI listening on http://127.0.0.1:8765/"
-      EXP_GENOME_STATE=ready
+      if curl -fsS "http://127.0.0.1:8765/status.json" >/dev/null 2>&1; then
+        ok "Genome UI READY on http://127.0.0.1:8765/ (status.json ok)"
+        EXP_GENOME_STATE=ready
+      else
+        warn "Genome listens on :8765 but status.json check failed — Start Genome from Expansion to repair"
+      fi
     fi
   fi
 fi

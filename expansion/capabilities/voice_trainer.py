@@ -19,7 +19,6 @@ from pathlib import Path
 
 from expansion.capabilities import CapabilityReport, CapabilityState
 from expansion.capabilities.genome_ui import (
-    ensure_genome_ui,
     start_train_job,
     train_state,
 )
@@ -85,35 +84,78 @@ def _docker_image_present() -> bool:
         return False
 
 
+def ensure_voice_trainer_ui(port: int = DEFAULT_PORT) -> dict:
+    """Write status.json, serve from install ui/ (or Genome trainer), verify READY gates."""
+    from expansion.capabilities.voice_trainer_status import ensure_status_and_ui
+    return ensure_status_and_ui(install_dir=_vt_home(), port=port, prefer_genome_ui=True)
+
+
 def probe_voice_trainer() -> CapabilityReport:
+    from expansion.capabilities.voice_trainer_status import (
+        port_listening,
+        verify_ui,
+        write_status_json,
+    )
     home = _vt_home()
     installed = home.is_dir() and any(home.iterdir())
     image = _docker_image_present()
-    live = _port_listening()
     gpu = _gpu_usable()
+    live = port_listening(DEFAULT_PORT)
+    verified = False
+    status_doc: dict = {}
+    if live:
+        # Repair missing status.json automatically when files exist.
+        if installed and not (home / 'ui' / 'status.json').is_file():
+            try:
+                write_status_json(home)
+            except OSError:
+                pass
+        check = verify_ui(DEFAULT_PORT, timeout=1.5)
+        verified = bool(check.get('ok'))
+        status_doc = check.get('status') or {}
+        if not verified and installed:
+            try:
+                write_status_json(home)
+                check = verify_ui(DEFAULT_PORT, timeout=1.5)
+                verified = bool(check.get('ok'))
+                status_doc = check.get('status') or {}
+            except OSError:
+                pass
+
     disc = {
         'path': str(home) if installed else '',
         'listening': live,
+        'verified': verified,
         'port': DEFAULT_PORT,
-        'url': f'http://127.0.0.1:{DEFAULT_PORT}/' if live else '',
+        'url': f'http://127.0.0.1:{DEFAULT_PORT}/' if verified else '',
         'gpu': gpu,
         'docker_image': image,
         'premium': True,
         'product': 'expansion',
         'train': train_state(),
+        'status': status_doc,
     }
     keys = [k for k, v in (('path', installed), ('docker_image', image), ('listening', live), ('gpu', gpu)) if v]
 
-    if live:
+    if verified:
         return CapabilityReport(
             CAPABILITY_ID, OWNER_AGENT, CapabilityState.READY.value,
-            detail='Genome Voice Trainer listening — open to train a voice (YouTube → Piper).',
+            detail='Genome Voice Trainer READY — / and status.json verified.',
+            config_keys_present=keys, discovery=disc,
+        )
+    if live and not verified:
+        return CapabilityReport(
+            CAPABILITY_ID, OWNER_AGENT, CapabilityState.DEGRADED.value,
+            detail=(
+                'UI on :8765 but status.json missing or invalid — Start Genome repairs it '
+                '(no reinstall needed).'
+            ),
             config_keys_present=keys, discovery=disc,
         )
     if installed or image:
         return CapabilityReport(
             CAPABILITY_ID, OWNER_AGENT, CapabilityState.DEGRADED.value,
-            detail='Genome installed but trainer UI not on :8765 — Start Genome.',
+            detail='Genome installed but trainer UI not verified on :8765 — Start Genome.',
             config_keys_present=keys, discovery=disc,
         )
     if not gpu:
@@ -131,12 +173,6 @@ def probe_voice_trainer() -> CapabilityReport:
         detail='Genome Voice Trainer not installed — Expansion premium; run guided Setup.',
         config_keys_present=keys, discovery=disc,
     )
-
-
-def ensure_voice_trainer_ui(port: int = DEFAULT_PORT) -> dict:
-    """Start the actionable Genome trainer UI (form + /api/train), not a static page."""
-    return ensure_genome_ui(port=port)
-
 
 _INSTALL_MARKER = Path('/tmp/otacon-genome-install.status')
 _INSTALL_LOG = Path('/tmp/otacon-genome-install.log')

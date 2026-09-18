@@ -110,16 +110,77 @@ def _image_ok() -> bool:
 
 
 def status_payload() -> dict[str, Any]:
+    from expansion.capabilities.voice_trainer_status import build_status, write_status_json
     home = _vt_home()
+    try:
+        write_status_json(home)
+    except OSError:
+        pass
+    base = build_status(home)
+    base['listening'] = True
+    base['train'] = train_state()
+    # Keep legacy keys used by older UI snippets
+    if 'gpu' not in base:
+        base['gpu'] = base.get('gpu_state') == 'gpu_detected'
+    return base
+
+
+def ensure_genome_ui(port: int = DEFAULT_PORT) -> dict[str, Any]:
+    """Start the actionable Genome UI if not already listening."""
+    global _SERVER, _SERVER_THREAD
+    from expansion.capabilities.voice_trainer_status import write_status_json
+    try:
+        write_status_json(_vt_home())
+    except OSError:
+        pass
+
+    if port_listening(port):
+        # Confirm it is our trainer (not the old static http.server page).
+        try:
+            import urllib.request
+            with urllib.request.urlopen(
+                f'http://127.0.0.1:{port}/api/train-status', timeout=1.5,
+            ) as resp:
+                if resp.status == 200:
+                    return {
+                        'ok': True,
+                        'action': 'already_listening',
+                        'url': f'http://127.0.0.1:{port}/',
+                    }
+        except Exception:
+            # Might be classic status UI — caller may repair status.json without killing.
+            return {
+                'ok': False,
+                'action': 'port_busy_foreign',
+                'error': f'Port {port} is in use by another process (not Expansion Genome trainer).',
+                'hint': (
+                    f'If it is the classic Voice Trainer status UI, status.json will be repaired '
+                    f'without killing it. Otherwise free :{port} and Start Genome again.'
+                ),
+            }
+
+    try:
+        server = ThreadingHTTPServer(('127.0.0.1', port), _GenomeHandler)
+    except OSError as exc:
+        return {'ok': False, 'action': 'bind_failed', 'error': str(exc)}
+
+    _SERVER = server
+
+    def _serve() -> None:
+        try:
+            server.serve_forever(poll_interval=0.5)
+        except Exception:
+            pass
+
+    _SERVER_THREAD = threading.Thread(target=_serve, daemon=True, name='genome-ui')
+    _SERVER_THREAD.start()
+    time.sleep(0.35)
+    live = port_listening(port)
     return {
-        'ok': home.is_dir() and _image_ok(),
-        'gpu': _gpu_ok(),
-        'gpu_name': '',
-        'image': _TRAIN_IMAGE if _image_ok() else '',
-        'install_dir': str(home) if home.is_dir() else '',
-        'listening': True,
-        'product': 'genome',
-        'train': train_state(),
+        'ok': live,
+        'action': 'started' if live else 'start_pending',
+        'url': f'http://127.0.0.1:{port}/' if live else '',
+        'product': 'genome-trainer',
     }
 
 
@@ -421,55 +482,3 @@ def port_listening(port: int = DEFAULT_PORT, host: str = '127.0.0.1') -> bool:
             return True
     except OSError:
         return False
-
-
-def ensure_genome_ui(port: int = DEFAULT_PORT) -> dict[str, Any]:
-    """Start the actionable Genome UI if not already listening."""
-    global _SERVER, _SERVER_THREAD
-    if port_listening(port):
-        # Confirm it is our trainer (not the old static http.server page).
-        try:
-            import urllib.request
-            with urllib.request.urlopen(
-                f'http://127.0.0.1:{port}/api/train-status', timeout=1.5,
-            ) as resp:
-                if resp.status == 200:
-                    return {
-                        'ok': True,
-                        'action': 'already_listening',
-                        'url': f'http://127.0.0.1:{port}/',
-                    }
-        except Exception:
-            return {
-                'ok': False,
-                'action': 'port_busy_foreign',
-                'error': f'Port {port} is in use by another process (old static Genome page?).',
-                'hint': (
-                    f'Stop the process on :{port} (pkill -f "http.server {port}" or '
-                    'reboot WSL), then click Start Genome again.'
-                ),
-            }
-
-    try:
-        server = ThreadingHTTPServer(('127.0.0.1', port), _GenomeHandler)
-    except OSError as exc:
-        return {'ok': False, 'action': 'bind_failed', 'error': str(exc)}
-
-    _SERVER = server
-
-    def _serve() -> None:
-        try:
-            server.serve_forever(poll_interval=0.5)
-        except Exception:
-            pass
-
-    _SERVER_THREAD = threading.Thread(target=_serve, daemon=True, name='genome-ui')
-    _SERVER_THREAD.start()
-    time.sleep(0.35)
-    live = port_listening(port)
-    return {
-        'ok': live,
-        'action': 'started' if live else 'start_pending',
-        'url': f'http://127.0.0.1:{port}/' if live else '',
-        'product': 'genome-trainer',
-    }
