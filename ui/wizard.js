@@ -692,7 +692,7 @@ async function showHome(){
   const railChips=expOn?`
     <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('transmit');showChat()"><span>CODEC</span><em class="${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'DOWN'}</em></button>
     <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':'showGenomeSetup()'}"><span>GENOME</span><em class="${gnmChip}">${vtOk?'OPEN':(vtOffline?'START':'SETUP')}</em></button>
-    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${videoOk?'openComfyStudio()':'showVideoStudioSetup()'}"><span>STUDIO</span><em class="${stuChip}">${videoOk?'READY':'SETUP'}</em></button>
+    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${videoOk?'openMuseWorkshop()':'showVideoStudioSetup()'}"><span>STUDIO</span><em class="${stuChip}">${videoOk?'READY':'SETUP'}</em></button>
     <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('war-room')"><span>WAR</span><em class="ok">ENTER</em></button>
     <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('command')"><span>COMMAND</span><em class="ok">ENTER</em></button>
   `:`
@@ -1319,6 +1319,10 @@ function openComfyStudio(){
   const url=videoStudioUrl();
   try{ window.open(url,'_blank','noopener'); }catch(_e){}
 }
+/** Full Keep Workshop page (vendored) — not the SPA creative floor sketch. */
+function openMuseWorkshop(){
+  try{ window.location.href='/video-studio'; }catch(_e){ window.open('/video-studio','_self'); }
+}
 async function openVoiceTrainer(){
   // When Genome is ready, open the live lab URL directly (:8765).
   try{
@@ -1642,7 +1646,7 @@ async function showVideoStudioSetup(){
     <div class="hud-cta-row" style="margin-top:14px">
       ${ready
         ?`<button type="button" class="hud-cta primary" onclick="otSfx('ok');openComfyStudio()">Open ComfyUI · 8188</button>`+
-          `<button type="button" class="hud-cta" onclick="otSfx('ok');showExpansionSurface('creative')">Open Muse Workshop</button>`
+          `<button type="button" class="hud-cta" onclick="otSfx('ok');openMuseWorkshop()">Open Muse Workshop</button>`
         :(underSpec
           ?`<button type="button" class="hud-cta" id="comfyStartBtn" disabled>Waiting for your OK…</button>`
           :`<button type="button" class="hud-cta primary" id="comfyStartBtn" onclick="otSfx('ok');startStudioSetup()">${setup.running?'Working…':'Set Up Video Studio'}</button>`)}
@@ -1800,7 +1804,7 @@ async function saveComfyUrl(){
     if(r&&r.ok){
       const st=(r.data&&r.data.state)||capStatus('video');
       otSfx('ok');
-      if(String(st).toUpperCase()==='READY'||st==='ready') showExpansionSurface('creative');
+      if(String(st).toUpperCase()==='READY'||st==='ready') openMuseWorkshop();
       else showVideoStudioSetup();
     }else{
       alert((r&&r.data&&r.data.error)||'Save failed');
@@ -2003,11 +2007,16 @@ async function showExpansionSurface(kind){
     'pagebuilder':'page-builder','command_center':'command-center'
   };
   kind=aliases[String(kind||'').toLowerCase()]||kind;
+  // Muse Workshop is the vendored Keep /video-studio page — leave the SPA.
+  if(kind==='creative' || kind==='video-studio' || kind==='studio' || kind==='muse'){
+    openMuseWorkshop();
+    return;
+  }
   try{
     const pathMap={
       'war-room':'/war-room','dashboard':'/dashboard','intel':'/intel',
-      'video-studio':'/creative','ha':'/ops','rex':'/rex','learning':'/learning','genome':'/genome','voice-trainer':'/genome',
-      'creative':'/creative','ops':'/ops','reports':'/reports','dossiers':'/dossiers',
+      'ha':'/ops','rex':'/rex','learning':'/learning','genome':'/genome','voice-trainer':'/genome',
+      'ops':'/ops','reports':'/reports','dossiers':'/dossiers',
       'journal':'/journal','diary':'/diary','page-builder':'/page-builder','rooms':'/rooms',
       'relationships':'/relationships','emotion':'/emotion','command':'/command',
       'command-center':'/command-center'

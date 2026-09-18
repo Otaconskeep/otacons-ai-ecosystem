@@ -528,12 +528,61 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', 'null' if BIND_MODE == 'lan' else '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Otacon-Token')
         self.end_headers()
 
+    def do_PUT(self):
+        self._workshop_mutate('PUT')
+
+    def do_PATCH(self):
+        self._workshop_mutate('PATCH')
+
+    def do_DELETE(self):
+        self._workshop_mutate('DELETE')
+
+    def _workshop_mutate(self, method: str) -> None:
+        if not self._require_auth_if_needed():
+            return
+        path = self.path.split('?', 1)[0]
+        if not path.startswith('/video-studio/api/'):
+            self.send_json({'error': 'not found'}, 404)
+            return
+        from expansion.capabilities.workshop_api import handle_workshop_write, parse_form_or_json
+        if method == 'DELETE':
+            data: dict = {}
+            n = int(self.headers.get('Content-Length') or 0)
+            if n:
+                self.rfile.read(n)
+        else:
+            data = parse_form_or_json(self)
+        if handle_workshop_write(method, path, data if isinstance(data, dict) else {}, self.send_json):
+            return
+        self.send_json({'error': 'not found'}, 404)
+
     def do_GET(self):
         path = self.path.split('?', 1)[0]
+        # Keep Workshop — full page (vendored), not Expansion SPA floor sketch.
+        if path in ('/video-studio', '/video-studio/'):
+            self.path = '/video-studio/index.html'
+            self.serve()
+            return
+        if path.startswith('/video-studio/api/'):
+            from expansion.capabilities.workshop_api import handle_workshop_get
+
+            def _redir(url: str, status: int = 302) -> None:
+                self.send_response(status)
+                self.send_header('Location', url)
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+
+            if handle_workshop_get(path, self.send_json, send_redirect=_redir):
+                return
+            self.send_json({'error': 'not found'}, 404)
+            return
+        if path.startswith('/video-studio/static/'):
+            self.serve()
+            return
         if path == '/api/scan':
             h = detect()
             self.send_json({'hardware': recommend_hardware_plan(h), 'storage': volumes()})
@@ -733,16 +782,25 @@ class Handler(BaseHTTPRequestHandler):
         if '.' in path.rsplit('/', 1)[-1]:
             return False
         known = {
-            '/dashboard', '/war-room', '/intel', '/video-studio', '/ha',
+            '/dashboard', '/war-room', '/intel', '/ha',
             '/codec', '/rex', '/learning', '/creative', '/ops', '/reports',
             '/dossiers', '/journal', '/diary', '/page-builder', '/rooms',
             '/relationships', '/emotion', '/command', '/command-center',
             '/expansion', '/genome', '/voice-trainer',
         }
+        # /video-studio is the Keep Workshop page (ui/video-studio/), not SPA.
         return path.rstrip('/') in known or path in known
 
     def do_POST(self):
         if not self._require_auth_if_needed():
+            return
+        path = self.path.split('?', 1)[0]
+        if path.startswith('/video-studio/api/'):
+            from expansion.capabilities.workshop_api import handle_workshop_write, parse_form_or_json
+            data = parse_form_or_json(self)
+            if handle_workshop_write('POST', path, data if isinstance(data, dict) else {}, self.send_json):
+                return
+            self.send_json({'error': 'not found'}, 404)
             return
         n = int(self.headers.get('Content-Length', '0'))
         # Cap request body to 32 MiB to avoid trivial DoS via huge uploads.
