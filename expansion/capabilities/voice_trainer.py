@@ -194,34 +194,54 @@ def _wsl_exe() -> str | None:
     return None
 
 
+# Fixed Linux PATH — never append $PATH (WSL often injects "Program Files (x86)" and
+# parentheses break unquoted bash -lc strings).
+_GENOME_LINUX_PATH = (
+    '/usr/lib/wsl/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+)
+_GENOME_LINUX_LDLP = '/usr/lib/wsl/lib'
+_GENOME_INSTALL_SCRIPT = Path('/tmp/otacon-genome-install.sh')
+
+
+def _write_genome_install_script(home: Path, owner: str) -> Path:
+    """Write a root-runnable installer script (avoids -lc quoting / Windows PATH)."""
+    import shlex
+
+    vt_dir = str(home)
+    body = f'''#!/usr/bin/env bash
+set -uo pipefail
+export PATH={shlex.quote(_GENOME_LINUX_PATH)}
+export LD_LIBRARY_PATH={shlex.quote(_GENOME_LINUX_LDLP)}
+export OTACON_VT_DIR={shlex.quote(vt_dir)}
+export OTACON_VT_SKIP_UI=1
+export HOME={shlex.quote(str(Path.home()))}
+export DEBIAN_FRONTEND=noninteractive
+set +e
+curl -fsSL --connect-timeout 30 --max-time 600 {shlex.quote(_INSTALLER_URL)} | bash
+rc=$?
+set -e
+chown -R {shlex.quote(owner)}:{shlex.quote(owner)} {shlex.quote(vt_dir)} 2>/dev/null || true
+usermod -aG docker {shlex.quote(owner)} 2>/dev/null || true
+exit $rc
+'''
+    _GENOME_INSTALL_SCRIPT.write_text(body, encoding='utf-8')
+    _GENOME_INSTALL_SCRIPT.chmod(0o755)
+    return _GENOME_INSTALL_SCRIPT
+
+
 def _genome_install_command(home: Path, env: dict) -> tuple[list[str] | None, dict]:
     """Build argv to run Genome installer with root when needed.
 
     install_voice_trainer.sh refuses non-interactive sudo without a TTY.
-    On WSL escalate with ``wsl.exe -u root`` (same path Windows Setup uses).
+    On WSL escalate with ``wsl.exe -u root`` running a written .sh (never -lc with $PATH).
     """
-    import shlex
-
-    curl_bash = (
-        f'curl -fsSL --connect-timeout 30 --max-time 600 "{_INSTALLER_URL}" | bash'
-    )
-    vt_dir = str(home)
     owner = env.get('SUDO_USER') or env.get('USER') or Path.home().name
-    exports = (
-        f'export OTACON_VT_DIR={shlex.quote(vt_dir)}; '
-        f'export OTACON_VT_SKIP_UI=1; '
-        f'export HOME={shlex.quote(str(Path.home()))}; '
-        f'export PATH=/usr/lib/wsl/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; '
-        f'export LD_LIBRARY_PATH=/usr/lib/wsl/lib${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}; '
-    )
-    chown = (
-        f'rc=$?; chown -R {shlex.quote(owner)}:{shlex.quote(owner)} {shlex.quote(vt_dir)} 2>/dev/null || true; '
-        f'usermod -aG docker {shlex.quote(owner)} 2>/dev/null || true; exit $rc'
-    )
+    script = _write_genome_install_script(home, owner)
+    vt_dir = str(home)
 
     try:
         if os.geteuid() == 0:
-            return ['bash', '-c', exports + curl_bash + '; ' + chown], {}
+            return ['bash', str(script)], {}
     except AttributeError:
         pass
 
@@ -230,18 +250,18 @@ def _genome_install_command(home: Path, env: dict) -> tuple[list[str] | None, di
             ['sudo', '-n', 'true'], capture_output=True, timeout=5, check=False,
         )
         if probe.returncode == 0:
-            return ['sudo', '-n', 'bash', '-c', exports + curl_bash + '; ' + chown], {}
+            return ['sudo', '-n', 'bash', str(script)], {}
     except (OSError, subprocess.TimeoutExpired):
         pass
 
     wsl = _wsl_exe()
     if wsl:
-        inner = exports + curl_bash + '; ' + chown
         cmd = [wsl]
         distro = (os.environ.get('WSL_DISTRO_NAME') or '').strip()
         if distro:
             cmd += ['-d', distro]
-        cmd += ['-u', 'root', '--', 'bash', '-lc', inner]
+        # Pass script path only — no -lc string that can absorb Windows PATH.
+        cmd += ['-u', 'root', '--', 'bash', str(script)]
         return cmd, {}
 
     return None, {
@@ -251,7 +271,7 @@ def _genome_install_command(home: Path, env: dict) -> tuple[list[str] | None, di
         'hint': (
             'Re-run OtaconExpansion-Setup.bat (runs as wsl -u root), or from PowerShell: '
             f'wsl -u root -- bash -lc \'OTACON_VT_DIR={vt_dir} OTACON_VT_SKIP_UI=1 '
-            f'curl -fsSL {_INSTALLER_URL} | bash\''
+            f'PATH=/usr/lib/wsl/lib:/usr/bin:/bin curl -fsSL {_INSTALLER_URL} | bash\''
         ),
     }
 

@@ -58,7 +58,13 @@ class TestVoiceTrainerGpu(unittest.TestCase):
         self.assertEqual(cmd[0], '/mnt/c/Windows/System32/wsl.exe')
         self.assertIn('-u', cmd)
         self.assertIn('root', cmd)
+        self.assertNotIn('-lc', cmd)  # never unquoted -lc with Windows PATH
+        self.assertEqual(cmd[-2:], ['bash', str(vt._GENOME_INSTALL_SCRIPT)])
         self.assertFalse(err)
+        script = vt._GENOME_INSTALL_SCRIPT.read_text(encoding='utf-8')
+        self.assertIn('PATH=/usr/lib/wsl/lib:', script)
+        self.assertNotIn('$PATH', script)
+        self.assertNotIn('(x86)', script)
 
     def test_genome_install_needs_root_without_wsl_or_sudo(self):
         home = Path(tempfile.mkdtemp()) / 'missing'
