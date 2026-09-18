@@ -30,7 +30,7 @@ _POLL_STARTED = False
 
 
 def _studio_endpoint() -> str:
-    vs = probe_video_studio()
+    vs = probe_video_studio(clear_stale=False)
     disc = vs.discovery or {}
     return str(disc.get('endpoint') or os.environ.get('OTACON_COMFY_URL') or 'http://127.0.0.1:8188').rstrip('/')
 
@@ -216,13 +216,41 @@ def submit_image_job(
     client_id: str = 'otacon-expansion-muse',
 ) -> dict[str, Any]:
     """Submit Z-Image to ComfyUI. Returns ok+prompt_id or honest error (no job side effects)."""
-    ep = (endpoint or _studio_endpoint()).rstrip('/')
-    vs = probe_video_studio()
-    if vs.state != 'READY':
+    from expansion.capabilities.video_studio import comfy_endpoint_healthy
+
+    # Do not clear stale prefs during submit — a transient probe must not wipe
+    # a working endpoint between UI READY and Generate.
+    vs = probe_video_studio(clear_stale=False)
+    disc = vs.discovery or {}
+    ep = (endpoint or disc.get('endpoint') or _studio_endpoint()).rstrip('/')
+    ok, health_detail = comfy_endpoint_healthy(ep, timeout=4.0)
+    if not ok:
+        try:
+            from expansion.capabilities.comfy_sidecar import detect_local_comfy
+            detected = detect_local_comfy(timeout=2.0)
+            cand = str((detected or {}).get('endpoint') or '').rstrip('/')
+            if cand:
+                ok2, detail2 = comfy_endpoint_healthy(cand, timeout=4.0)
+                if ok2:
+                    ep = cand
+                    ok, health_detail = True, detail2
+                    try:
+                        from expansion.capabilities.comfy_sidecar import save_studio_endpoint
+                        save_studio_endpoint(ep)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    if not ok:
         return {
             'ok': False,
             'queued': False,
-            'error': 'creative workflow submitter: Video Studio not READY',
+            'error': 'creative workflow submitter: ComfyUI not reachable',
+            'detail': (
+                'Image generate needs a live ComfyUI. '
+                f'Last check: {health_detail}. '
+                'Open Creative → Set Up if Studio shows SETUP, or start Comfy on :8188.'
+            ),
             'studio_state': vs.state,
             'endpoint': ep,
             'http_status': 503,
@@ -370,8 +398,94 @@ def outputs_from_job(job) -> list[str]:
 
 
 def comfy_view_url(endpoint: str, filename: str) -> str:
+    """Direct Comfy /view URL — browser clients often get 403; prefer proxy routes."""
     ep = (endpoint or _studio_endpoint()).rstrip('/')
-    return f'{ep}/view?filename={filename}&type=output'
+    from urllib.parse import quote
+    return f'{ep}/view?filename={quote(filename)}&type=output'
+
+
+def comfy_output_roots() -> list[Path]:
+    roots: list[Path] = []
+    env = (os.environ.get('COMFYUI_OUTPUT_DIR') or os.environ.get('OTACON_COMFY_OUTPUT') or '').strip()
+    if env:
+        roots.append(Path(env).expanduser())
+    # Common local layouts (WSL / native).
+    for cand in (
+        Path.home() / 'ComfyUI' / 'output',
+        Path('/root/ComfyUI/output'),
+        Path('/opt/ComfyUI/output'),
+        Path.home() / 'comfyui' / 'output',
+    ):
+        if cand not in roots:
+            roots.append(cand)
+    return roots
+
+
+def resolve_output_file(filename: str) -> Optional[Path]:
+    name = Path(str(filename or '')).name
+    if not name or name in ('.', '..'):
+        return None
+    for root in comfy_output_roots():
+        try:
+            p = (root / name).resolve()
+            if not str(p).startswith(str(root.resolve())):
+                continue
+            if p.is_file():
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def fetch_comfy_output_bytes(
+    *,
+    filename: str,
+    endpoint: Optional[str] = None,
+    timeout: float = 20.0,
+) -> tuple[Optional[bytes], str, str]:
+    """Load a Comfy output for proxying through Otacon (:5757).
+
+    Prefer on-disk ComfyUI/output (no CORS/403). Fall back to server-side GET
+    of Comfy /view (localhost → Comfy, never the browser).
+    """
+    name = Path(str(filename or '')).name
+    if not name:
+        return None, '', ''
+    mime = 'application/octet-stream'
+    low = name.lower()
+    if low.endswith(('.png',)):
+        mime = 'image/png'
+    elif low.endswith(('.jpg', '.jpeg')):
+        mime = 'image/jpeg'
+    elif low.endswith(('.webp',)):
+        mime = 'image/webp'
+    elif low.endswith(('.gif',)):
+        mime = 'image/gif'
+    elif low.endswith(('.mp4', '.webm')):
+        mime = 'video/mp4' if low.endswith('.mp4') else 'video/webm'
+    elif low.endswith(('.mp3', '.wav', '.flac', '.ogg')):
+        mime = 'audio/mpeg' if low.endswith('.mp3') else 'audio/wav'
+
+    disk = resolve_output_file(name)
+    if disk is not None:
+        try:
+            return disk.read_bytes(), mime, name
+        except OSError:
+            pass
+
+    ep = (endpoint or _studio_endpoint()).rstrip('/')
+    from urllib.parse import quote
+    url = f'{ep}/view?filename={quote(name)}&type=output'
+    req = urllib.request.Request(url, headers={'Accept': '*/*'}, method='GET')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+            ct = (resp.headers.get('Content-Type') or mime).split(';')[0].strip() or mime
+            if data[:1] in (b'{', b'[') and 'json' in ct:
+                return None, ct, name
+            return data, ct, name
+    except (urllib.error.URLError, TimeoutError, OSError, urllib.error.HTTPError):
+        return None, mime, name
 
 
 def public_creative_job(job) -> dict[str, Any]:
@@ -380,12 +494,15 @@ def public_creative_job(job) -> dict[str, Any]:
     d = asdict(job) if hasattr(job, '__dataclass_fields__') else dict(job)
     files = outputs_from_job(job)
     ep = endpoint_from_job(job)
-    urls = [comfy_view_url(ep, f) for f in files]
     jid = getattr(job, 'job_id', None) or d.get('job_id') or d.get('id')
+    # Same-origin proxies — never point the browser at Comfy :8188 /view (403).
+    proxy = f'/api/expansion/creative/jobs/{jid}/output' if jid else ''
+    workshop_proxy = f'/video-studio/api/jobs/{jid}/output' if jid else ''
     d['outputs'] = files
-    d['output_urls'] = urls
-    d['preview_url'] = urls[0] if urls else ''
-    d['output_proxy'] = f'/api/expansion/creative/jobs/{jid}/output' if files and jid else ''
+    d['output_urls'] = [proxy] if proxy and files else []
+    d['preview_url'] = proxy if files else ''
+    d['output_proxy'] = proxy if files else ''
+    d['workshop_output'] = workshop_proxy if files else ''
     d['prompt_id'] = prompt_id_from_job(job)
     d['comfy_endpoint'] = ep
     return d

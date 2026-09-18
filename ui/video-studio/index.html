@@ -1833,7 +1833,23 @@ function vsUpdateActorRequiredWarning(videoEngine) {
 
 document.querySelectorAll('.vs-mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    vsMode = btn.dataset.mode;
+    const mode = btn.dataset.mode;
+    const flags = window.__vsPackFlags || {};
+    if (mode === 'music' && flags.music_ready === false) {
+      const note = document.getElementById('vs-music-note') || document.getElementById('vs-submit-note');
+      if (note) {
+        note.textContent = 'Music packs are not installed on this profile yet. Use Image mode — generate works there.';
+      }
+      alert('Music packs are not installed on this profile yet. Switch to Image — generation works there.');
+      return;
+    }
+    if (mode === 'video' && flags.video_ready === false && flags.image_ready) {
+      const note = document.getElementById('vs-submit-note');
+      if (note) {
+        note.textContent = 'Video packs are not installed on this profile yet. Image generation is available.';
+      }
+    }
+    vsMode = mode;
     window.__vsModePinned = true;
     vsApplyMode();
   });
@@ -2131,10 +2147,29 @@ async function vsRefreshHealth() {
         compute.textContent = 'VIDEO PATH · GPU NOT READY · will not fall back to CPU';
       }
     }
+    window.__vsPackFlags = {
+      image_ready: !!h.image_ready,
+      video_ready: !!h.video_ready,
+      music_ready: !!h.music_ready,
+    };
     // Prefer Image mode when this PC has Z-Image but no video packs (typical 8 GB).
     if (!window.__vsModePinned && h.preferred_mode === 'image' && vsMode === 'video') {
       vsMode = 'image';
       vsApplyMode();
+    }
+    // Music without a pack/submitter — bounce off music mode with an honest note.
+    if (vsMode === 'music' && h.music_ready === false) {
+      const note = document.getElementById('vs-music-note') || document.getElementById('vs-submit-note');
+      if (note) {
+        note.textContent = (
+          h.packs_aria
+          || 'Music packs are not installed on this profile yet. Switch to Image — generate works there.'
+        );
+      }
+      if (!window.__vsModePinned) {
+        vsMode = h.image_ready ? 'image' : 'video';
+        vsApplyMode();
+      }
     }
   } catch (e) {
     txt.textContent = 'GPU gate unreachable';
@@ -2640,6 +2675,13 @@ function vsMusicAssistApply() {
 async function vsGenerateMusic(advanced) {
   const note = document.getElementById('vs-music-note');
   const btn = document.getElementById(advanced ? 'vs-music-adv-btn' : 'vs-music-simple-btn');
+  const flags = window.__vsPackFlags || {};
+  if (flags.music_ready === false) {
+    if (note) {
+      note.textContent = 'Music packs are not installed on this profile yet. Use Image mode — generate works there.';
+    }
+    return;
+  }
   const body = advanced ? {
     tags: document.getElementById('vs-music-adv-tags').value.trim(),
     lyrics: document.getElementById('vs-music-adv-lyrics').value,

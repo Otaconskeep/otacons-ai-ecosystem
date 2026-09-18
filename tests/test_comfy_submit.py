@@ -98,11 +98,42 @@ class ComfySubmitTests(unittest.TestCase):
                 )
                 pub = cs.public_creative_job(store.get(job.job_id))
                 self.assertEqual(pub['outputs'], ['otacon_muse00001.png'])
-                self.assertIn('otacon_muse00001.png', pub['preview_url'])
+                self.assertEqual(
+                    pub['preview_url'],
+                    f'/api/expansion/creative/jobs/{job.job_id}/output',
+                )
+                self.assertNotIn('8188', pub['preview_url'])
                 self.assertEqual(
                     pub['output_proxy'],
                     f'/api/expansion/creative/jobs/{job.job_id}/output',
                 )
+
+    def test_fetch_comfy_output_bytes_from_disk(self):
+        with TemporaryDirectory() as td:
+            outdir = Path(td) / 'output'
+            outdir.mkdir()
+            img = outdir / 'burger.png'
+            img.write_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 16)
+            with mock.patch.dict(os.environ, {'COMFYUI_OUTPUT_DIR': str(outdir)}):
+                data, mime, name = cs.fetch_comfy_output_bytes(filename='burger.png')
+            self.assertEqual(name, 'burger.png')
+            self.assertEqual(mime, 'image/png')
+            self.assertTrue(data.startswith(b'\x89PNG'))
+
+    def test_submit_uses_healthy_comfy_even_if_studio_not_ready_label(self):
+        with mock.patch.object(cs, 'probe_video_studio') as pvs, \
+             mock.patch.object(cs, 'image_workflow_status', return_value={
+                 'ok': True, 'unet': 'z.safetensors', 'clip': 'c.safetensors', 'vae': 'ae.safetensors',
+             }), \
+             mock.patch('expansion.capabilities.video_studio.comfy_endpoint_healthy', return_value=(True, '/system_stats → 200')), \
+             mock.patch.object(cs, '_http_json', return_value=(200, {'prompt_id': 'pid-ok'})):
+            pvs.return_value = mock.Mock(
+                state='LIMITED',
+                discovery={'endpoint': 'http://127.0.0.1:8188'},
+            )
+            out = cs.submit_image_job(prompt='a man eating a burger')
+        self.assertTrue(out['ok'])
+        self.assertEqual(out['prompt_id'], 'pid-ok')
 
     def test_migrate_stuck_creative_jobs(self):
         with TemporaryDirectory() as td:

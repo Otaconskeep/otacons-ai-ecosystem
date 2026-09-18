@@ -510,6 +510,18 @@ def _capability_snapshot() -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def send_bytes(self, data: bytes, content_type: str = 'application/octet-stream', filename: str = ''):
+        self.send_response(200)
+        self.send_header('Content-Type', content_type or 'application/octet-stream')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
+        if filename:
+            safe = str(filename).replace('"', '')
+            self.send_header('Content-Disposition', f'inline; filename="{safe}"')
+        self.send_header('Access-Control-Allow-Origin', 'null' if BIND_MODE == 'lan' else '*')
+        self.end_headers()
+        self.wfile.write(data)
+
     def send_json(self, data, status=200):
         b = json.dumps(data).encode()
         self.send_response(status)
@@ -590,7 +602,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('Cache-Control', 'no-store')
                 self.end_headers()
 
-            if handle_workshop_get(path, self.send_json, send_redirect=_redir):
+            def _bytes(data: bytes, content_type: str = 'application/octet-stream', filename: str = '') -> None:
+                self.send_bytes(data, content_type, filename)
+
+            if handle_workshop_get(path, self.send_json, send_redirect=_redir, send_bytes=_bytes):
                 return
             self.send_json({'error': 'not found'}, 404)
             return
@@ -763,7 +778,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'error': str(exc)}, 404)
         elif path.startswith('/api/expansion/'):
             from expansion.api import handle_expansion_get
-            if not handle_expansion_get(path, self.send_json):
+            if not handle_expansion_get(path, self.send_json, send_bytes=self.send_bytes):
                 self.send_json({'error': 'not found'}, 404)
         elif path == '/api/preferences':
             if not self._require_auth_if_needed():

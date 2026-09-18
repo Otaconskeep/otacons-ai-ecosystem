@@ -7,8 +7,12 @@ from __future__ import annotations
 from dataclasses import asdict
 
 
-def handle_expansion_get(path: str, send_json) -> bool:
-    """Return True if handled."""
+def handle_expansion_get(path: str, send_json, send_bytes=None) -> bool:
+    """Return True if handled.
+
+    send_bytes(data, content_type, filename) is optional — used to proxy
+    Creative job outputs through Otacon instead of redirecting to Comfy :8188.
+    """
     if path == '/api/expansion/voice-trainer/install-status':
         from expansion.capabilities.voice_trainer import genome_install_status, probe_voice_trainer
         st = genome_install_status()
@@ -277,8 +281,8 @@ def handle_expansion_get(path: str, send_json) -> bool:
         return True
     if path.startswith('/api/expansion/creative/jobs/') and path.endswith('/output'):
         from expansion.capabilities.comfy_submit import (
-            comfy_view_url,
             endpoint_from_job,
+            fetch_comfy_output_bytes,
             outputs_from_job,
             poll_creative_jobs_once,
         )
@@ -304,14 +308,31 @@ def handle_expansion_get(path: str, send_json) -> bool:
                 'job_id': jid,
             }, 404)
             return True
-        url = comfy_view_url(endpoint_from_job(job), files[0])
+        data, mime, name = fetch_comfy_output_bytes(
+            filename=files[0],
+            endpoint=endpoint_from_job(job),
+        )
+        if data is None:
+            send_json({
+                'ok': False,
+                'error': 'output not ready',
+                'detail': 'Could not load Comfy output through Otacon proxy.',
+                'filename': files[0],
+                'job_id': jid,
+            }, 404)
+            return True
+        if callable(send_bytes):
+            send_bytes(data, mime, name or files[0])
+            return True
+        # Fallback JSON with same-origin URL (UI should hit this route as <img src>).
         send_json({
             'ok': True,
             'job_id': jid,
-            'filename': files[0],
+            'filename': name or files[0],
             'filenames': files,
-            'url': url,
-            'open': url,
+            'url': f'/api/expansion/creative/jobs/{jid}/output',
+            'content_type': mime,
+            'bytes': len(data),
         })
         return True
     if path.startswith('/api/expansion/creative/jobs/'):

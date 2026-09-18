@@ -19,7 +19,7 @@ class WorkshopApiTests(unittest.TestCase):
         html = (root / 'index.html').read_text(encoding='utf-8')
         self.assertIn('data-theme="video-studio"', html)
         self.assertIn('/video-studio/static/css/video-studio-hud.css', html)
-        self.assertIn('THE WORKSHOP', html.upper())
+        self.assertIn('CREATIVE', html.upper())
 
     def test_health_and_actors(self):
         with TemporaryDirectory() as td:

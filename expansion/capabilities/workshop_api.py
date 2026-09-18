@@ -174,7 +174,7 @@ def sync_expansion_job_to_workshop(job: Any, layout: Optional[StateLayout] = Non
         'endpoint': ep,
         'outputs': files,
         'output_file': files[0] if files else '',
-        'preview_url': pub.get('preview_url') or '',
+        'preview_url': pub.get('preview_url') or pub.get('workshop_output') or '',
         'expansion': True,
         'width': 512,
         'height': 512,
@@ -224,7 +224,7 @@ def _expansion_jobs_as_workshop(layout: Optional[StateLayout] = None) -> list[di
             'endpoint': endpoint_from_job(job),
             'outputs': files,
             'output_file': files[0] if files else '',
-            'preview_url': pub.get('preview_url') or '',
+            'preview_url': pub.get('preview_url') or pub.get('workshop_output') or '',
             'expansion': True,
             'width': 512,
             'height': 512,
@@ -372,8 +372,40 @@ def _send_job_output(
     jid: str,
     layout: Optional[StateLayout],
     send_json: SendJson,
-    send_redirect: Optional[Callable[[str, int], None]],
+    send_redirect: Optional[Callable[[str, int], None]] = None,
+    send_bytes: Optional[Callable[..., None]] = None,
 ) -> bool:
+    from expansion.capabilities.comfy_submit import (
+        endpoint_from_job,
+        fetch_comfy_output_bytes,
+        outputs_from_job,
+    )
+
+    def _proxy(fname: str, endpoint: str) -> bool:
+        data, mime, name = fetch_comfy_output_bytes(filename=fname, endpoint=endpoint)
+        if data is None:
+            send_json({
+                'error': 'output not ready',
+                'detail': (
+                    'Could not load that file through Otacon. '
+                    'If Comfy finished, try Generate again or open Creative after soft-update.'
+                ),
+                'filename': name or fname,
+            }, 404)
+            return True
+        if send_bytes:
+            send_bytes(data, mime, name or fname)
+            return True
+        # No byte sender (tests) — return same-origin relative hint, never Comfy :8188.
+        send_json({
+            'ok': True,
+            'filename': name or fname,
+            'url': f'/video-studio/api/jobs/{jid}/output',
+            'bytes': len(data),
+            'content_type': mime,
+        })
+        return True
+
     job = _get_job(jid, layout)
     if job:
         job = _refresh_image_job(dict(job), layout)
@@ -382,16 +414,11 @@ def _send_job_output(
             return True
         ep = (job.get('endpoint') or 'http://127.0.0.1:8188').rstrip('/')
         fname = job.get('output_file') or ((job.get('outputs') or [None])[0])
-        if fname and send_redirect:
-            send_redirect(f'{ep}/view?filename={fname}&type=output', 302)
+        if not fname:
+            send_json({'error': 'no output'}, 404)
             return True
-        if fname:
-            send_json({'ok': True, 'url': f'{ep}/view?filename={fname}&type=output', 'filename': fname})
-            return True
-        send_json({'error': 'no output'}, 404)
-        return True
+        return _proxy(str(fname), ep)
     try:
-        from expansion.capabilities.comfy_submit import comfy_view_url, endpoint_from_job, outputs_from_job
         from expansion.jobs import JobStore
         ej = JobStore(layout=layout).get(jid)
     except Exception:
@@ -403,18 +430,14 @@ def _send_job_output(
     if not files:
         send_json({'error': 'output not ready', 'status': getattr(ej, 'status', '')}, 404)
         return True
-    url = comfy_view_url(endpoint_from_job(ej), files[0])
-    if send_redirect:
-        send_redirect(url, 302)
-        return True
-    send_json({'ok': True, 'url': url, 'filename': files[0]})
-    return True
+    return _proxy(files[0], endpoint_from_job(ej))
 
 
 def handle_workshop_get(
     path: str,
     send_json: SendJson,
     send_redirect: Optional[Callable[[str, int], None]] = None,
+    send_bytes: Optional[Callable[..., None]] = None,
 ) -> bool:
     """Return True if handled. path has no query string."""
     if not path.startswith('/video-studio/api/'):
@@ -482,7 +505,7 @@ def handle_workshop_get(
     m = re.match(r'jobs/([^/]+)/output$', rel)
     if m:
         jid = unquote(m.group(1))
-        return _send_job_output(jid, layout, send_json, send_redirect)
+        return _send_job_output(jid, layout, send_json, send_redirect, send_bytes)
 
     m = re.match(r'jobs/([^/]+)$', rel)
     if m:
@@ -522,7 +545,7 @@ def handle_workshop_get(
 
     m = re.match(r'generate-image-v1/([^/]+)/output$', rel)
     if m:
-        return _send_job_output(unquote(m.group(1)), layout, send_json, send_redirect)
+        return _send_job_output(unquote(m.group(1)), layout, send_json, send_redirect, send_bytes)
 
     # Soft stubs for modalities not fully wired yet — keep UI from hard-failing.
     if rel.startswith('generate-music-v1/') or rel.startswith('generate-v2/') or rel.startswith('generate-hidream'):
