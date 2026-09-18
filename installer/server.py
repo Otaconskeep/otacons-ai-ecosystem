@@ -292,6 +292,56 @@ def _chat_inference_probe(endpoint: str, model: str, *, force: bool = False) -> 
         return False, detail, model
 
 
+def _voice_trainer_capability_fields(vt) -> dict:
+    """Map probe_voice_trainer() into /api/capabilities Genome fields.
+
+    Deck UI reads voice_trainer_gpu + voice_trainer_discovery — must match
+    install-status / :8765/status.json (never omit GPU when discovery has it).
+    """
+    disc = (getattr(vt, 'discovery', None) or {}) if vt is not None else {}
+    state = (getattr(vt, 'state', None) or '').lower()
+    if state == 'ready':
+        ui_state = 'ready'
+    elif state == 'degraded':
+        ui_state = 'offline'
+    elif state == 'unavailable':
+        ui_state = 'unavailable'
+    else:
+        ui_state = 'not_configured'
+    status_doc = disc.get('status') if isinstance(disc.get('status'), dict) else {}
+    gpu_flag = bool(disc.get('gpu') or status_doc.get('gpu') or status_doc.get('ok'))
+    url = disc.get('url') or (
+        f"http://127.0.0.1:{disc.get('port') or 8765}/" if disc.get('listening') else ''
+    )
+    return {
+        'voice_trainer': ui_state,
+        'voice_trainer_path': disc.get('path') or '',
+        'voice_trainer_listening': bool(disc.get('listening')),
+        'voice_trainer_url': url,
+        'voice_trainer_note': getattr(vt, 'detail', None) or (
+            'Genome Voice Trainer is an Expansion premium feature.'
+        ),
+        'voice_trainer_premium': True,
+        'voice_trainer_gpu': gpu_flag,
+        'voice_trainer_discovery': {
+            'path': disc.get('path') or '',
+            'listening': bool(disc.get('listening')),
+            'verified': bool(disc.get('verified')),
+            'port': disc.get('port') or 8765,
+            'url': url,
+            'gpu': gpu_flag,
+            'gpu_name': status_doc.get('gpu_name') or disc.get('gpu_name') or '',
+            'gpu_vram_mb': status_doc.get('gpu_vram_mb') or disc.get('gpu_vram_mb'),
+            'docker_image': disc.get('docker_image') or status_doc.get('image') or '',
+            'image': status_doc.get('image') or disc.get('docker_image') or '',
+            'premium': True,
+            'product': disc.get('product') or 'expansion',
+            'train': disc.get('train') or {},
+            'status': status_doc,
+        },
+    }
+
+
 def _capability_snapshot() -> dict:
     """Honest capability states for the UI (ready / not_configured / unavailable / degraded / error).
 
@@ -433,31 +483,15 @@ def _capability_snapshot() -> dict:
     # Genome Voice Trainer — Expansion premium. Honest states (never fake Open).
     try:
         from expansion.capabilities.voice_trainer import probe_voice_trainer
-        vt = probe_voice_trainer()
-        disc = vt.discovery or {}
-        state = (vt.state or '').lower()
-        # Map capability states onto UI vocabulary.
-        if state == 'ready':
-            caps['voice_trainer'] = 'ready'
-        elif state == 'degraded':
-            caps['voice_trainer'] = 'offline'
-        elif state == 'unavailable':
-            caps['voice_trainer'] = 'unavailable'
-        else:
-            caps['voice_trainer'] = 'not_configured'
-        caps['voice_trainer_path'] = disc.get('path') or ''
-        caps['voice_trainer_listening'] = bool(disc.get('listening'))
-        caps['voice_trainer_url'] = disc.get('url') or ''
-        caps['voice_trainer_note'] = vt.detail or (
-            'Genome Voice Trainer is an Expansion premium feature.'
-        )
-        caps['voice_trainer_premium'] = True
+        caps.update(_voice_trainer_capability_fields(probe_voice_trainer()))
     except Exception as exc:  # noqa: BLE001
         caps['voice_trainer'] = 'error'
         caps['voice_trainer_note'] = str(exc)
         caps['voice_trainer_url'] = ''
         caps['voice_trainer_listening'] = False
         caps['voice_trainer_premium'] = True
+        caps['voice_trainer_gpu'] = False
+        caps['voice_trainer_discovery'] = {}
 
     caps['llm_model'] = ''
     try:
@@ -703,7 +737,7 @@ class Handler(BaseHTTPRequestHandler):
             '/codec', '/rex', '/learning', '/creative', '/ops', '/reports',
             '/dossiers', '/journal', '/diary', '/page-builder', '/rooms',
             '/relationships', '/emotion', '/command', '/command-center',
-            '/expansion',
+            '/expansion', '/genome', '/voice-trainer',
         }
         return path.rstrip('/') in known or path in known
 

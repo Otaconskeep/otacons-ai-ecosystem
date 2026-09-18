@@ -61,7 +61,8 @@ function roomKindFromRoute(route){
     '/dashboard':'dashboard','/war-room':'war-room','/intel':'intel',
     '/video-studio':'creative','/ha':'ops','/codec':'codec',
     '/emotion':'emotion','/emotions':'emotion','/page-builder':'page-builder',
-    '/pages/builder':'page-builder','/ops':'ops','/creative':'creative'
+    '/pages/builder':'page-builder','/ops':'ops','/creative':'creative',
+    '/genome':'genome','/voice-trainer':'genome'
   };
   return map[p]||'';
 }
@@ -690,8 +691,8 @@ async function showHome(){
 
   const railChips=expOn?`
     <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('transmit');showChat()"><span>CODEC</span><em class="${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'DOWN'}</em></button>
-    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');showGenomeSetup()"><span>GENOME</span><em class="${gnmChip}">${vtOk?'OPEN':(vtOffline?'START':'SETUP')}</em></button>
-    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');showVideoStudioSetup()"><span>STUDIO</span><em class="${stuChip}">${videoOk?'READY':'SETUP'}</em></button>
+    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':'showGenomeSetup()'}"><span>GENOME</span><em class="${gnmChip}">${vtOk?'OPEN':(vtOffline?'START':'SETUP')}</em></button>
+    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${videoOk?'openComfyStudio()':'showVideoStudioSetup()'}"><span>STUDIO</span><em class="${stuChip}">${videoOk?'READY':'SETUP'}</em></button>
     <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('war-room')"><span>WAR</span><em class="ok">ENTER</em></button>
     <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('command')"><span>COMMAND</span><em class="ok">ENTER</em></button>
   `:`
@@ -747,7 +748,7 @@ async function showHome(){
             <p class="line">${escapeHtml(ariaLine)}</p>
             <div class="hud-cta-row">
               <button type="button" class="hud-cta primary" onclick="otArmAudio();otSfx('transmit');showChat()">Open Codec</button>
-              ${expOn?`<button type="button" class="hud-cta" onclick="otArmAudio();otSfx('click');showGenomeSetup()">Genome</button>
+              ${expOn?`<button type="button" class="hud-cta" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':'showGenomeSetup()'}">Genome</button>
               <button type="button" class="hud-cta warn" onclick="otArmAudio();otSfx('click');showVideoStudioSetup()">Studio</button>`:''}
             </div>
             <div class="hud-prio-rail">${railChips}</div>
@@ -1257,7 +1258,7 @@ async function showChat(){
       <div class="cc-rack">
         <div class="cc-rack-h">GENOME</div>
         <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Voice Trainer on :8765.':vtOffline?'Installed — start UI.':'Open Setup to install/start.'}</p>
-        <button type=button class="cc-btn" onclick="otSfx('click');showGenomeSetup()">Open Genome</button>
+        <button type=button class="cc-btn" onclick="otSfx('click');${vtOk?'openVoiceTrainer()':'showGenomeSetup()'}">${vtOk?'Open Genome lab':'Open Genome'}</button>
       </div>
     </aside>
   </div>
@@ -1303,20 +1304,34 @@ async function openCurrentAgentRoom(){
   await showExpansionSurface(kind);
 }
 
+function genomeLabUrl(){
+  const c=state.capabilities||{};
+  const disc=c.voice_trainer_discovery||{};
+  return c.voice_trainer_url || disc.url || 'http://127.0.0.1:8765/';
+}
+function videoStudioUrl(){
+  const c=state.capabilities||{};
+  const vs=c.video_studio||{};
+  const disc=vs.discovery||{};
+  return c.video_endpoint || disc.endpoint || 'http://127.0.0.1:8188/';
+}
+function openComfyStudio(){
+  const url=videoStudioUrl();
+  try{ window.open(url,'_blank','noopener'); }catch(_e){}
+}
 async function openVoiceTrainer(){
-  // Never dump the operator on the classic green status page. Upgrade :8765 to
-  // Expansion Genome first, then open — or stay on the deck Genome surface.
+  // When Genome is ready, open the live lab URL directly (:8765).
   try{
     await api('/api/expansion/voice-trainer/start',{}, 20000);
     await loadCapabilities();
   }catch(_e){}
-  const url=(state.capabilities&&state.capabilities.voice_trainer_url)||'http://127.0.0.1:8765/';
+  const url=genomeLabUrl();
+  if(capStatus('voice_trainer')==='ready' || (state.capabilities&&state.capabilities.voice_trainer_listening)){
+    try{ window.open(url,'_blank','noopener'); return; }catch(_e){}
+  }
   try{
     const st=await fetch(new URL('/api/train-status', url).href,{cache:'no-store'});
-    if(st.ok){
-      window.open(url,'_blank','noopener');
-      return;
-    }
+    if(st.ok){ window.open(url,'_blank','noopener'); return; }
   }catch(_e){}
   showGenomeSetup();
 }
@@ -1363,7 +1378,9 @@ async function showGenomeSetup(){
   const st=capStatus('voice_trainer');
   const path=(state.capabilities&&state.capabilities.voice_trainer_path)||'~/otacon-voice-trainer';
   const disc=(state.capabilities&&state.capabilities.voice_trainer_discovery)||{};
-  const gpuOk=!!(disc.gpu||(state.capabilities&&state.capabilities.voice_trainer_gpu));
+  const gpuOk=!!(disc.gpu||(state.capabilities&&state.capabilities.voice_trainer_gpu)||(disc.status&&disc.status.gpu));
+  const gpuName=disc.gpu_name||(disc.status&&disc.status.gpu_name)||'';
+  const gpuVram=disc.gpu_vram_mb||(disc.status&&disc.status.gpu_vram_mb)||'';
   const ready=st==='ready';
   const offline=st==='offline';
   const chip=ready?'ok':(offline||gpuOk?'warn':'bad');
@@ -1401,7 +1418,7 @@ async function showGenomeSetup(){
       <span class="k">Status</span><span class="v ${chip}">${escapeHtml(String(st).toUpperCase())}</span>
     </button>
     <button type="button" class="gn-widget" onclick="genomeOpenStatus()">
-      <span class="k">GPU</span><span class="v ${gpuOk?'ok':'bad'}">${gpuOk?'VISIBLE':'MISSING'}</span>
+      <span class="k">GPU</span><span class="v ${gpuOk?'ok':'bad'}">${gpuOk?(escapeHtml(gpuName||'VISIBLE')+(gpuVram?(' · '+gpuVram+' MiB'):'')):'MISSING'}</span>
     </button>
     <button type="button" class="gn-widget" onclick="genomeOpenTrain()">
       <span class="k">Train</span><span class="v">${ready||offline?'OPEN FORM':'INSTALL FIRST'}</span>
@@ -1624,7 +1641,8 @@ async function showVideoStudioSetup(){
     <p class="muted" id="comfyInstallStatus" style="margin-top:10px;white-space:pre-wrap">${escapeHtml(setup.error||'')}</p>
     <div class="hud-cta-row" style="margin-top:14px">
       ${ready
-        ?`<button type="button" class="hud-cta primary" onclick="otSfx('ok');showExpansionSurface('creative')">Open Video Studio</button>`
+        ?`<button type="button" class="hud-cta primary" onclick="otSfx('ok');openComfyStudio()">Open ComfyUI · 8188</button>`+
+          `<button type="button" class="hud-cta" onclick="otSfx('ok');showExpansionSurface('creative')">Open Muse Workshop</button>`
         :(underSpec
           ?`<button type="button" class="hud-cta" id="comfyStartBtn" disabled>Waiting for your OK…</button>`
           :`<button type="button" class="hud-cta primary" id="comfyStartBtn" onclick="otSfx('ok');startStudioSetup()">${setup.running?'Working…':'Set Up Video Studio'}</button>`)}
@@ -1988,7 +2006,7 @@ async function showExpansionSurface(kind){
   try{
     const pathMap={
       'war-room':'/war-room','dashboard':'/dashboard','intel':'/intel',
-      'video-studio':'/creative','ha':'/ops','rex':'/rex','learning':'/learning',
+      'video-studio':'/creative','ha':'/ops','rex':'/rex','learning':'/learning','genome':'/genome','voice-trainer':'/genome',
       'creative':'/creative','ops':'/ops','reports':'/reports','dossiers':'/dossiers',
       'journal':'/journal','diary':'/diary','page-builder':'/page-builder','rooms':'/rooms',
       'relationships':'/relationships','emotion':'/emotion','command':'/command',
@@ -1999,6 +2017,11 @@ async function showExpansionSurface(kind){
       history.pushState({expansion:kind}, '', target);
     }
   }catch(_e){}
+    if(kind==='genome'||kind==='voice-trainer'||kind==='voice_trainer'){
+    if(capStatus('voice_trainer')==='ready') openVoiceTrainer();
+    else showGenomeSetup();
+    return;
+  }
   if(kind==='rex'){
     await showRexBoard();
     return;
@@ -2399,7 +2422,7 @@ async function showRexBoard(opts){
     const p=(location.pathname||'/').replace(/\/+$/,'') || '/';
     const map={
       '/war-room':'war-room','/dashboard':'dashboard','/intel':'intel',
-      '/video-studio':'creative','/ha':'ops','/rex':'rex','/learning':'learning',
+      '/video-studio':'creative','/ha':'ops','/rex':'rex','/learning':'learning','/genome':'genome','/voice-trainer':'genome',
       '/creative':'creative','/ops':'ops','/reports':'reports','/dossiers':'dossiers',
       '/journal':'journal','/diary':'diary','/page-builder':'page-builder','/rooms':'rooms',
       '/relationships':'relationships','/emotion':'emotion','/command':'command',

@@ -123,14 +123,17 @@ def probe_voice_trainer() -> CapabilityReport:
             except OSError:
                 pass
 
-    disc = {
+        disc = {
         'path': str(home) if installed else '',
         'listening': live,
         'verified': verified,
         'port': DEFAULT_PORT,
-        'url': f'http://127.0.0.1:{DEFAULT_PORT}/' if verified else '',
-        'gpu': gpu,
-        'docker_image': image,
+        # Prefer a usable URL whenever the listener is up (classic or Genome).
+        'url': f'http://127.0.0.1:{DEFAULT_PORT}/' if (verified or live) else '',
+        'gpu': bool(gpu or status_doc.get('gpu')),
+        'gpu_name': status_doc.get('gpu_name') or '',
+        'gpu_vram_mb': status_doc.get('gpu_vram_mb'),
+        'docker_image': image or status_doc.get('image') or '',
         'premium': True,
         'product': 'expansion',
         'train': train_state(),
