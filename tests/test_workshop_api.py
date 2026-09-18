@@ -20,6 +20,8 @@ class WorkshopApiTests(unittest.TestCase):
         self.assertIn('data-theme="video-studio"', html)
         self.assertIn('/video-studio/static/css/video-studio-hud.css', html)
         self.assertIn('CREATIVE', html.upper())
+        self.assertIn('data-telem-endpoint="/video-studio/api/telemetry"', html)
+        self.assertNotIn('data-telem-endpoint="/api/executor/telemetry"', html)
 
     def test_health_and_actors(self):
         with TemporaryDirectory() as td:
@@ -171,6 +173,32 @@ class WorkshopApiTests(unittest.TestCase):
                 self.assertTrue(ok2)
                 self.assertEqual(got2.get('status'), 500)
                 self.assertEqual(got2['json'].get('error'), 'byte_sender_missing')
+
+    def test_health_ready_when_comfy_ok_even_if_studio_not_ready_label(self):
+        """Image-only boxes: health must not stay ready:false when Comfy+Z-Image work."""
+        vs = mock.Mock(state='NOT_CONFIGURED', discovery={'endpoint': ''})
+        with mock.patch('expansion.capabilities.video_studio.probe_video_studio', return_value=vs), \
+             mock.patch('expansion.capabilities.studio_setup.studio_hardware_snapshot', return_value={
+                 'cuda_available': True, 'gpu_model': 'RTX 3070', 'vram_gb': 8,
+             }), \
+             mock.patch('expansion.capabilities.comfy_submit._studio_endpoint', return_value='http://127.0.0.1:8188'), \
+             mock.patch('expansion.capabilities.video_studio.comfy_endpoint_healthy', return_value=(True, 'ok')), \
+             mock.patch('expansion.capabilities.comfy_submit.image_workflow_status', return_value={
+                 'ok': True, 'unet': 'z.safetensors',
+             }), \
+             mock.patch('expansion.capabilities.studio_packs.packs_status', return_value={
+                 'image_ready': True,
+                 'packs': {'z_image': {'ok': True}, 'wan': {'ok': False}, 'ace_step': {'ok': False}},
+             }):
+            h = wa._health()
+        self.assertTrue(h['studio_ready'])
+        self.assertTrue(h['image_ready'])
+        self.assertTrue(h['generation_ready'])
+        self.assertTrue(h['ready'])
+        self.assertEqual(h['endpoint'], 'http://127.0.0.1:8188')
+        self.assertEqual(h['preferred_mode'], 'image')
+        self.assertFalse(h['music_ready'])
+        self.assertFalse(h['video_ready'])
 
 
 if __name__ == '__main__':

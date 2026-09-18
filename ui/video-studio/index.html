@@ -423,7 +423,7 @@
         <h1>CREATIVE</h1>
         <p>Muse’s maker space — the Keep Workshop UI. Write, generate images, and generate video on the household GPU. Create a character once, then call them into every scene that follows.</p>
       </div>
-      <div id="vs-telem-host" class="mf-telem-host" data-mf-cyberdeck="full" data-telem-title="SYS // VIDEO STUDIO CYBERDECK · PROC otacon-executor" data-telem-endpoint="/api/executor/telemetry"></div>
+      <div id="vs-telem-host" class="mf-telem-host" data-mf-cyberdeck="full" data-telem-title="SYS // VIDEO STUDIO CYBERDECK · PROC otacon-executor" data-telem-endpoint="/video-studio/api/telemetry"></div>
     </div>
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1.1rem">
       <div class="vs-gpu-badge" id="vs-gpu-badge"><div class="vs-gpu-dot" id="vs-gpu-dot"></div><span id="vs-gpu-text">checking GPU…</span></div>
@@ -2340,9 +2340,12 @@ async function vsRefreshJobs() {
       } else if (j.status === 'failed') {
         extra = `<div class="vs-note">${(j.error||'').slice(0,200)}</div>`;
       }
-      meta = jt === 'image'
-        ? `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${j.width}×${j.height} · image · ${created}`
-        : `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${j.width}×${j.height} · ${j.num_frames}f · ${created}`;
+      const isImg = jt === 'image' || jt === 'image_v1' || jt === 'hidream_v1';
+      const framesBit = (!isImg && j.num_frames != null && j.num_frames !== '')
+        ? ` · ${j.num_frames}f` : '';
+      meta = isImg
+        ? `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${j.width||'?'}×${j.height||'?'} · image · ${created}`
+        : `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${j.width||'?'}×${j.height||'?'}${framesBit} · ${created}`;
     }
     const deleteBtn = isPurgeable
       ? `<button type="button" class="vs-submit vs-submit-sm vs-job-delete-btn" data-id="${j.id}"

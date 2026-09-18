@@ -123,7 +123,9 @@ def probe_voice_trainer() -> CapabilityReport:
             except OSError:
                 pass
 
-        disc = {
+    # Always build disc — branches below run when live is False too
+    # (was UnboundLocalError: disc referenced before assignment).
+    disc = {
         'path': str(home) if installed else '',
         'listening': live,
         'verified': verified,

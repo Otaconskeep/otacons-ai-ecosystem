@@ -145,8 +145,13 @@ def handle_expansion_get(path: str, send_json, send_bytes=None) -> bool:
                 'aria': str(exc)[:200],
                 'packs': {},
             }
-        # Three readiness levels (do not treat Comfy healthy alone as generate-ready).
-        studio_ready = vs.state == 'READY'
+        # Three readiness levels — image gen must not wait on video/music packs
+        # or a READY-only Studio label when Comfy + Z-Image assets are usable.
+        from expansion.capabilities.video_studio import comfy_endpoint_healthy
+        comfy_ok = False
+        if endpoint:
+            comfy_ok, _ = comfy_endpoint_healthy(endpoint, timeout=2.0)
+        studio_ready = bool(comfy_ok or vs.state == 'READY')
         assets_ready = bool(workflow.get('ok') or packs.get('image_ready'))
         try:
             from expansion.capabilities.comfy_submit import submit_image_job as _submit_fn

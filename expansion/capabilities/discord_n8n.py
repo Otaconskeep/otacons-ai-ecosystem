@@ -626,14 +626,27 @@ def save_n8n_config(
 
 
 def probe_all_optional(layout: Optional[StateLayout] = None) -> dict:
+    """Probe each optional capability independently — one failure must not poison the rest."""
     from expansion.capabilities.video_studio import probe_video_studio
     from expansion.capabilities.home_assistant import probe_home_assistant
     from expansion.capabilities.voice_trainer import probe_voice_trainer
     layout = layout or resolve_layout()
+
+    def _safe(name: str, fn):
+        try:
+            return fn().to_dict()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                'id': name,
+                'state': 'UNAVAILABLE',
+                'detail': f'optional probe failed: {exc}',
+                'discovery': {},
+            }
+
     return {
-        'video_studio': probe_video_studio(layout).to_dict(),
-        'voice_trainer': probe_voice_trainer().to_dict(),
-        'home_assistant': probe_home_assistant(layout).to_dict(),
-        'discord': probe_discord(layout).to_dict(),
-        'n8n': probe_n8n(layout).to_dict(),
+        'video_studio': _safe('video_studio', lambda: probe_video_studio(layout)),
+        'voice_trainer': _safe('voice_trainer', probe_voice_trainer),
+        'home_assistant': _safe('home_assistant', lambda: probe_home_assistant(layout)),
+        'discord': _safe('discord', lambda: probe_discord(layout)),
+        'n8n': _safe('n8n', lambda: probe_n8n(layout)),
     }

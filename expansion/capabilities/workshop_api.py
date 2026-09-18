@@ -241,39 +241,71 @@ def _get_job(job_id: str, layout: Optional[StateLayout] = None) -> Optional[dict
 
 
 def _health() -> dict[str, Any]:
-    from expansion.capabilities.video_studio import probe_video_studio
+    from expansion.capabilities.video_studio import probe_video_studio, comfy_endpoint_healthy
     from expansion.capabilities.studio_setup import studio_hardware_snapshot
-    vs = probe_video_studio()
+    from expansion.capabilities.comfy_submit import image_workflow_status, _studio_endpoint
+    # clear_stale=False — health must not wipe a working endpoint mid-session.
+    vs = probe_video_studio(clear_stale=False)
     hw = studio_hardware_snapshot()
     disc = vs.discovery or {}
-    ready = vs.state == 'READY'
+    endpoint = str(disc.get('endpoint') or _studio_endpoint() or '').rstrip('/')
+    comfy_ok = False
+    if endpoint:
+        comfy_ok, _ = comfy_endpoint_healthy(endpoint, timeout=2.0)
+    if not comfy_ok:
+        try:
+            from expansion.capabilities.comfy_sidecar import detect_local_comfy
+            detected = detect_local_comfy(timeout=1.5) or {}
+            cand = str(detected.get('endpoint') or '').rstrip('/')
+            if cand:
+                ok2, _ = comfy_endpoint_healthy(cand, timeout=2.0)
+                if ok2:
+                    endpoint, comfy_ok = cand, True
+        except Exception:
+            pass
     packs: dict[str, Any] = {}
     try:
         from expansion.capabilities.studio_packs import packs_status
-        packs = packs_status(endpoint=disc.get('endpoint') or None, hw=hw) or {}
+        packs = packs_status(endpoint=endpoint or None, hw=hw) or {}
     except Exception:
         packs = {}
+    workflow: dict[str, Any] = {}
+    try:
+        workflow = image_workflow_status(endpoint or None) if endpoint else {}
+    except Exception:
+        workflow = {}
     video_ready = bool(
         (packs.get('packs') or {}).get('wan', {}).get('ok')
         or (packs.get('packs') or {}).get('ltx2', {}).get('ok')
     )
-    image_ready = bool(packs.get('image_ready') or (packs.get('packs') or {}).get('z_image', {}).get('ok'))
+    image_ready = bool(
+        packs.get('image_ready')
+        or (packs.get('packs') or {}).get('z_image', {}).get('ok')
+        or workflow.get('ok')
+    )
+    music_ready = bool((packs.get('packs') or {}).get('ace_step', {}).get('ok'))
+    studio_ready = bool(comfy_ok or vs.state == 'READY')
+    # Image generation must not wait on video/music packs or a READY-only label.
+    generation_ready = bool(studio_ready and image_ready)
     return {
-        'cuda_available': bool(hw.get('cuda_available') or ready),
-        'ready': ready,
+        'cuda_available': bool(hw.get('cuda_available') or studio_ready),
+        'ready': generation_ready,
         'gpu_name': hw.get('gpu_model') or 'GPU',
         'vram_total_gb': float(hw.get('marketed_vram_gb') or hw.get('vram_gb') or 0),
         'vram_free_gb': float(hw.get('marketed_vram_gb') or hw.get('vram_gb') or 0) * 0.55,
         'backend': 'Otacon Expansion · Muse Creative',
         'studio_state': vs.state,
-        'endpoint': disc.get('endpoint') or '',
+        'endpoint': endpoint,
         'queue_running': 0,
         'queue_pending': 0,
-        'comfyui_warm': ready,
+        'comfyui_warm': studio_ready,
         'expansion': True,
+        'studio_ready': studio_ready,
+        'assets_ready': image_ready,
+        'generation_ready': generation_ready,
         'image_ready': image_ready,
         'video_ready': video_ready,
-        'music_ready': bool((packs.get('packs') or {}).get('ace_step', {}).get('ok')),
+        'music_ready': music_ready,
         'preferred_mode': 'image' if (image_ready and not video_ready) else 'video',
         'packs_aria': packs.get('aria') or '',
     }
