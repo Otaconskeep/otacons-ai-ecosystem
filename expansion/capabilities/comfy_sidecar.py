@@ -25,6 +25,8 @@ from expansion.state_layout import StateLayout, resolve_layout
 
 DEFAULT_PORTS = (8188, 8199)
 DEFAULT_ENDPOINT = 'http://127.0.0.1:8188'
+# First GPU image pull (cu130-slim-v2 etc.) is multi-GB; 5 minutes was too short on friend links.
+COMFY_PULL_TIMEOUT_SEC = int(os.environ.get('OTACON_COMFY_PULL_TIMEOUT') or '1200')
 
 
 def _repo_root() -> Path:
@@ -453,18 +455,57 @@ def ensure_comfy_sidecar(
     last_err = ''
     last_image = ''
     up = None
+    docker_bin = (cmd_base[0] if cmd_base else None) or (docker or '')
     for img in gpu_images:
         env = dict(run_env or os.environ)
         if img:
             env['OTACON_COMFY_GPU_IMAGE'] = img
             os.environ['OTACON_COMFY_GPU_IMAGE'] = img
             last_image = img
+        # Pre-pull so a slow Hub download is not killed mid-compose (resume-friendly).
+        if img and docker_bin:
+            try:
+                pull = subprocess.run(
+                    [docker_bin, 'pull', img],
+                    capture_output=True,
+                    text=True,
+                    timeout=COMFY_PULL_TIMEOUT_SEC,
+                    check=False,
+                    env=env,
+                )
+                if pull.returncode != 0:
+                    last_err = (pull.stderr or pull.stdout or 'docker pull failed')[:800]
+                    low = last_err.lower()
+                    if (
+                        'manifest unknown' in low
+                        or 'not found' in low
+                        or 'failed to resolve reference' in low
+                        or 'pull access denied' in low
+                    ):
+                        continue
+                    # Non-manifest pull errors: still try compose (local layers may exist).
+            except subprocess.TimeoutExpired:
+                return {
+                    'ok': False,
+                    'action': 'start_timeout',
+                    'error': f'docker pull timed out after {COMFY_PULL_TIMEOUT_SEC}s for {img}',
+                    'hint': (
+                        f'GPU image pull is large (often 5–15+ minutes on home links). '
+                        f'Leave Docker Desktop running and click Set Up again — the pull resumes. '
+                        f'Or raise OTACON_COMFY_PULL_TIMEOUT (seconds; default {COMFY_PULL_TIMEOUT_SEC}). '
+                        'ComfyUI portable on :8188 also works.'
+                    ),
+                    'docker': docker_st,
+                    'image': img,
+                }
+            except OSError:
+                pass
         try:
             up = subprocess.run(
                 cmd_base + ['up', '-d', '--force-recreate'],
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=max(180, min(300, COMFY_PULL_TIMEOUT_SEC // 4)),
                 check=False,
                 cwd=str(compose.parent),
                 env=env,
@@ -473,10 +514,11 @@ def ensure_comfy_sidecar(
             return {
                 'ok': False,
                 'action': 'start_timeout',
-                'error': f'docker compose up timed out while pulling {img or "image"}',
+                'error': f'docker compose up timed out while starting {img or "image"}',
                 'hint': (
-                    'Leave Docker Desktop running and try again. '
-                    'First GPU image pull is large. Or install ComfyUI portable if pulls keep timing out.'
+                    'Image may already be pulled — leave Docker Desktop running and Set Up again. '
+                    'If Hub is still downloading, wait and retry (layers resume). '
+                    'Or install ComfyUI portable on :8188.'
                 ),
                 'docker': docker_st,
                 'image': img,

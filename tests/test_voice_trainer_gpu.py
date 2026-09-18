@@ -1,7 +1,10 @@
 """Genome GPU probe must reuse platform WSL nvidia-smi resolver (not bare which)."""
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from expansion.capabilities import voice_trainer as vt
@@ -43,6 +46,34 @@ class TestVoiceTrainerGpu(unittest.TestCase):
                     out = vt.install_voice_trainer()
         self.assertTrue(out['ok'])
         self.assertEqual(out['action'], 'already_installed')
+
+    def test_genome_install_command_uses_wsl_root_when_unprivileged(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            with mock.patch.object(vt, '_wsl_exe', return_value='/mnt/c/Windows/System32/wsl.exe'):
+                with mock.patch('os.geteuid', return_value=1000):
+                    with mock.patch('subprocess.run', return_value=mock.Mock(returncode=1)):
+                        cmd, err = vt._genome_install_command(home, {'USER': 'crist'})
+        self.assertIsNotNone(cmd)
+        self.assertEqual(cmd[0], '/mnt/c/Windows/System32/wsl.exe')
+        self.assertIn('-u', cmd)
+        self.assertIn('root', cmd)
+        self.assertFalse(err)
+
+    def test_genome_install_needs_root_without_wsl_or_sudo(self):
+        home = Path(tempfile.mkdtemp()) / 'missing'
+        with mock.patch.object(vt, '_vt_home', return_value=home):
+            with mock.patch.object(vt, '_gpu_usable', return_value=True):
+                with mock.patch.object(vt, '_wsl_exe', return_value=None):
+                    with mock.patch('os.geteuid', return_value=1000):
+                        with mock.patch('subprocess.run', return_value=mock.Mock(returncode=1)):
+                            # Clear install marker from prior tests
+                            if vt._INSTALL_MARKER.is_file():
+                                vt._INSTALL_MARKER.unlink()
+                            out = vt.install_voice_trainer()
+        self.assertFalse(out['ok'])
+        self.assertEqual(out['action'], 'needs_root')
+        self.assertIn('wsl', (out.get('hint') or '').lower())
 
 
 if __name__ == '__main__':

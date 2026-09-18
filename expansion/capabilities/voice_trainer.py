@@ -12,6 +12,7 @@ The :8765 UI is an actionable trainer (YouTube → Piper), not a static
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import threading
@@ -182,6 +183,80 @@ _INSTALLER_URL = os.environ.get(
 )
 
 
+def _wsl_exe() -> str | None:
+    for cand in (
+        shutil.which('wsl.exe'),
+        '/mnt/c/Windows/System32/wsl.exe',
+        '/mnt/c/Windows/Sysnative/wsl.exe',
+    ):
+        if cand and Path(cand).is_file():
+            return cand
+    return None
+
+
+def _genome_install_command(home: Path, env: dict) -> tuple[list[str] | None, dict]:
+    """Build argv to run Genome installer with root when needed.
+
+    install_voice_trainer.sh refuses non-interactive sudo without a TTY.
+    On WSL escalate with ``wsl.exe -u root`` (same path Windows Setup uses).
+    """
+    import shlex
+
+    curl_bash = (
+        f'curl -fsSL --connect-timeout 30 --max-time 600 "{_INSTALLER_URL}" | bash'
+    )
+    vt_dir = str(home)
+    owner = env.get('SUDO_USER') or env.get('USER') or Path.home().name
+    exports = (
+        f'export OTACON_VT_DIR={shlex.quote(vt_dir)}; '
+        f'export OTACON_VT_SKIP_UI=1; '
+        f'export HOME={shlex.quote(str(Path.home()))}; '
+        f'export PATH=/usr/lib/wsl/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; '
+        f'export LD_LIBRARY_PATH=/usr/lib/wsl/lib${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}; '
+    )
+    chown = (
+        f'rc=$?; chown -R {shlex.quote(owner)}:{shlex.quote(owner)} {shlex.quote(vt_dir)} 2>/dev/null || true; '
+        f'usermod -aG docker {shlex.quote(owner)} 2>/dev/null || true; exit $rc'
+    )
+
+    try:
+        if os.geteuid() == 0:
+            return ['bash', '-c', exports + curl_bash + '; ' + chown], {}
+    except AttributeError:
+        pass
+
+    try:
+        probe = subprocess.run(
+            ['sudo', '-n', 'true'], capture_output=True, timeout=5, check=False,
+        )
+        if probe.returncode == 0:
+            return ['sudo', '-n', 'bash', '-c', exports + curl_bash + '; ' + chown], {}
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    wsl = _wsl_exe()
+    if wsl:
+        inner = exports + curl_bash + '; ' + chown
+        cmd = [wsl]
+        distro = (os.environ.get('WSL_DISTRO_NAME') or '').strip()
+        if distro:
+            cmd += ['-d', distro]
+        cmd += ['-u', 'root', '--', 'bash', '-lc', inner]
+        return cmd, {}
+
+    return None, {
+        'ok': False,
+        'action': 'needs_root',
+        'error': 'Genome install needs root (no TTY for sudo password).',
+        'hint': (
+            'Re-run OtaconExpansion-Setup.bat (runs as wsl -u root), or from PowerShell: '
+            f'wsl -u root -- bash -lc \'OTACON_VT_DIR={vt_dir} OTACON_VT_SKIP_UI=1 '
+            f'curl -fsSL {_INSTALLER_URL} | bash\''
+        ),
+    }
+
+
+
 def genome_install_status() -> dict:
     """Status of a background Genome install kicked off from Setup."""
     home = _vt_home()
@@ -246,6 +321,7 @@ def install_voice_trainer(*, wait_sec: float = 0.0) -> dict:
     """Install Genome Voice Trainer (same script Expansion uses when GPU is visible).
 
     Runs in the background by default so the UI does not hang on docker pulls.
+    Escalates via wsl.exe -u root / sudo -n when the Otacon process is unprivileged.
     After success, starts the actionable trainer UI automatically.
     """
     home = _vt_home()
@@ -292,11 +368,17 @@ def install_voice_trainer(*, wait_sec: float = 0.0) -> dict:
     env['OTACON_VT_SKIP_UI'] = '1'
     env['HOME'] = str(Path.home())
 
+    cmd, err = _genome_install_command(home, env)
+    if cmd is None:
+        return err
+
     try:
         _INSTALL_MARKER.write_text('started\n', encoding='utf-8')
         logf = open(_INSTALL_LOG, 'ab')
+        logf.write(f'\n--- genome install argv: {cmd!r}\n'.encode())
+        logf.flush()
         proc = subprocess.Popen(
-            ['bash', '-c', f'curl -fsSL --connect-timeout 30 --max-time 120 "{_INSTALLER_URL}" | bash'],
+            cmd,
             env=env,
             stdout=logf,
             stderr=subprocess.STDOUT,
@@ -316,7 +398,12 @@ def install_voice_trainer(*, wait_sec: float = 0.0) -> dict:
                 _INSTALL_MARKER.write_text('ok\n', encoding='utf-8')
                 ensure_voice_trainer_ui()
             else:
-                _INSTALL_MARKER.write_text(f'fail rc={rc}\n', encoding='utf-8')
+                tail = ''
+                try:
+                    tail = _INSTALL_LOG.read_text(encoding='utf-8', errors='replace')[-400:]
+                except OSError:
+                    pass
+                _INSTALL_MARKER.write_text(f'fail rc={rc}\n{tail}\n', encoding='utf-8')
         except OSError:
             pass
 
@@ -342,7 +429,7 @@ def install_voice_trainer(*, wait_sec: float = 0.0) -> dict:
         'path': str(home),
         'log': str(_INSTALL_LOG),
         'hint': (
-            'Genome install started (docker image build can take several minutes). '
+            'Genome install started (may use wsl -u root; docker image build can take several minutes). '
             'Stay on this page — the trainer UI opens on :8765 when ready.'
         ),
     }

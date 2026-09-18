@@ -413,20 +413,40 @@ else
     ok "Genome already present at $VT_HOME"
     EXP_GENOME_STATE=present
   elif [[ "$(id -u)" == "0" ]]; then
-    if run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" OTACON_VT_DIR="$VT_HOME" OTACON_VT_SKIP_UI=1 \
+    # MUST run as root — install_voice_trainer.sh dies without TTY/sudo -n when run as owner.
+    # Stage into the owner's home, then chown so Genome UI runs as the normal user.
+    if env HOME="$OWNER_HOME" OTACON_VT_DIR="$VT_HOME" OTACON_VT_SKIP_UI=1 \
         PATH="/usr/lib/wsl/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}" \
         LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         bash -c "curl -fsSL \"$VOICE_TRAINER_INSTALLER_URL\" | bash"
     then
-      ok "Genome Voice Trainer installed for Expansion"
+      chown -R "$OWNER":"$OWNER" "$VT_HOME" 2>/dev/null || true
+      usermod -aG docker "$OWNER" 2>/dev/null || true
+      ok "Genome Voice Trainer installed for Expansion (privileged → $VT_HOME)"
       EXP_GENOME_STATE=installed
     else
       warn "Genome Voice Trainer install failed — Expansion foundation continues; retry Voice Trainer later."
       EXP_GENOME_STATE=fail
     fi
   else
-    warn "Genome install needs root/docker — run Expansion via Windows Setup (privileged) or: wsl -u root"
-    EXP_GENOME_STATE=needs_root
+    # Non-root Expansion: escalate via wsl.exe -u root when on WSL (no password TTY).
+    if command -v wsl.exe >/dev/null 2>&1 || [[ -x /mnt/c/Windows/System32/wsl.exe ]]; then
+      WSL_BIN="$(command -v wsl.exe 2>/dev/null || echo /mnt/c/Windows/System32/wsl.exe)"
+      WSL_ARGS=()
+      [[ -n "${WSL_DISTRO_NAME:-}" ]] && WSL_ARGS+=(-d "$WSL_DISTRO_NAME")
+      WSL_ARGS+=(-u root -- bash -lc)
+      ROOT_CMD="export HOME=$(printf %q "$OWNER_HOME"); export OTACON_VT_DIR=$(printf %q "$VT_HOME"); export OTACON_VT_SKIP_UI=1; export PATH=/usr/lib/wsl/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:\$PATH; export LD_LIBRARY_PATH=/usr/lib/wsl/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}; curl -fsSL \"$VOICE_TRAINER_INSTALLER_URL\" | bash; rc=\$?; chown -R $(printf %q "$OWNER"):$(printf %q "$OWNER") $(printf %q "$VT_HOME") 2>/dev/null || true; usermod -aG docker $(printf %q "$OWNER") 2>/dev/null || true; exit \$rc"
+      if "$WSL_BIN" "${WSL_ARGS[@]}" "$ROOT_CMD"; then
+        ok "Genome Voice Trainer installed via wsl.exe -u root"
+        EXP_GENOME_STATE=installed
+      else
+        warn "Genome install via wsl -u root failed — re-run OtaconExpansion-Setup.bat or: wsl -u root -- bash -lc 'curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash'"
+        EXP_GENOME_STATE=fail
+      fi
+    else
+      warn "Genome install needs root/docker — run Expansion via Windows Setup (privileged) or: wsl -u root"
+      EXP_GENOME_STATE=needs_root
+    fi
   fi
   # Always write/repair status.json and verify / + status.json (never READY on port alone).
   if [[ -d "$VT_HOME" ]]; then
