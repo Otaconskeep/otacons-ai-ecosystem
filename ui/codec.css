@@ -301,3 +301,38 @@ a:hover{color:var(--mf-accent-bright)}
 .codec-mood .mood-chip.mood-hot{
   border-color:rgba(120,180,255,.7);color:var(--mf-accent-bright, #9ec7ff)
 }
+
+.hud-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border:1px solid rgba(46,230,214,.28);font-size:9px;letter-spacing:.1em;text-transform:uppercase}
+.hud-chip b{width:6px;height:6px;border-radius:50%;background:#3d555c}
+
+
+/* Codec instruments — TX/RX + noise react to talk */
+.codec-noise{
+  display:flex;gap:2px;justify-content:center;align-items:flex-end;height:26px;margin:8px 0 4px;
+}
+.codec-noise>i{
+  flex:1;max-width:6px;height:30%;background:rgba(46,230,214,.35);
+  animation:cc-noise 1.1s ease-in-out infinite alternate;
+}
+.codec-noise>i:nth-child(odd){animation-delay:.12s;height:55%}
+.codec-noise>i:nth-child(3n){animation-delay:.24s;height:80%}
+.codec-noise.hot>i{background:var(--mf-accent);box-shadow:0 0 8px rgba(46,230,214,.55);animation-duration:.35s}
+@keyframes cc-noise{from{transform:scaleY(.4);opacity:.4}to{transform:scaleY(1);opacity:1}}
+
+.codec-link-meters{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}
+.clm{display:grid;grid-template-columns:22px 1fr;gap:6px;align-items:center;font-size:8px;letter-spacing:.12em;color:var(--mf-text-dim)}
+.clm>i{display:block;height:5px;width:22%;background:rgba(46,230,214,.25);transition:width .25s ease,background .2s}
+.codec-link-meters.tx-hot .clm.tx>i{width:82%;background:var(--mf-accent);box-shadow:0 0 10px rgba(46,230,214,.5)}
+.codec-link-meters.rx-hot .clm.rx>i{width:88%;background:var(--mf-warn);box-shadow:0 0 10px rgba(245,165,36,.45)}
+
+.codec-chip-row{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin:6px 0}
+.codec-chip-row .hud-chip{font-size:8px;padding:3px 6px;background:rgba(5,8,12,.8);border-color:rgba(46,230,214,.25);color:var(--mf-text-dim)}
+.codec-chip-row .hud-chip b{width:5px;height:5px}
+.codec-chip-row .hud-chip.ok{color:var(--mf-accent)}.codec-chip-row .hud-chip.ok b{background:var(--mf-accent);box-shadow:0 0 6px var(--mf-accent)}
+.codec-chip-row .hud-chip.warn{color:var(--mf-warn)}.codec-chip-row .hud-chip.warn b{background:var(--mf-warn);box-shadow:0 0 6px var(--mf-warn)}
+.codec-chip-row .hud-chip.bad{color:var(--mf-pink)}.codec-chip-row .hud-chip.bad b{background:var(--mf-pink)}
+
+.codec-port.port-bleed{height:320px}
+.codec-port.port-bleed video,.codec-port.port-bleed img.codec-still{object-fit:cover}
+@media (max-width:700px){.codec-port.port-bleed{height:240px}}
+

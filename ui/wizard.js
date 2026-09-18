@@ -561,6 +561,54 @@ function resourceBarsHtml(scanOrPack){
   return rows.map(([k,v,pct])=>`<div class="home-res-item"><div class="lbl"><span>${k}</span><span>${escapeHtml(String(v))}</span></div><div class="home-res-bar"><i style="width:${pct}%"></i></div></div>`).join('');
 }
 
+
+function chip(label, state){
+  const cls=state||'muted';
+  return `<span class="hud-chip ${cls}"><b></b>${escapeHtml(label)}</span>`;
+}
+function liveBar(id, label, basePct, valueText, tone){
+  const p=Math.max(2,Math.min(98,Number(basePct)||0));
+  const col=tone==='warn'?'warn':(tone==='bad'?'bad':'');
+  return `<div class="live-bar ${col}" data-live="${escapeHtml(id)}" data-base="${p}">
+    <div class="live-bar-h"><span>${escapeHtml(label)}</span><em>${escapeHtml(String(valueText!=null?valueText:(p|0)+'%'))}</em></div>
+    <div class="live-bar-track"><i style="width:${p}%"></i></div>
+  </div>`;
+}
+function startLiveBars(){
+  if(window.__liveBars) clearInterval(window.__liveBars);
+  window.__liveBars=setInterval(()=>{
+    document.querySelectorAll('[data-live]').forEach(el=>{
+      const base=Number(el.dataset.base)||40;
+      const jitter=base>=80?4:10;
+      const next=Math.max(4,Math.min(97, base+(Math.random()*jitter*2-jitter)));
+      const i=el.querySelector('.live-bar-track>i');
+      if(i) i.style.width=next.toFixed(1)+'%';
+    });
+    document.querySelectorAll('.hud-seq>i').forEach((bar,idx)=>{
+      const h=22+((Date.now()/40+idx*17)%68);
+      bar.style.setProperty('--h', h+'%');
+    });
+  },480);
+}
+function setCodecLinkMeters(mode){
+  const wrap=document.getElementById('codec-link-meters');
+  if(wrap){
+    wrap.dataset.mode=mode||'idle';
+    wrap.classList.toggle('tx-hot', mode==='thinking'||mode==='talking');
+    wrap.classList.toggle('rx-hot', mode==='talking');
+  }
+  const noise=document.getElementById('codec-noise');
+  if(noise) noise.classList.toggle('hot', mode==='talking'||mode==='thinking');
+  document.querySelectorAll('.codec-sig-b').forEach((s,i)=>{
+    const hot=mode==='talking'||mode==='thinking';
+    s.style.height=(hot?(40+((i*23+Date.now()/30)%60)):(25+(i*12)%40))+'%';
+  });
+  const tx=document.getElementById('ccTxBar');
+  const rx=document.getElementById('ccRxBar');
+  if(tx) tx.style.width=(mode==='thinking'||mode==='talking'?'78':'28')+'%';
+  if(rx) rx.style.width=(mode==='talking'?'82':(mode==='thinking'?'45':'22'))+'%';
+}
+
 async function showHome(){
   state.view='home';
   setBodyMode('home');
@@ -584,103 +632,63 @@ async function showHome(){
   const footLine=expOn
     ?'Otaconskeep Expansion · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX'
     :'Otaconskeep Lite · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX';
-  const meters=scanMeterRows(scanPack);
-  const vtLed=vtOk?'Genome live':(vtOffline?'Genome offline — start':(expEntitled?'Genome setup':'Genome locked'));
-  const vsLed=videoOk?'Studio READY':(videoStatus==='limited'?'Studio limited':'Studio needs Comfy');
   const ariaLine=expOn
-    ?'Priority channels are live. Open Codec to talk to the roster, Genome for voice training, Studio when Comfy is up.'
-    :'Core deck online. Expansion unlocks the five-agent roster and premium rooms.';
+    ?'Priority channels live. Codec first — Genome / Studio when those sidecars are up.'
+    :'Core deck online. Expansion unlocks the five-agent roster.';
   const threat=!chatOk||!ttsOk||(expOn&&!videoOk);
   const hScan=(scanPack&&scanPack.hardware)||{};
   const cpuCoresN=hScan.cpu&&hScan.cpu.cores?Number(hScan.cpu.cores):0;
   const ramGbN=Number(hScan.ram_gb||0);
-  // OPS = readiness pressure (not cores*8 — that pegged at 100 on any modern CPU)
-  let opsLoad=14;
-  if(!chatOk) opsLoad+=32;
-  if(!ttsOk) opsLoad+=18;
-  if(expOn&&!videoOk) opsLoad+=16;
-  if(expOn&&!vtOk) opsLoad+=14;
-  if(threat) opsLoad+=8;
-  opsLoad=Math.max(8,Math.min(92,opsLoad));
-  const memPct=ramGbN?Math.min(92,Math.round(28+Math.log2(Math.max(2,ramGbN))*14)):10;
-  const gnmLbl=vtOk?'LIVE':(vtOffline?'STRT':(expEntitled?'SETUP':'LOCK'));
-  const instruments=`<div class="hud-instruments">
-    ${hudRadarHtml(threat)}
-    <div class="hud-gauge-row">
-      ${hudGauge('LINK', chatOk?86:18, chatOk?'':'bad')}
-      ${hudGauge('VOX', ttsOk?78:16, ttsOk?'':'warn')}
-      ${hudGauge('OPS', opsLoad, opsLoad>55?'warn':'', String(opsLoad))}
-      ${hudGauge('MEM', memPct, '', ramGbN?Math.round(ramGbN)+'G':'—')}
-    </div>
-    ${hudSeqHtml(opsLoad)}
-    ${hudTeleHtml([
-      'LINK '+ (chatOk?'UP':'DOWN'),
-      'TTS '+ (ttsOk?'READY':'WAIT'),
-      'GENOME '+ gnmLbl,
-      'STUDIO '+ (videoOk?'READY':(videoStatus==='limited'?'LIMITED':'SETUP')),
-      'CPU '+ (cpuCoresN?cpuCoresN+'C':'—'),
-      'MODEL '+ String(model).slice(0,22),
-      gpuHomeLine.slice(0,26)
-    ])}
-  </div>`;
+  const gpu=Array.isArray(hScan.gpus)&&hScan.gpus[0]?hScan.gpus[0]:null;
+  let opsLoad=12;
+  if(!chatOk) opsLoad+=30;
+  if(!ttsOk) opsLoad+=16;
+  if(expOn&&!videoOk) opsLoad+=14;
+  if(expOn&&!vtOk) opsLoad+=12;
+  if(threat) opsLoad+=6;
+  opsLoad=Math.max(8,Math.min(88,opsLoad));
+  const cpuBase=cpuCoresN?Math.min(72,18+cpuCoresN*3):22;
+  const ramBase=ramGbN?Math.min(78,22+Math.log2(Math.max(2,ramGbN))*12):18;
+  const gpuBase=gpu?(gpu.vram_gb?Math.min(85,20+Number(gpu.vram_gb)*2.2):42):(scanPack.ok?8:0);
+  const gnmLbl=vtOk?'GNM LIVE':(vtOffline?'GNM START':(expEntitled?'GNM SETUP':'GNM LOCK'));
+  const stuLbl=videoOk?'STUDIO RDY':(videoStatus==='limited'?'STUDIO LTD':'STUDIO SETUP');
+  const gnmChip=vtOk?'ok':(vtOffline||expEntitled?'warn':'bad');
+  const stuChip=videoOk?'ok':'warn';
+  const chatChip=chatOk?'ok':'bad';
+  const ttsChip=ttsOk?'ok':'warn';
 
   const agentStrip=(state.roster||[]).map(a=>{
     const id=a.id||a.agent_id;
     const room=a.room_title||a.room||agentRoomKind(a);
     const img=agentAsset(id, `${id}.webp`);
-    return `<button type="button" class="hud-agent" onclick="openAgentRoom('${escapeHtml(id)}')">
+    return `<button type="button" class="hud-agent" onclick="otSfx('switch');openAgentRoom('${escapeHtml(id)}')">
       <img src="${img}" alt="" loading="eager" decoding="async" onerror="this.onerror=null;this.src='${agentAsset('aria','aria.webp')}'">
       <div><div class="n">${escapeHtml(a.display_name||id)}</div><div class="r">${escapeHtml(String(room))}</div></div>
       <span class="mood" title="mood"></span>
     </button>`;
   }).join('')||'<p class="muted">No roster yet.</p>';
 
-  const primaryOps=expOn?`
-  <section class="hud-ops">
-    <h3>Priority surfaces</h3>
-    <div class="hud-ops-grid">
-      <button type="button" class="svc" onclick="otSfx('click');${vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()')}">
-        <div class="svc-top"><div class="svc-ico">GN</div><div class="svc-name">Genome</div></div>
-        <p class="svc-desc">Voice Trainer + Piper voices — Expansion premium.</p>
-        <span class="svc-pill ${vtOk?'ok':'warn'}">${vtOk?'OPEN':(vtOffline?'START':'SETUP')}</span>
-      </button>
-      <button type="button" class="svc" onclick="otSfx('click');showVideoStudioSetup()">
-        <div class="svc-top"><div class="svc-ico">VS</div><div class="svc-name">Video Studio</div></div>
-        <p class="svc-desc">Muse / ComfyUI — Aria will walk you through it.</p>
-        <span class="svc-pill ${videoOk?'ok':'warn'}">${videoOk?'READY':'SETUP'}</span>
-      </button>
-      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('war-room')">
-        <div class="svc-top"><div class="svc-ico">WR</div><div class="svc-name">War Room</div></div>
-        <p class="svc-desc">Vector ops board — jobs, failures, threat strip.</p>
-        <span class="svc-pill ok">ENTER</span>
-      </button>
-      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('command')">
-        <div class="svc-top"><div class="svc-ico">CMD</div><div class="svc-name">Aria Command</div></div>
-        <p class="svc-desc">Coordination floor — roster workload + alerts.</p>
-        <span class="svc-pill ok">ENTER</span>
-      </button>
+  const railChips=expOn?`
+    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('transmit');showChat()"><span>CODEC</span><em class="${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'DOWN'}</em></button>
+    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()')}"><span>GENOME</span><em class="${gnmChip}">${vtOk?'OPEN':(vtOffline?'START':'SETUP')}</em></button>
+    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');showVideoStudioSetup()"><span>STUDIO</span><em class="${stuChip}">${videoOk?'READY':'SETUP'}</em></button>
+    <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('war-room')"><span>WAR</span><em class="ok">ENTER</em></button>
+    <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('command')"><span>COMMAND</span><em class="ok">ENTER</em></button>
+  `:`
+    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('transmit');showChat()"><span>CODEC</span><em class="${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'DOWN'}</em></button>
+    <button type="button" class="hud-rail-btn" onclick="otSfx('click');render()"><span>SETUP</span><em>WIZARD</em></button>
+  `;
+
+  const moreRooms=expOn?`
+  <section class="hud-more">
+    <h3>More rooms</h3>
+    <div class="hud-chip-row">
+      ${[['rex','REX'],['intel','INTEL'],['emotion','EMOTION'],['dossiers','DOSSIERS'],['diary','DIARY'],['reports','REPORTS'],['ops','OPS']].map(([k,l])=>
+        `<button type="button" class="hud-enter" onclick="otSfx('click');showExpansionSurface('${k}')">${l}<em>ENTER</em></button>`
+      ).join('')}
+      <button type="button" class="hud-enter" onclick="otSfx('click');render()">SETUP<em>WIZARD</em></button>
     </div>
-  </section>
-  <section class="home-group">
-    <h2 class="home-group-title">More rooms</h2>
-    <div class="home-grid compact">
-      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('rex')"><div class="svc-top"><div class="svc-ico">REX</div><div class="svc-name">REX</div></div><p class="svc-desc">Autonomy loop</p><span class="svc-pill ok">ENTER</span></button>
-      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('intel')"><div class="svc-top"><div class="svc-ico">INT</div><div class="svc-name">Intel</div></div><p class="svc-desc">Ledger continuity</p><span class="svc-pill ok">ENTER</span></button>
-      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('emotion')"><div class="svc-top"><div class="svc-ico">EM</div><div class="svc-name">Emotion</div></div><p class="svc-desc">Affect board</p><span class="svc-pill ok">ENTER</span></button>
-      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('dossiers')"><div class="svc-top"><div class="svc-ico">DOS</div><div class="svc-name">Dossiers</div></div><p class="svc-desc">Memory lives here</p><span class="svc-pill ok">ENTER</span></button>
-      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('diary')"><div class="svc-top"><div class="svc-ico">DRY</div><div class="svc-name">Diary</div></div><p class="svc-desc">What it meant</p><span class="svc-pill ok">ENTER</span></button>
-      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('reports')"><div class="svc-top"><div class="svc-ico">RPT</div><div class="svc-name">Reports</div></div><p class="svc-desc">Live state</p><span class="svc-pill ok">ENTER</span></button>
-      <button type="button" class="svc" onclick="otSfx('click');showExpansionSurface('ops')"><div class="svc-top"><div class="svc-ico">OPS</div><div class="svc-name">Ops</div></div><p class="svc-desc">Sentry</p><span class="svc-pill ok">ENTER</span></button>
-      <button type="button" class="svc" onclick="otSfx('click');render()"><div class="svc-top"><div class="svc-ico">SU</div><div class="svc-name">Setup</div></div><p class="svc-desc">First-run wizard</p><span class="svc-pill">WIZARD</span></button>
-    </div>
-  </section>`:`
-  <section class="hud-ops">
-    <h3>Core surfaces</h3>
-    <div class="hud-ops-grid">
-      <button type="button" class="svc" onclick="otSfx('click');showChat()"><div class="svc-top"><div class="svc-ico">CC</div><div class="svc-name">Codec</div></div><p class="svc-desc">Talk to Aria</p><span class="svc-pill ${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'DOWN'}</span></button>
-      <button type="button" class="svc" onclick="otSfx('click');render()"><div class="svc-top"><div class="svc-ico">SU</div><div class="svc-name">Setup</div></div><p class="svc-desc">Hardware + voice</p><span class="svc-pill">WIZARD</span></button>
-    </div>
-  </section>`;
+  </section>`:'';
 
   appRoot().innerHTML=`<div class="home hud">
   <header class="home-header">
@@ -689,48 +697,64 @@ async function showHome(){
       <h1 class="home-greeting">Command Deck</h1>
     </div>
     <div class="home-meta">
+      <div class="hud-chip-row tight">
+        ${chip('CHAT '+(chatOk?'RDY':'DN'), chatChip)}
+        ${chip('VOX '+(ttsOk?'RDY':'WAIT'), ttsChip)}
+        ${chip(gnmLbl, gnmChip)}
+        ${chip(stuLbl, stuChip)}
+      </div>
       <div class="home-datetime" id="homeClock">${escapeHtml(formatNow())}</div>
     </div>
   </header>
 
-  <div class="hud-deck">
-    <aside class="hud-rail">
-      <h3>Systems</h3>
-      ${meters.cpu}${meters.ram}${meters.gpu}${meters.disk}
-      ${hudLed('Chat / Ollama', chatOk, !chatOk)}
-      ${hudLed('TTS / Piper', ttsOk, !ttsOk)}
-      ${hudLed(vtLed, vtOk, !vtOk)}
-      ${hudLed(vsLed, videoOk, !videoOk)}
-      <p class="muted" style="font-size:9px;margin-top:10px;letter-spacing:.06em">GPU ${escapeHtml(gpuHomeLine)} · model ${escapeHtml(String(model))}</p>
-    </aside>
-    <main class="hud-center">
-      <div class="hud-cockpit">
-        <div class="hud-cockpit-corners" aria-hidden="true"></div>
+  <section class="hud-panel">
+    <div class="hud-panel-brackets" aria-hidden="true"></div>
+    <div class="hud-panel-scan" aria-hidden="true"></div>
+    <div class="hud-panel-grid">
+      <aside class="hud-sys">
+        <h3>Systems</h3>
+        ${liveBar('cpu','CPU', cpuBase, cpuCoresN?cpuCoresN+' cores':'—')}
+        ${liveBar('ram','RAM', ramBase, ramGbN?Math.round(ramGbN)+' GB':'—')}
+        ${liveBar('gpu','GPU', gpuBase, gpu?(gpu.model||'GPU').split(' ').slice(-2).join(' '):(scanPack.ok?'none':'scan…'), gpu?'':'warn')}
+        ${liveBar('ops','OPS', opsLoad, opsLoad+'%', opsLoad>55?'warn':'')}
+        <div class="hud-sys-meta">GPU ${escapeHtml(gpuHomeLine)} · ${escapeHtml(String(model).slice(0,28))}</div>
+      </aside>
+      <main class="hud-core">
         <div class="hud-hero">
           <div class="hud-portrait">
             <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
             <i class="hud-portrait-scan"></i>
           </div>
-          <div>
-            <p class="sub">Aria // Command · CH ${chatOk?'01':'00'}</p>
+          <div class="hud-hero-copy">
+            <p class="sub">Aria // Command · CH-${chatOk?'01':'00'}</p>
             <p class="line">${escapeHtml(ariaLine)}</p>
             <div class="hud-cta-row">
               <button type="button" class="hud-cta primary" onclick="otArmAudio();otSfx('transmit');showChat()">Open Codec</button>
               ${expOn?`<button type="button" class="hud-cta" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()')}">Genome</button>
               <button type="button" class="hud-cta warn" onclick="otArmAudio();otSfx('click');showVideoStudioSetup()">Studio</button>`:''}
             </div>
+            <div class="hud-prio-rail">${railChips}</div>
           </div>
         </div>
-        ${instruments}
-      </div>
-    </main>
-    <aside class="hud-agents">
-      <h3>${expOn?'Roster':'Agent'}</h3>
-      ${agentStrip}
-    </aside>
-  </div>
+        <div class="hud-instruments compact">
+          ${hudRadarHtml(threat)}
+          <div class="hud-gauge-row">
+            ${hudGauge('LINK', chatOk?84:16, chatOk?'':'bad')}
+            ${hudGauge('VOX', ttsOk?76:14, ttsOk?'':'warn')}
+            ${hudGauge('OPS', opsLoad, opsLoad>55?'warn':'', String(opsLoad))}
+            ${hudGauge('GPU', gpuBase||6, gpu?'':'warn', gpu?'OK':'—')}
+          </div>
+          ${hudSeqHtml(opsLoad)}
+        </div>
+      </main>
+      <aside class="hud-agents">
+        <h3>${expOn?'Roster':'Agent'}</h3>
+        ${agentStrip}
+      </aside>
+    </div>
+  </section>
 
-  ${primaryOps}
+  ${moreRooms}
   <p class="home-foot">${footLine}</p>
 </div>`;
 
@@ -738,6 +762,7 @@ async function showHome(){
   window.__homeClock=setInterval(()=>{
     const el=document.getElementById('homeClock'); if(el) el.textContent=formatNow();
   },1000);
+  startLiveBars();
 
   if(!document.getElementById('ot-boot') && !sessionStorage.getItem('ot_boot_done')){
     otArmAudio();
@@ -944,6 +969,7 @@ function setCodecMode(mode){
   const port=document.getElementById('port-active');
   state.codecMode=mode;
   if(port) port.classList.toggle('codec-talking', mode==='talking');
+  setCodecLinkMeters(mode);
   if(!v) return;
   bindCodecVideoFallback(v);
   const still=port&&port.querySelector('img.codec-still');
@@ -1075,6 +1101,8 @@ async function showChat(){
   const vtStatus=capStatus('voice_trainer');
   const vtOk=vtStatus==='ready';
   const vtOffline=vtStatus==='offline';
+  const videoStatus=capStatus('video');
+  const videoOk=videoStatus==='ready';
   const expOn=!!(state.expansion&&state.expansion.enabled);
   const expEntitled=!!(state.expansion&&(state.expansion.expansion_entitled||state.expansion.surfaces_ready||expOn));
   const voiceOpts=(state.voices||[]).map(v=>`<option value="${v.id}" ${v.id===state.voiceId?'selected':''}>${v.display_name}</option>`).join('');
@@ -1124,7 +1152,7 @@ async function showChat(){
             <div class="codec-mid">
               <div class="codec-title">CODEC</div>
               <div class="codec-freq-line">FREQ&nbsp;<span id="codec-freq">140.85</span>&nbsp;MHz</div>
-              <div class="codec-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <div id="codec-noise" class="codec-noise" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
               <div class="codec-sigs">
                 <div class="codec-sig-b" style="height:40%"></div>
                 <div class="codec-sig-b" style="height:70%"></div>
@@ -1132,11 +1160,21 @@ async function showChat(){
                 <div class="codec-sig-b" style="height:60%"></div>
                 <div class="codec-sig-b" style="height:80%"></div>
               </div>
+              <div id="codec-link-meters" class="codec-link-meters" data-mode="idle">
+                <div class="clm tx"><span>TX</span><i></i></div>
+                <div class="clm rx"><span>RX</span><i></i></div>
+              </div>
+              <div class="codec-chip-row">
+                <span class="hud-chip ${chatOk?'ok':'bad'}"><b></b>CHAT</span>
+                <span class="hud-chip ${ttsOk?'ok':'warn'}"><b></b>VOX</span>
+                <span class="hud-chip ${vtOk?'ok':(vtOffline||expEntitled?'warn':'bad')}"><b></b>GNM</span>
+                <span class="hud-chip ${videoOk?'ok':'warn'}"><b></b>STUDIO</span>
+              </div>
               <div class="codec-ai-btns">
                 ${agentBtns}
               </div>
             </div>
-            <div class="codec-port port-right" id="port-active">
+            <div class="codec-port port-right port-bleed" id="port-active">
               <video id=codecVideo autoplay loop muted playsinline poster="${codecPortraitUrl(portraitAgent)}" src="${idleSrc}"></video>
               <div class="codec-port-crt"></div>
               <div class="codec-port-lbl" id="active-ai-label">STANDBY</div>
@@ -1161,11 +1199,12 @@ async function showChat(){
           <div class="cc-led ${ttsOk?'on':''}"><b></b><span>VOICE</span><em>${ttsOk?'RDY':'DN'}</em></div>
           <div class="cc-led ${sttOk?'on':''}"><b></b><span>MIC</span><em>${sttOk?'RDY':'OFF'}</em></div>
           <div class="cc-led ${vtOk?'on':(vtOffline||expEntitled?'warn':'')}"><b></b><span>GNM</span><em>${vtOk?'LIVE':(vtOffline?'STRT':(expEntitled?'SETUP':'LOCK'))}</em></div>
+          <div class="cc-led ${videoOk?'on':'warn'}"><b></b><span>STU</span><em>${videoOk?'RDY':(videoStatus==='limited'?'LTD':'SETUP')}</em></div>
         </div>
         <div class="cc-mini-meters">
-          <div class="cc-mm"><span>TX</span><i style="width:${chatOk?72:12}%"></i></div>
-          <div class="cc-mm"><span>RX</span><i style="width:${ttsOk?64:10}%"></i></div>
-          <div class="cc-mm"><span>CPU</span><i id="ccCpuBar" style="width:40%"></i></div>
+          <div class="cc-mm"><span>TX</span><i id="ccTxBar" style="width:28%"></i></div>
+          <div class="cc-mm"><span>RX</span><i id="ccRxBar" style="width:22%"></i></div>
+          <div class="cc-mm"><span>CPU</span><i id="ccCpuBar" style="width:36%"></i></div>
         </div>
         <div class="cc-kv tight">
           <span class=muted>MODEL</span><b id=codecModel>${escapeHtml(String(model))}</b>
@@ -1605,6 +1644,7 @@ async function showNodes(){
 }
 
 async function showExpansionSurface(kind){
+  otSfx('click');
   state.view='expansion';
   setBodyMode('home');
   try{

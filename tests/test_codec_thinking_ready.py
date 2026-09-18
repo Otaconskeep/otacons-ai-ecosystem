@@ -42,7 +42,7 @@ def main() -> int:
          "Codec no longer skips /api/scan forever", fails)
     must("agent:{id:'agent_001'" not in js and "agent_id:'agent_001'" not in js,
          "wizard preview/setup no longer hardcodes agent_001", fails)
-    must("hud-deck" in js and "openAgentRoom" in js and "otSfx" in js,
+    must("hud-panel" in js and "openAgentRoom" in js and "otSfx" in js,
          "Command Deck HUD with agent room opens + sfx", fails)
     must("hud-instruments" in js and "hudRadarHtml" in js and "otAmbientStart" in js,
          "Deck instruments + ambient bed", fails)
@@ -52,10 +52,14 @@ def main() -> int:
          "per-agent Codec portrait fallback (not Aria-only)", fails)
     must("agentAsset" in js and "roster-art-2" in js,
          "roster asset cache-bust query", fails)
-    must("hud-cockpit" in js and "operatorSilSvg" in js and "otArmAudio" in js,
+    must("operatorSilSvg" in js and "otArmAudio" in js,
          "integrated cockpit + operator silhouette + audio unlock", fails)
     must("OPS" in js and "opsLoad" in js,
          "OPS gauge uses readiness pressure (not cores*8)", fails)
+    must("hud-panel" in js and "liveBar" in js and "startLiveBars" in js,
+         "unified Deck instrument panel + live bars", fails)
+    must("codec-noise" in js and "setCodecLinkMeters" in js,
+         "Codec noise strip + TX/RX meters", fails)
     must("showGenomeSetup" in js and "showVideoStudioSetup" in js and "Fix-Otacon-GPU" in js,
          "Aria-guided Genome/Studio setup with GPU fix path", fails)
     must("startComfySidecar" in js and "useDetectedComfy" in js and "video-studio/detect" in js,

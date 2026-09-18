@@ -1,8 +1,8 @@
 /* Expansion Command Deck — void / teal / amber tactical HUD */
 :root{
-  --ot-void:#03070a;
-  --ot-navy:#061018;
-  --ot-panel:#0a1520;
+  --ot-void:#02060a;
+  --ot-navy:#07131c;
+  --ot-panel:#0a161f;
   --ot-panel-2:#0d1c28;
   --ot-cyan:#2ee6d6;
   --ot-teal:#14b8a6;
@@ -293,3 +293,87 @@ body.home-body::after{
   .hud-hero{grid-template-columns:1fr}
   .guide-aria{grid-template-columns:1fr}
 }
+
+
+/* —— Unified instrument panel (Deck sprint) —— */
+.hud-chip-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.hud-chip-row.tight{justify-content:flex-end}
+.hud-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:4px 8px;
+  border:1px solid rgba(46,230,214,.28);background:rgba(3,10,14,.75);
+  font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ot-muted);
+}
+.hud-chip b{width:6px;height:6px;border-radius:50%;background:#3d555c}
+.hud-chip.ok{color:var(--ot-cyan);border-color:rgba(46,230,214,.5)}.hud-chip.ok b{background:var(--ot-cyan);box-shadow:0 0 8px var(--ot-cyan)}
+.hud-chip.warn{color:var(--ot-amber);border-color:rgba(245,165,36,.45)}.hud-chip.warn b{background:var(--ot-amber);box-shadow:0 0 8px var(--ot-amber)}
+.hud-chip.bad{color:var(--ot-magenta);border-color:rgba(255,77,154,.4)}.hud-chip.bad b{background:var(--ot-magenta);box-shadow:0 0 8px var(--ot-magenta)}
+
+.hud-panel{
+  position:relative;margin-bottom:16px;padding:14px;
+  border:1px solid rgba(46,230,214,.32);
+  background:
+    linear-gradient(180deg,rgba(46,230,214,.04),transparent 30%),
+    linear-gradient(165deg,rgba(8,18,26,.97),rgba(2,6,10,.99));
+  clip-path:polygon(14px 0,calc(100% - 14px) 0,100% 14px,100% calc(100% - 14px),calc(100% - 14px) 100%,14px 100%,0 calc(100% - 14px),0 14px);
+  box-shadow:0 0 32px rgba(46,230,214,.08),inset 0 0 48px rgba(0,0,0,.35);
+  overflow:hidden;
+}
+.hud-panel-brackets{position:absolute;inset:6px;pointer-events:none;z-index:2;
+  background:
+    linear-gradient(var(--ot-cyan),var(--ot-cyan)) top left/22px 1px no-repeat,
+    linear-gradient(var(--ot-cyan),var(--ot-cyan)) top left/1px 22px no-repeat,
+    linear-gradient(var(--ot-cyan),var(--ot-cyan)) top right/22px 1px no-repeat,
+    linear-gradient(var(--ot-cyan),var(--ot-cyan)) top right/1px 22px no-repeat,
+    linear-gradient(var(--ot-cyan),var(--ot-cyan)) bottom left/22px 1px no-repeat,
+    linear-gradient(var(--ot-cyan),var(--ot-cyan)) bottom left/1px 22px no-repeat,
+    linear-gradient(var(--ot-cyan),var(--ot-cyan)) bottom right/22px 1px no-repeat,
+    linear-gradient(var(--ot-cyan),var(--ot-cyan)) bottom right/1px 22px no-repeat;
+  opacity:.8;
+}
+.hud-panel-scan{
+  position:absolute;left:0;right:0;height:28%;top:-30%;z-index:1;pointer-events:none;
+  background:linear-gradient(180deg,transparent,rgba(46,230,214,.07),transparent);
+  animation:hud-panel-scan 7s linear infinite;
+}
+@keyframes hud-panel-scan{to{transform:translateY(420%)}}
+.hud-panel-grid{
+  position:relative;z-index:3;
+  display:grid;grid-template-columns:200px minmax(0,1fr) 200px;gap:14px;
+}
+@media (max-width:980px){.hud-panel-grid{grid-template-columns:1fr}}
+
+.hud-sys,.hud-agents,.hud-core{min-width:0}
+.hud-sys h3,.hud-agents h3,.hud-more h3{
+  margin:0 0 10px;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--ot-cyan);
+}
+.live-bar{margin:0 0 11px}
+.live-bar-h{display:flex;justify-content:space-between;font-size:9px;letter-spacing:.1em;color:var(--ot-muted);margin-bottom:4px}
+.live-bar-h em{font-style:normal;color:var(--ot-text)}
+.live-bar-track{height:7px;background:rgba(46,230,214,.08);border:1px solid rgba(46,230,214,.22);overflow:hidden}
+.live-bar-track>i{display:block;height:100%;width:0;transition:width .45s ease;
+  background:linear-gradient(90deg,var(--ot-teal),var(--ot-cyan));box-shadow:0 0 10px rgba(46,230,214,.55)}
+.live-bar.warn .live-bar-track>i{background:linear-gradient(90deg,#c47a12,var(--ot-amber));box-shadow:0 0 10px rgba(245,165,36,.45)}
+.live-bar.bad .live-bar-track>i{background:linear-gradient(90deg,#a01850,var(--ot-magenta));box-shadow:0 0 10px rgba(255,77,154,.4)}
+.hud-sys-meta{font-size:8px;letter-spacing:.06em;color:var(--ot-muted);margin-top:8px;line-height:1.4}
+
+.hud-core .hud-hero{padding:0 0 10px;border-bottom:1px solid rgba(46,230,214,.15);margin-bottom:8px}
+.hud-prio-rail{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.hud-rail-btn{
+  appearance:none;cursor:pointer;display:flex;align-items:center;gap:8px;
+  border:1px solid rgba(46,230,214,.3);background:rgba(3,8,12,.7);color:var(--ot-text);
+  font:inherit;font-size:9px;letter-spacing:.12em;text-transform:uppercase;padding:7px 10px;
+}
+.hud-rail-btn:hover{border-color:var(--ot-cyan);box-shadow:0 0 12px rgba(46,230,214,.2)}
+.hud-rail-btn em{font-style:normal;color:var(--ot-muted)}
+.hud-rail-btn em.ok{color:var(--ot-cyan)}.hud-rail-btn em.warn{color:var(--ot-amber)}.hud-rail-btn em.bad{color:var(--ot-magenta)}
+
+.hud-instruments.compact{margin-top:4px;padding-top:8px;border-top:0}
+.hud-more{margin-top:14px}
+.hud-enter{
+  appearance:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;
+  border:1px solid rgba(46,230,214,.22);background:rgba(3,8,12,.55);color:var(--ot-muted);
+  font:inherit;font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:8px 12px;
+}
+.hud-enter em{font-style:normal;color:var(--ot-cyan);opacity:.75}
+.hud-enter:hover{border-color:rgba(46,230,214,.5);color:var(--ot-text)}
+
