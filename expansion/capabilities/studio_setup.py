@@ -540,7 +540,16 @@ def setup_status(layout: Optional[StateLayout] = None) -> dict[str, Any]:
             {'id': k, 'label': label, 'done': bool((state.get('checklist') or {}).get(k))}
             for k, label in _CHECKLIST_ORDER
         ],
+        'release': _release_identity_safe(),
     }
+
+
+def _release_identity_safe() -> dict:
+    try:
+        from expansion.release_info import release_identity
+        return release_identity()
+    except Exception:
+        return {}
 
 
 def _clear_stale_studio_endpoint(layout: StateLayout) -> None:

@@ -173,6 +173,14 @@ def _expansion_runtime():
         return None
 
 
+def _status_release_identity() -> dict:
+    try:
+        from expansion.release_info import release_identity
+        return release_identity()
+    except Exception:
+        return {}
+
+
 def _mood_summary_for(ctx) -> dict:
     """Keep-like mood strip payload: spoken line + top elevated dims."""
     emo = (getattr(ctx, 'emotion', None) or {})
@@ -675,6 +683,7 @@ class Handler(BaseHTTPRequestHandler):
                         'message': ent.message if ent else '',
                     } if ent else {'entitled': False, 'source': 'none', 'message': ''},
                     'report': report.to_dict() if report else {},
+                    'release': _status_release_identity(),
                     'agents': [
                         {
                             'id': a.agent_id,

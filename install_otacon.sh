@@ -1298,10 +1298,14 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
         | python3 -c 'import sys,json; print((json.load(sys.stdin).get("commit") or "").strip())' 2>/dev/null \
         || true
     )"
+    ORIGIN_TIP="$(git -C "$INSTALL_DIR" rev-parse origin/main 2>/dev/null || true)"
     SYNC_TARGET="origin/main"
     if [[ -n "${RELEASE_PIN:-}" ]] && git -C "$INSTALL_DIR" cat-file -e "${RELEASE_PIN}^{commit}" 2>/dev/null; then
       SYNC_TARGET="$RELEASE_PIN"
-      log "Syncing to release.json.commit=$RELEASE_PIN"
+      log "Soft-update feature pin (release.json.commit)=${RELEASE_PIN}"
+      if [[ -n "${ORIGIN_TIP:-}" && "${ORIGIN_TIP}" != "${RELEASE_PIN}" ]]; then
+        log "origin/main tip=${ORIGIN_TIP} (often a chore(release) that only refreshes the pin — not the install target)"
+      fi
     else
       warn "No usable release.json.commit — syncing to origin/main tip"
     fi

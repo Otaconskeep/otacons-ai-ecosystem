@@ -68,6 +68,71 @@ class ComfySubmitTests(unittest.TestCase):
                 self.assertEqual(store.get(fake.job_id).status, JobStatus.FAILED.value)
                 self.assertEqual(store.get(real.job_id).status, JobStatus.RUNNING.value)
 
+    def test_public_creative_job_exposes_output_urls(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            with mock.patch.dict(os.environ, {
+                'OTACON_EXPANSION_DATA_ROOT': str(root / 'data'),
+                'OTACON_EXPANSION_CONFIG_ROOT': str(root / 'cfg'),
+            }):
+                from expansion.state_layout import resolve_layout
+                layout = resolve_layout()
+                layout.ensure_user_dirs()
+                store = JobStore(layout=layout)
+                job = store.create('done creative', domain='creative', assigned_agent='muse')
+                store.transition(
+                    job.job_id, JobStatus.RUNNING.value,
+                    evidence=[
+                        'comfy:prompt_id=pid-1',
+                        'comfy:endpoint=http://127.0.0.1:8188',
+                    ],
+                )
+                store.transition(
+                    job.job_id, JobStatus.COMPLETE.value,
+                    result='ComfyUI outputs: otacon_muse00001.png',
+                    evidence=[
+                        'comfy:prompt_id=pid-1',
+                        'comfy:endpoint=http://127.0.0.1:8188',
+                        'comfy:output=otacon_muse00001.png',
+                    ],
+                )
+                pub = cs.public_creative_job(store.get(job.job_id))
+                self.assertEqual(pub['outputs'], ['otacon_muse00001.png'])
+                self.assertIn('otacon_muse00001.png', pub['preview_url'])
+                self.assertEqual(
+                    pub['output_proxy'],
+                    f'/api/expansion/creative/jobs/{job.job_id}/output',
+                )
+
+    def test_migrate_stuck_creative_jobs(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            with mock.patch.dict(os.environ, {
+                'OTACON_EXPANSION_DATA_ROOT': str(root / 'data'),
+                'OTACON_EXPANSION_CONFIG_ROOT': str(root / 'cfg'),
+            }):
+                from expansion.state_layout import resolve_layout
+                layout = resolve_layout()
+                layout.ensure_user_dirs()
+                store = JobStore(layout=layout)
+                stuck = store.create('stuck', domain='creative', assigned_agent='muse')
+                store.transition(stuck.job_id, JobStatus.RUNNING.value)
+                with mock.patch.object(cs, 'poll_creative_jobs_once', return_value={'ok': True}):
+                    out = cs.migrate_stuck_creative_jobs(layout=layout)
+                self.assertEqual(out['marked_failed'], 1)
+                self.assertEqual(store.get(stuck.job_id).status, JobStatus.FAILED.value)
+                self.assertIn('Migrated stuck', store.get(stuck.job_id).error or '')
+
+
+class ReleaseInfoTests(unittest.TestCase):
+    def test_release_identity_keys(self):
+        from expansion.release_info import release_identity
+        info = release_identity()
+        self.assertIn('release_pin', info)
+        self.assertIn('repo_head', info)
+        self.assertIn('detail', info)
+        self.assertIn('feature pin', info['detail'].lower())
+
 
 if __name__ == '__main__':
     unittest.main()

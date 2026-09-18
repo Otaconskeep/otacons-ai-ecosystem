@@ -84,9 +84,11 @@ def handle_expansion_get(path: str, send_json) -> bool:
             fail_stale_fake_creative_jobs,
             image_workflow_status,
             poll_creative_jobs_once,
+            public_creative_job,
         )
         from expansion.capabilities.studio_setup import setup_status, studio_hardware_snapshot
         from expansion.persist import read_json
+        from expansion.release_info import release_identity
         from expansion.state_layout import resolve_layout
         from expansion.readiness import evaluate_foundation
         ensure_creative_poller()
@@ -96,6 +98,7 @@ def handle_expansion_get(path: str, send_json) -> bool:
         except Exception:
             pass
         jobs = [j for j in JobStore().list(agent_id='muse', limit=40)]
+        pub_jobs = [public_creative_job(j) for j in jobs]
         vs = probe_video_studio()
         detected = detect_local_comfy()
         setup = setup_status()
@@ -173,14 +176,19 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'generation_ready': generation_ready,
             'submitter_ready': submitter_ready,
         }
+        rel_id = release_identity()
         send_json({
             'surface': 'muse_creative',
-            'creative_queue': [asdict(j) for j in jobs
-                               if j.status in ('QUEUED', 'ASSIGNED', 'RUNNING') and j.domain in ('creative', 'media')],
-            'active_renders': [asdict(j) for j in jobs
-                               if j.status == 'RUNNING' and j.domain in ('creative', 'media')],
-            'recent_creative_jobs': [asdict(j) for j in jobs if j.domain in ('creative', 'media')][:15],
-            'recent_output': [asdict(j) for j in jobs if j.status == 'COMPLETE' and j.domain in ('creative', 'media')][:10],
+            'release': rel_id,
+            'creative_queue': [j for j in pub_jobs
+                               if j.get('status') in ('QUEUED', 'ASSIGNED', 'RUNNING')
+                               and j.get('domain') in ('creative', 'media')],
+            'active_renders': [j for j in pub_jobs
+                               if j.get('status') == 'RUNNING'
+                               and j.get('domain') in ('creative', 'media')],
+            'recent_creative_jobs': [j for j in pub_jobs if j.get('domain') in ('creative', 'media')][:15],
+            'recent_output': [j for j in pub_jobs
+                              if j.get('status') == 'COMPLETE' and j.get('domain') in ('creative', 'media')][:10],
             'capabilities': {
                 'generation': 'comfy_prompt' if gen_ok else 'packs_needed',
                 'video_studio': vs.state,
@@ -201,6 +209,9 @@ def handle_expansion_get(path: str, send_json) -> bool:
                 'running': setup.get('running'),
                 'endpoint': endpoint,
                 'source': setup.get('source') or '',
+                'release_pin': rel_id.get('release_pin_short') or '',
+                'repo_head': rel_id.get('repo_head_short') or '',
+                'release_detail': rel_id.get('detail') or '',
             },
             'packs': packs,
             'studio': {
@@ -263,6 +274,63 @@ def handle_expansion_get(path: str, send_json) -> bool:
             ),
             'note': 'Muse owns Video Studio. Missing packs soft-block Generate — never fake RUNNING.',
         })
+        return True
+    if path.startswith('/api/expansion/creative/jobs/') and path.endswith('/output'):
+        from expansion.capabilities.comfy_submit import (
+            comfy_view_url,
+            endpoint_from_job,
+            outputs_from_job,
+            poll_creative_jobs_once,
+        )
+        from expansion.jobs import JobStore
+        jid = path[len('/api/expansion/creative/jobs/'):-len('/output')].strip('/')
+        if not jid:
+            send_json({'error': 'job_id required'}, 400)
+            return True
+        try:
+            poll_creative_jobs_once()
+        except Exception:
+            pass
+        job = JobStore().get(jid)
+        if not job:
+            send_json({'error': 'not found'}, 404)
+            return True
+        files = outputs_from_job(job)
+        if not files:
+            send_json({
+                'ok': False,
+                'error': 'output not ready',
+                'status': job.status,
+                'job_id': jid,
+            }, 404)
+            return True
+        url = comfy_view_url(endpoint_from_job(job), files[0])
+        send_json({
+            'ok': True,
+            'job_id': jid,
+            'filename': files[0],
+            'filenames': files,
+            'url': url,
+            'open': url,
+        })
+        return True
+    if path.startswith('/api/expansion/creative/jobs/'):
+        from expansion.capabilities.comfy_submit import poll_creative_jobs_once, public_creative_job
+        from expansion.jobs import JobStore
+        jid = path.rsplit('/', 1)[-1]
+        try:
+            poll_creative_jobs_once()
+        except Exception:
+            pass
+        job = JobStore().get(jid)
+        if not job:
+            send_json({'error': 'not found'}, 404)
+            return True
+        send_json(public_creative_job(job))
+        return True
+    if path == '/api/expansion/release':
+        from expansion.release_info import release_identity
+        send_json(release_identity())
         return True
     if path == '/api/expansion/creative/packs':
         from expansion.capabilities.studio_packs import packs_status
@@ -745,6 +813,7 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
         from expansion.capabilities.comfy_submit import (
             ensure_creative_poller,
             fail_stale_fake_creative_jobs,
+            public_creative_job,
             submit_image_job,
         )
         from expansion.capabilities.video_studio import probe_video_studio
@@ -847,6 +916,12 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             event_id=created.event_id,
         )
         job = pipe.jobs.get(job.job_id)
+        try:
+            from expansion.capabilities.workshop_api import sync_expansion_job_to_workshop
+            sync_expansion_job_to_workshop(job)
+        except Exception:
+            pass
+        pub = public_creative_job(job) if job else None
         send_json({
             'ok': True,
             'queued': True,
@@ -854,7 +929,9 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             'engine': engine or 'z-image-turbo',
             'prompt_id': prompt_id,
             'endpoint': endpoint,
-            'job': asdict(job) if job else None,
+            'job': pub,
+            'job_id': job.job_id if job else None,
+            'output_proxy': (pub or {}).get('output_proxy') or '',
             'message': submitted.get('message') or f'Submitted to ComfyUI · prompt_id={prompt_id}',
         })
         return True

@@ -347,6 +347,50 @@ def prompt_id_from_job(job) -> str:
     return ''
 
 
+def endpoint_from_job(job) -> str:
+    for item in (getattr(job, 'evidence', None) or []):
+        s = str(item)
+        if s.startswith('comfy:endpoint='):
+            return s.split('=', 1)[1].rstrip('/')
+    return _studio_endpoint()
+
+
+def outputs_from_job(job) -> list[str]:
+    files: list[str] = []
+    for item in (getattr(job, 'evidence', None) or []):
+        s = str(item)
+        if s.startswith('comfy:output='):
+            files.append(s.split('=', 1)[1])
+    # Also parse "ComfyUI outputs: a.png, b.png" from result text.
+    result = str(getattr(job, 'result', '') or '')
+    if 'ComfyUI outputs:' in result and not files:
+        tail = result.split('ComfyUI outputs:', 1)[1]
+        files = [x.strip() for x in tail.split(',') if x.strip()]
+    return files
+
+
+def comfy_view_url(endpoint: str, filename: str) -> str:
+    ep = (endpoint or _studio_endpoint()).rstrip('/')
+    return f'{ep}/view?filename={filename}&type=output'
+
+
+def public_creative_job(job) -> dict[str, Any]:
+    """Job dict for Creative / Workshop UI — includes openable output URLs."""
+    from dataclasses import asdict
+    d = asdict(job) if hasattr(job, '__dataclass_fields__') else dict(job)
+    files = outputs_from_job(job)
+    ep = endpoint_from_job(job)
+    urls = [comfy_view_url(ep, f) for f in files]
+    jid = getattr(job, 'job_id', None) or d.get('job_id') or d.get('id')
+    d['outputs'] = files
+    d['output_urls'] = urls
+    d['preview_url'] = urls[0] if urls else ''
+    d['output_proxy'] = f'/api/expansion/creative/jobs/{jid}/output' if files and jid else ''
+    d['prompt_id'] = prompt_id_from_job(job)
+    d['comfy_endpoint'] = ep
+    return d
+
+
 def fail_stale_fake_creative_jobs(
     *,
     layout: Optional[StateLayout] = None,
@@ -378,6 +422,23 @@ def fail_stale_fake_creative_jobs(
         )
         marked.append(job.job_id)
     return {'ok': True, 'marked_failed': len(marked), 'job_ids': marked}
+
+
+def migrate_stuck_creative_jobs(*, layout: Optional[StateLayout] = None) -> dict[str, Any]:
+    """Installer / soft-update hook: fail historic fake RUNNING creative jobs."""
+    out = fail_stale_fake_creative_jobs(
+        layout=layout,
+        reason=(
+            'Migrated stuck creative job: never received a ComfyUI prompt_id '
+            '(pre-submitter / fake RUNNING).'
+        ),
+    )
+    # Also advance any real prompt_ids that already finished in Comfy.
+    try:
+        poll = poll_creative_jobs_once(layout=layout)
+    except Exception as exc:  # noqa: BLE001
+        poll = {'ok': False, 'error': str(exc)}
+    return {**out, 'poll': poll}
 
 
 def _history_outputs(endpoint: str, prompt_id: str) -> list[str]:
@@ -423,6 +484,11 @@ def poll_creative_jobs_once(*, layout: Optional[StateLayout] = None) -> dict[str
                 confidence=0.9,
             )
             completed += 1
+            try:
+                from expansion.capabilities.workshop_api import sync_expansion_job_to_workshop
+                sync_expansion_job_to_workshop(store.get(job.job_id))
+            except Exception:
+                pass
             continue
         # Still queued/running in Comfy — leave RUNNING.
         code, q = _http_json('GET', f'{ep}/queue', timeout=5.0)

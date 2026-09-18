@@ -111,6 +111,103 @@ def _upsert_job(job: dict[str, Any], layout: Optional[StateLayout] = None) -> di
     return job
 
 
+def sync_expansion_job_to_workshop(job: Any, layout: Optional[StateLayout] = None) -> dict[str, Any]:
+    """Mirror an Expansion JobStore creative job into Workshop log cards."""
+    if job is None:
+        return {}
+    from expansion.capabilities.comfy_submit import (
+        endpoint_from_job,
+        outputs_from_job,
+        prompt_id_from_job,
+        public_creative_job,
+    )
+    status_map = {
+        'QUEUED': 'queued',
+        'ASSIGNED': 'queued',
+        'WAITING': 'waiting_gpu',
+        'RUNNING': 'running',
+        'COMPLETE': 'completed',
+        'FAILED': 'failed',
+        'CANCELLED': 'cancelled',
+    }
+    st = status_map.get(str(getattr(job, 'status', '') or '').upper(), 'queued')
+    files = outputs_from_job(job)
+    ep = endpoint_from_job(job)
+    pub = public_creative_job(job)
+    created = float(getattr(job, 'created_at', None) or time.time())
+    card = {
+        'id': getattr(job, 'job_id', '') or pub.get('job_id'),
+        'type': 'image_v1',
+        'job_type': 'image_v1',
+        'status': st,
+        'prompt': getattr(job, 'request', '') or '',
+        'agent_id': getattr(job, 'assigned_agent', None) or 'muse',
+        'created_at': created,
+        'created_ts': created,
+        'stage': st,
+        'prompt_id': prompt_id_from_job(job),
+        'endpoint': ep,
+        'outputs': files,
+        'output_file': files[0] if files else '',
+        'preview_url': pub.get('preview_url') or '',
+        'expansion': True,
+        'width': 512,
+        'height': 512,
+        'error': getattr(job, 'error', '') or '',
+    }
+    return _upsert_job(card, layout)
+
+
+def _expansion_jobs_as_workshop(layout: Optional[StateLayout] = None) -> list[dict[str, Any]]:
+    try:
+        from expansion.capabilities.comfy_submit import (
+            endpoint_from_job,
+            outputs_from_job,
+            prompt_id_from_job,
+            public_creative_job,
+        )
+        from expansion.jobs import JobStore
+    except Exception:
+        return []
+    status_map = {
+        'QUEUED': 'queued',
+        'ASSIGNED': 'queued',
+        'WAITING': 'waiting_gpu',
+        'RUNNING': 'running',
+        'COMPLETE': 'completed',
+        'FAILED': 'failed',
+        'CANCELLED': 'cancelled',
+    }
+    out: list[dict[str, Any]] = []
+    for job in JobStore(layout=layout).list(limit=80):
+        if job.domain not in ('creative', 'media'):
+            continue
+        files = outputs_from_job(job)
+        pub = public_creative_job(job)
+        created = float(job.created_at or 0)
+        out.append({
+            'id': job.job_id,
+            'type': 'image_v1',
+            'job_type': 'image_v1',
+            'status': status_map.get(job.status, 'queued'),
+            'prompt': job.request or '',
+            'agent_id': job.assigned_agent or 'muse',
+            'created_at': created,
+            'created_ts': created,
+            'stage': job.status,
+            'prompt_id': prompt_id_from_job(job),
+            'endpoint': endpoint_from_job(job),
+            'outputs': files,
+            'output_file': files[0] if files else '',
+            'preview_url': pub.get('preview_url') or '',
+            'expansion': True,
+            'width': 512,
+            'height': 512,
+            'error': job.error or '',
+        })
+    return out
+
+
 def _get_job(job_id: str, layout: Optional[StateLayout] = None) -> Optional[dict[str, Any]]:
     for j in _workshop_jobs(layout):
         if j.get('id') == job_id:
@@ -170,9 +267,11 @@ def _create_image_job(
     from expansion.capabilities.comfy_submit import submit_image_job
 
     job_id = uuid.uuid4().hex[:12]
+    now = time.time()
     job = {
         'id': job_id,
         'type': 'image_v1',
+        'job_type': 'image_v1',
         'status': 'queued',
         'prompt': prompt,
         'negative': negative,
@@ -181,7 +280,8 @@ def _create_image_job(
         'actor_ids': actor_ids or [],
         'style_id': style_id or '',
         'agent_id': 'muse',
-        'created_at': time.time(),
+        'created_at': now,
+        'created_ts': now,
         'stage': 'submitting',
     }
     _upsert_job(job, layout)
@@ -227,6 +327,49 @@ def _refresh_image_job(job: dict[str, Any], layout: Optional[StateLayout] = None
     return job
 
 
+def _send_job_output(
+    jid: str,
+    layout: Optional[StateLayout],
+    send_json: SendJson,
+    send_redirect: Optional[Callable[[str, int], None]],
+) -> bool:
+    job = _get_job(jid, layout)
+    if job:
+        job = _refresh_image_job(dict(job), layout)
+        if job.get('status') != 'completed':
+            send_json({'error': 'output not ready', 'status': job.get('status')}, 404)
+            return True
+        ep = (job.get('endpoint') or 'http://127.0.0.1:8188').rstrip('/')
+        fname = job.get('output_file') or ((job.get('outputs') or [None])[0])
+        if fname and send_redirect:
+            send_redirect(f'{ep}/view?filename={fname}&type=output', 302)
+            return True
+        if fname:
+            send_json({'ok': True, 'url': f'{ep}/view?filename={fname}&type=output', 'filename': fname})
+            return True
+        send_json({'error': 'no output'}, 404)
+        return True
+    try:
+        from expansion.capabilities.comfy_submit import comfy_view_url, endpoint_from_job, outputs_from_job
+        from expansion.jobs import JobStore
+        ej = JobStore(layout=layout).get(jid)
+    except Exception:
+        ej = None
+    if not ej:
+        send_json({'error': 'not found'}, 404)
+        return True
+    files = outputs_from_job(ej)
+    if not files:
+        send_json({'error': 'output not ready', 'status': getattr(ej, 'status', '')}, 404)
+        return True
+    url = comfy_view_url(endpoint_from_job(ej), files[0])
+    if send_redirect:
+        send_redirect(url, 302)
+        return True
+    send_json({'ok': True, 'url': url, 'filename': files[0]})
+    return True
+
+
 def handle_workshop_get(
     path: str,
     send_json: SendJson,
@@ -252,7 +395,23 @@ def handle_workshop_get(
         send_json(_load_list(_styles_path(layout)))
         return True
     if rel == 'jobs':
-        jobs = [_refresh_image_job(dict(j), layout) for j in _workshop_jobs(layout)[:80]]
+        local = [_refresh_image_job(dict(j), layout) for j in _workshop_jobs(layout)[:80]]
+        merged: dict[str, dict[str, Any]] = {}
+        for j in _expansion_jobs_as_workshop(layout) + local:
+            jid = str(j.get('id') or '')
+            if not jid:
+                continue
+            prev = merged.get(jid)
+            # Prefer completed expansion cards with outputs.
+            if not prev or (j.get('status') == 'completed' and j.get('outputs')):
+                merged[jid] = j
+            elif prev and not prev.get('outputs') and j.get('outputs'):
+                merged[jid] = {**prev, **j}
+        jobs = sorted(
+            merged.values(),
+            key=lambda x: float(x.get('created_at') or 0),
+            reverse=True,
+        )[:80]
         send_json(jobs)
         return True
     if rel == 'scripts':
@@ -279,48 +438,50 @@ def handle_workshop_get(
         send_json({'error': 'not found'}, 404)
         return True
 
+    m = re.match(r'jobs/([^/]+)/output$', rel)
+    if m:
+        jid = unquote(m.group(1))
+        return _send_job_output(jid, layout, send_json, send_redirect)
+
     m = re.match(r'jobs/([^/]+)$', rel)
     if m:
-        job = _get_job(unquote(m.group(1)), layout)
-        if not job:
-            send_json({'error': 'not found'}, 404)
+        jid = unquote(m.group(1))
+        job = _get_job(jid, layout)
+        if job:
+            send_json(_refresh_image_job(dict(job), layout))
             return True
-        send_json(_refresh_image_job(dict(job), layout))
+        try:
+            from expansion.jobs import JobStore
+            ej = JobStore(layout=layout).get(jid)
+        except Exception:
+            ej = None
+        if ej:
+            send_json(sync_expansion_job_to_workshop(ej, layout))
+            return True
+        send_json({'error': 'not found'}, 404)
         return True
 
     m = re.match(r'generate-image-v1/([^/]+)$', rel)
     if m:
-        job = _get_job(unquote(m.group(1)), layout)
-        if not job:
-            send_json({'error': 'not found'}, 404)
+        jid = unquote(m.group(1))
+        job = _get_job(jid, layout)
+        if job:
+            send_json(_refresh_image_job(dict(job), layout))
             return True
-        send_json(_refresh_image_job(dict(job), layout))
+        try:
+            from expansion.jobs import JobStore
+            ej = JobStore(layout=layout).get(jid)
+        except Exception:
+            ej = None
+        if ej:
+            send_json(sync_expansion_job_to_workshop(ej, layout))
+            return True
+        send_json({'error': 'not found'}, 404)
         return True
 
     m = re.match(r'generate-image-v1/([^/]+)/output$', rel)
     if m:
-        raw_job = _get_job(unquote(m.group(1)), layout)
-        if not raw_job:
-            send_json({'error': 'not found'}, 404)
-            return True
-        job = _refresh_image_job(dict(raw_job), layout)
-        if job.get('status') != 'completed':
-            send_json({'error': 'output not ready', 'status': job.get('status')}, 404)
-            return True
-        ep = (job.get('endpoint') or 'http://127.0.0.1:8188').rstrip('/')
-        fname = job.get('output_file') or ((job.get('outputs') or [None])[0])
-        if fname and send_redirect:
-            send_redirect(f'{ep}/view?filename={fname}&type=output', 302)
-            return True
-        if fname:
-            send_json({
-                'ok': True,
-                'url': f'{ep}/view?filename={fname}&type=output',
-                'filename': fname,
-            })
-            return True
-        send_json({'error': 'no output'}, 404)
-        return True
+        return _send_job_output(unquote(m.group(1)), layout, send_json, send_redirect)
 
     # Soft stubs for modalities not fully wired yet — keep UI from hard-failing.
     if rel.startswith('generate-music-v1/') or rel.startswith('generate-v2/') or rel.startswith('generate-hidream'):

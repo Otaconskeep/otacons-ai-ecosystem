@@ -224,15 +224,19 @@ if [[ "$CURRENT_BRANCH" == "main" || -z "$CURRENT_BRANCH" ]]; then
       | python3 -c 'import sys,json; print((json.load(sys.stdin).get("commit") or "").strip())' 2>/dev/null \
       || true
   )"
+  ORIGIN_TIP="$(run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" rev-parse origin/main 2>/dev/null || true)"
   SYNC_TARGET="origin/main"
   if [[ -n "${RELEASE_PIN:-}" ]] && run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" cat-file -e "${RELEASE_PIN}^{commit}" 2>/dev/null; then
     SYNC_TARGET="$RELEASE_PIN"
-    log "Expansion sync → release.json.commit=$RELEASE_PIN"
+    log "Soft-update feature pin (release.json.commit)=${RELEASE_PIN}"
+    if [[ -n "${ORIGIN_TIP:-}" && "${ORIGIN_TIP}" != "${RELEASE_PIN}" ]]; then
+      log "origin/main tip=${ORIGIN_TIP} (often a chore(release) that only refreshes the pin — not the install target)"
+    fi
   else
     warn "No usable release.json.commit — Expansion sync → origin/main"
   fi
   run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" reset --hard "$SYNC_TARGET"
-  ok "Working tree matches ${SYNC_TARGET}."
+  ok "Working tree matches feature pin ${SYNC_TARGET}."
 else
   warn "Repository is on branch '${CURRENT_BRANCH:-detached}'. Fetched origin only; leaving your branch untouched."
 fi
@@ -313,6 +317,16 @@ save_manifest(build_dev_manifest(), manifest_path)
 print('bootstrap', bootstrap_runtime_state(layout))
 ent = EntitlementGate(layout).refresh_after_provision()
 print('entitlement', ent.expansion_entitled, ent.source)
+try:
+    from expansion.capabilities.comfy_submit import migrate_stuck_creative_jobs
+    print('migrate_creative', migrate_stuck_creative_jobs(layout=layout))
+except Exception as exc:
+    print('migrate_creative_skip', str(exc)[:200])
+try:
+    from expansion.release_info import release_identity
+    print('release', release_identity())
+except Exception as exc:
+    print('release_skip', str(exc)[:200])
 report = evaluate_foundation(layout)
 print('foundation_ready=', report.foundation_ready())
 print('surfaces_ready=', report.surfaces_ready())
