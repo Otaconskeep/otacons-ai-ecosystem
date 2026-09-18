@@ -453,11 +453,17 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
     if path == '/api/expansion/video-studio/start':
         # Back-compat: Start now means full orchestrated Setup.
         from expansion.capabilities.studio_setup import start_studio_setup
-        send_json(start_studio_setup(force=bool((data or {}).get('force'))))
+        send_json(start_studio_setup(
+            force=bool((data or {}).get('force')),
+            proceed_anyway=bool((data or {}).get('proceed_anyway') or (data or {}).get('acknowledge_under_spec')),
+        ))
         return True
     if path == '/api/expansion/video-studio/setup':
         from expansion.capabilities.studio_setup import start_studio_setup
-        send_json(start_studio_setup(force=bool((data or {}).get('force'))))
+        send_json(start_studio_setup(
+            force=bool((data or {}).get('force')),
+            proceed_anyway=bool((data or {}).get('proceed_anyway') or (data or {}).get('acknowledge_under_spec')),
+        ))
         return True
     if path == '/api/expansion/jobs/create':
         from expansion.pipeline import LivingPipeline

@@ -66,8 +66,10 @@ def main() -> int:
          "Genome real train form (YouTube → Piper) wired", fails)
     must("showVideoStudioSetup" in js,
          "Aria-guided Studio setup", fails)
-    must("startComfySidecar" in js and "startStudioSetup" in js and "video-studio/setup" in js,
+    must("startStudioSetup" in js and "video-studio/setup" in js,
          "Comfy Setup orchestrator one-button UX wired", fails)
+    must("proceedStudioUnderSpec" in js and "I understand — proceed anyway" in js,
+         "Aria under-spec disclaimer + proceed-anyway bypass", fails)
     must("Set Up Video Studio" in js and "Advanced · Diagnostics" in js,
          "Studio Setup is one-button; CLI buried under Advanced", fails)
     must("OTACON_COMFYUI_URL" not in js.split("Advanced")[0] if "Advanced" in js else True,

@@ -1474,11 +1474,22 @@ async function showVideoStudioSetup(){
   const diag=setup.diagnostics||{};
   const disc=diag.discovery||{};
   const hw=diag.hardware_profile||setup.hardware_profile||{};
+  const underSpec=!!(setup.under_spec||setup.phase==='UNDER_SPEC'||hw.under_spec);
+  const canProceed=setup.can_proceed_anyway!==false&&hw.can_proceed_anyway!==false;
   const ep=setup.endpoint||(disc.endpoint)||(state.capabilities&&state.capabilities.video_endpoint)||'';
   const src=setup.source||disc.source||'';
+  const disclaimer=hw.performance_disclaimer||setup.aria||'';
   const hwLine=hw.profile_id
-    ?`<p class="muted" style="margin:8px 0 0;font-size:11px;line-height:1.45"><b>Hardware profile</b> · ${escapeHtml(hw.profile_id)} · ${escapeHtml(String(hw.vram_gb||'?'))} GB VRAM · ${escapeHtml(String(hw.ram_gb||'?'))} GB RAM · Comfy ${escapeHtml(hw.comfy_runtime||'—')}<br>Image: ${escapeHtml((hw.image&&hw.image.engine)||'off')} (${escapeHtml((hw.image&&hw.image.tier)||'—')}) · Video: ${escapeHtml((hw.video&&hw.video.engine)||'off')} · Music: ${escapeHtml((hw.music&&hw.music.engine)||'off')} (${escapeHtml((hw.music&&hw.music.tier)||'—')})${hw.ltx2_eligible?' · LTX-2 eligible':''}</p>`
+    ?`<p class="muted" style="margin:8px 0 0;font-size:11px;line-height:1.45"><b>Hardware profile</b> · ${escapeHtml(hw.profile_id)} · ${escapeHtml(String(hw.marketed_vram_gb||hw.vram_gb||'?'))} GB VRAM (raw ${escapeHtml(String(hw.vram_gb||'?'))}) · ${escapeHtml(String(hw.marketed_ram_gb||hw.ram_gb||'?'))} GB RAM (raw ${escapeHtml(String(hw.ram_gb||'?'))}) · Comfy ${escapeHtml(hw.comfy_runtime||'—')}<br>Image: ${escapeHtml((hw.image&&hw.image.engine)||'off')} (${escapeHtml((hw.image&&hw.image.tier)||'—')}) · Video: ${escapeHtml((hw.video&&hw.video.engine)||'off')} · Music: ${escapeHtml((hw.music&&hw.music.engine)||'off')} (${escapeHtml((hw.music&&hw.music.tier)||'—')})${hw.ltx2_eligible?' · LTX-2 eligible':''}</p>`
     :'';
+  const ariaThink=underSpec?`
+    <div id="studioUnderSpec" style="margin-top:12px;padding:12px 14px;border:1px solid rgba(255,184,107,.35);border-radius:12px;background:rgba(255,184,107,.06)">
+      <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--warn,#ffb86b);font-size:10px;margin:0 0 8px">Aria // thinking</p>
+      <p style="margin:0 0 8px;line-height:1.55;font-size:13px"><em>…checking VRAM, system RAM, and what this PC can honestly run…</em></p>
+      <p style="margin:0 0 10px;line-height:1.55">${escapeHtml(disclaimer||"I'm sorry — this PC is under the comfortable Studio floor. You can still use the video / image generator, but it will feel slower. More RAM (32 GB+) would help a lot.")}</p>
+      <p class="muted" style="margin:0 0 12px;font-size:11px;line-height:1.45">I recommend upgrading when you can. If you understand the trade-off and still want Studio on this machine, say so and I’ll bypass the soft guards and continue setup.</p>
+      ${canProceed?`<button type="button" class="hud-cta primary" id="studioProceedBtn" onclick="otSfx('ok');proceedStudioUnderSpec()">I understand — proceed anyway</button>`:''}
+    </div>`:'';
   appRoot().innerHTML=`<div class="home">
   <header class="home-header"><div><p class="home-kicker">Expansion · Muse</p><h1 class="home-greeting">Video Studio</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
@@ -1487,10 +1498,11 @@ async function showVideoStudioSetup(){
       <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
       <div>
         <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--ot-cyan);font-size:10px;margin:0 0 8px">Aria // guiding</p>
-        <p id="studioAriaCopy" style="margin:0 0 10px;line-height:1.5">${escapeHtml(aria)}</p>
+        <p id="studioAriaCopy" style="margin:0 0 10px;line-height:1.5">${escapeHtml(underSpec?(disclaimer||aria):aria)}</p>
         <p><b>Status:</b> <span id="studioPhaseLabel">${escapeHtml(ready?'READY':(setup.phase||st||'…'))}</span></p>
         <p class="muted" id="studioSetupMessage" style="margin-top:6px">${escapeHtml(setup.message||setup.user_action||'')}</p>
         ${hwLine}
+        ${ariaThink}
       </div>
     </div>
     ${stepHtml}
@@ -1498,7 +1510,9 @@ async function showVideoStudioSetup(){
     <div class="hud-cta-row" style="margin-top:14px">
       ${ready
         ?`<button type="button" class="hud-cta primary" onclick="otSfx('ok');showExpansionSurface('creative')">Open Video Studio</button>`
-        :`<button type="button" class="hud-cta primary" id="comfyStartBtn" onclick="otSfx('ok');startStudioSetup()">${setup.running?'Working…':'Set Up Video Studio'}</button>`}
+        :(underSpec
+          ?`<button type="button" class="hud-cta" id="comfyStartBtn" disabled>Waiting for your OK…</button>`
+          :`<button type="button" class="hud-cta primary" id="comfyStartBtn" onclick="otSfx('ok');startStudioSetup()">${setup.running?'Working…':'Set Up Video Studio'}</button>`)}
       <button type="button" class="hud-cta" onclick="otSfx('click');showVideoStudioSetup()">Refresh</button>
       <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
     </div>
@@ -1560,6 +1574,10 @@ function startStudioSetupPoll(){
         otSfx('ok');
         await loadCapabilities();
         showVideoStudioSetup();
+      }else if(s.phase==='UNDER_SPEC'||s.under_spec){
+        clearInterval(window.__studioPoll);
+        window.__studioPoll=null;
+        showVideoStudioSetup();
       }else if(!s.running&&(s.phase==='FAILED'||s.phase==='DOCKER_MISSING'||s.phase==='DEGRADED')){
         clearInterval(window.__studioPoll);
         window.__studioPoll=null;
@@ -1585,11 +1603,42 @@ async function startStudioSetup(){
       showVideoStudioSetup();
       return;
     }
+    if(s.phase==='UNDER_SPEC'||s.under_spec){
+      await loadCapabilities();
+      showVideoStudioSetup();
+      return;
+    }
     startStudioSetupPoll();
   }catch(e){
     otSfx('error');
     if(el) el.textContent=String(e&&e.message||e);
     if(btn){ btn.disabled=false; btn.textContent='Set Up Video Studio'; }
+  }
+}
+async function proceedStudioUnderSpec(){
+  const btn=document.getElementById('studioProceedBtn');
+  const el=document.getElementById('comfyInstallStatus');
+  if(btn){ btn.disabled=true; btn.textContent='Continuing…'; }
+  if(el) el.textContent='Aria noted — bypassing soft hardware guards…';
+  try{
+    const r=await api('/api/expansion/video-studio/setup',{
+      proceed_anyway:true,
+      acknowledge_under_spec:true,
+      force:true,
+    }, 20000);
+    const s=r&&r.data||{};
+    renderStudioSetupProgress(s);
+    if(s.phase==='READY'||s.ok){
+      otSfx('ok');
+      await loadCapabilities();
+      showVideoStudioSetup();
+      return;
+    }
+    startStudioSetupPoll();
+  }catch(e){
+    otSfx('error');
+    if(el) el.textContent=String(e&&e.message||e);
+    if(btn){ btn.disabled=false; btn.textContent='I understand — proceed anyway'; }
   }
 }
 /** @deprecated use startStudioSetup — kept for floor buttons / older tips */

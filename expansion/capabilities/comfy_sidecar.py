@@ -266,7 +266,7 @@ def ensure_comfy_sidecar(
     layout: Optional[StateLayout] = None,
 ) -> dict:
     """Start the Expansion Comfy docker compose on :8188 and save the endpoint."""
-    # Already up?
+    # Already healthy?
     detected = detect_local_comfy()
     if detected.get('found'):
         saved = save_studio_endpoint(detected['endpoint'], layout=layout)
@@ -310,14 +310,39 @@ def ensure_comfy_sidecar(
         }
 
     try:
-        from core.platform import docker_env
+        from core.platform import docker_env, _resolve_docker
         run_env = docker_env()
+        docker = _resolve_docker()
     except Exception:
         run_env = None
+        docker = None
+
+    # Heal Restarting / wrong-image managed container (common after CPU→GPU profile flip).
+    if docker:
+        try:
+            insp = subprocess.run(
+                [docker, 'inspect', '-f',
+                 '{{.State.Status}}|{{.State.Running}}|{{.Config.Image}}',
+                 'otacon-comfyui'],
+                capture_output=True, text=True, timeout=8, check=False, env=run_env,
+            )
+            if insp.returncode == 0:
+                status, running, image = (insp.stdout or '').strip().split('|', 2)
+                want_gpu = 'gpu' in compose.name or 'cu' in (compose.read_text(encoding='utf-8', errors='ignore')[:800].lower())
+                wrong = want_gpu and 'cpu' in (image or '').lower() and 'cu' not in (image or '').lower()
+                unhealthy = status.lower() in ('restarting', 'exited', 'dead') or running.lower() not in ('true', '1')
+                if wrong or unhealthy:
+                    subprocess.run(
+                        cmd_base + ['down', '--remove-orphans'],
+                        capture_output=True, text=True, timeout=120, check=False,
+                        cwd=str(compose.parent), env=run_env,
+                    )
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            pass
 
     try:
         up = subprocess.run(
-            cmd_base + ['up', '-d'],
+            cmd_base + ['up', '-d', '--force-recreate'],
             capture_output=True,
             text=True,
             timeout=300,
@@ -363,6 +388,7 @@ def ensure_comfy_sidecar(
                 'state': saved.get('state'),
                 'detail': saved.get('detail'),
                 'video_studio': saved.get('video_studio'),
+                'compose': str(compose),
             }
         time.sleep(2.0)
 
@@ -372,4 +398,5 @@ def ensure_comfy_sidecar(
         'endpoint': DEFAULT_ENDPOINT,
         'error': f'Container up but Comfy not healthy yet: {last}',
         'hint': 'Wait 30s and click Detect, or: docker logs otacon-comfyui',
+        'compose': str(compose),
     }

@@ -48,13 +48,19 @@ class StudioHardwareProfile:
     free_disk_gb: float
     cuda_available: bool
     gpu_generation: str  # e.g. Ampere, Ada, Blackwell, Turing, unknown
-    ram_tier: str  # unsupported | minimum | recommended | excellent
+    ram_tier: str  # below_minimum | minimum | recommended | excellent
     auto_install_studio: bool
     comfy_runtime: str  # cpu | gpu
     image: CreativePath
     video: CreativePath
     music: CreativePath
     ltx2_eligible: bool
+    under_spec: bool = False
+    under_spec_reasons: list[str] = field(default_factory=list)
+    performance_disclaimer: str = ''
+    can_proceed_anyway: bool = True
+    marketed_vram_gb: float = 0.0
+    marketed_ram_gb: float = 0.0
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -116,17 +122,58 @@ def _is_fast_sku(model: str) -> bool:
     return bool(re.search(r'\b(ti|super)\b', m))
 
 
+# Marketed “16 GB” boxes often expose ~15.0–15.9 GiB in WSL. Treat those as the
+# labeled tier so we do not brick Studio auto-install for most 16 GB PCs.
+_RAM_MINIMUM_GIB = 15.0  # was strict 16.0 — too tight for Windows/WSL GiB math
+_VRAM_BAND_FLOOR = {
+    8: 7.5,
+    10: 9.5,
+    12: 11.5,
+    16: 15.0,
+    24: 23.0,
+    32: 31.0,
+}
+
+
+def marketed_gib(raw_gb: float, *, kind: str = 'ram') -> float:
+    """Round measured GiB up to common marketed sizes when within the GiB gap."""
+    try:
+        v = float(raw_gb or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if v <= 0:
+        return 0.0
+    # Snap to nearest marketed bucket when just under the label.
+    for label, floor in sorted(_VRAM_BAND_FLOOR.items()):
+        if floor <= v < float(label):
+            return float(label)
+    if kind == 'ram' and _RAM_MINIMUM_GIB <= v < 16.0:
+        return 16.0
+    return v
+
+
 def _ram_tier(ram_gb: float) -> tuple[str, bool, list[str]]:
+    """Return (tier, auto_ok_by_ram, warnings).
+
+    auto_ok_by_ram is True when we should auto-install without a disclaimer.
+    Below the soft floor we still allow proceed-anyway (under_spec), not a hard brick.
+    """
     warnings: list[str] = []
-    if ram_gb < 16:
+    marketed = marketed_gib(ram_gb, kind='ram')
+    if ram_gb < _RAM_MINIMUM_GIB:
         warnings.append(
-            f'System RAM {ram_gb:.0f} GB is below the 16 GB Studio minimum — '
-            'auto-install of Video Studio is disabled.'
+            f'System RAM measures {ram_gb:.1f} GiB (below ~15 GiB / marketed 16 GB). '
+            'Video Studio will be slower; more RAM (32 GB+) is strongly recommended.'
         )
-        return 'unsupported', False, warnings
-    if ram_gb < 32:
+        return 'below_minimum', False, warnings
+    if marketed < 32:
+        if ram_gb < 16.0:
+            warnings.append(
+                f'System RAM measures {ram_gb:.1f} GiB — treated as marketed 16 GB minimum. '
+                'Expect tighter headroom for Wan / ACE-Step offload; 32 GB is recommended.'
+            )
         return 'minimum', True, warnings
-    if ram_gb < 64:
+    if marketed < 64:
         return 'recommended', True, warnings
     return 'excellent', True, warnings
 
@@ -432,13 +479,19 @@ def classify_studio_profile(
     """Pure classifier — unit-testable without touching nvidia-smi."""
     cuda = _cuda_available() if cuda_available is None else bool(cuda_available)
     gen = _gpu_generation(gpu_model)
-    ram_tier, auto_ok, warnings = _ram_tier(ram_gb)
+    raw_vram = float(vram_gb or 0.0)
+    raw_ram = float(ram_gb or 0.0)
+    # Banding uses marketed sizes so 15.9 GiB VRAM → 16 GB profile, 15.2 GiB RAM → 16 GB.
+    vram_m = marketed_gib(raw_vram, kind='vram')
+    ram_m = marketed_gib(raw_ram, kind='ram')
+    ram_tier, ram_auto_ok, warnings = _ram_tier(raw_ram)
     notes: list[str] = []
+    under_reasons: list[str] = []
 
-    image = _zimage_path(vram_gb)
-    video, ltx2, vwarn = _video_path(vram_gb)
+    image = _zimage_path(vram_m)
+    video, ltx2, vwarn = _video_path(vram_m)
     warnings.extend(vwarn)
-    music = _music_path(vram_gb)
+    music = _music_path(vram_m)
 
     # Disk gates
     need = 0.0
@@ -454,6 +507,7 @@ def classify_studio_profile(
             f'for the selected Studio packs (Z-Image/Wan/ACE-Step'
             f'{"+LTX-2" if ltx2 else ""}).'
         )
+        under_reasons.append('disk')
         if ltx2 and free_disk_gb < DISK_LTX2_GB:
             warnings.append(
                 f'LTX-2 needs ~{DISK_LTX2_GB} GB+ free — keeping LTX-2 eligible but '
@@ -461,47 +515,87 @@ def classify_studio_profile(
             )
             notes.append('ltx2_disk_hold')
 
-    if not cuda and vram_gb <= 0:
+    if not cuda and raw_vram <= 0:
         warnings.append('CUDA / nvidia-smi not available — Studio stays CPU Comfy only.')
-        auto_ok = False
+        under_reasons.append('no_cuda')
         image = CreativePath(False, 'z-image', 'disabled', 'No CUDA — image pack off.', {}, {})
         video = CreativePath(False, 'none', 'disabled', 'No CUDA — video pack off.', {}, {})
-        # Music can still suggest ACE-Step for later GPU hosts
         music = CreativePath(
             False, 'ace-step-1.5', 'deferred',
             'No CUDA now — music profile deferred until a GPU is visible.',
             {}, {},
         )
 
-    profile_id = _profile_id(vram_gb, gpu_model, ltx2)
-    if not auto_ok or profile_id in ('DISABLED',) or (vram_gb < 6 and not image.enabled and not video.enabled):
-        if vram_gb < 6:
-            profile_id = 'DISABLED' if vram_gb < 4 else 'LOW_VRAM'
+    if ram_tier == 'below_minimum':
+        under_reasons.append('ram')
+    if vram_m < 6:
+        under_reasons.append('vram')
 
-    comfy = 'gpu' if (cuda and vram_gb >= 6 and auto_ok) else 'cpu'
-    if ram_tier == 'unsupported':
-        auto_ok = False
+    profile_id = _profile_id(vram_m, gpu_model, ltx2)
+    if profile_id in ('DISABLED',) or (vram_m < 6 and not image.enabled and not video.enabled):
+        if vram_m < 6:
+            profile_id = 'DISABLED' if vram_m < 4 else 'LOW_VRAM'
+
+    # GPU Comfy whenever CUDA + usable VRAM — do not force CPU just because RAM is soft-under.
+    comfy = 'gpu' if (cuda and vram_m >= 6) else 'cpu'
+    if not cuda:
         comfy = 'cpu'
 
-    notes.append(f'vram_first={vram_gb:.1f}G')
-    notes.append(f'ram_second={ram_gb:.1f}G/{ram_tier}')
+    under_spec = bool(under_reasons)
+    # Auto-install when packs exist and RAM is at least the soft floor OR user can proceed anyway.
+    # below_minimum still sets auto_install False so UI shows Aria disclaimer first.
+    packs_ok = bool(image.enabled or video.enabled or (music.enabled and music.tier != 'deferred'))
+    auto_ok = bool(packs_ok and ram_auto_ok and cuda and vram_m >= 6)
+
+    disclaimer = ''
+    if under_spec:
+        bits = []
+        if 'ram' in under_reasons:
+            bits.append(
+                f"your system RAM measures about {raw_ram:.1f} GiB — under the comfortable "
+                f"16 GB Studio floor (32 GB is where Wan / ACE-Step offload feels good)"
+            )
+        if 'vram' in under_reasons:
+            bits.append(
+                f"your GPU VRAM measures about {raw_vram:.1f} GiB — below the 6 GB image/video floor"
+            )
+        if 'disk' in under_reasons:
+            bits.append('free disk is tighter than the model pack budget')
+        if 'no_cuda' in under_reasons:
+            bits.append('CUDA is not visible to WSL yet')
+        why = '; '.join(bits) if bits else 'this PC is under the recommended Studio floor'
+        disclaimer = (
+            f"I'm sorry — {why}. You can still use Video Studio / the image generator, "
+            f"but expect slower renders, more offload thrash, and occasional restarts. "
+            f"Upgrading RAM toward 32 GB (and keeping drivers healthy) would make this feel "
+            f"much smoother. If you understand and want to proceed anyway, I can continue."
+        )
+
+    notes.append(f'vram_raw={raw_vram:.1f}G marketed={vram_m:.1f}G')
+    notes.append(f'ram_raw={raw_ram:.1f}G marketed={ram_m:.1f}G/{ram_tier}')
     notes.append(f'gpu_gen_third={gen}')
 
     return StudioHardwareProfile(
         profile_id=profile_id,
         gpu_model=gpu_model or '',
-        vram_gb=float(vram_gb or 0.0),
-        ram_gb=float(ram_gb or 0.0),
+        vram_gb=raw_vram,
+        ram_gb=raw_ram,
         free_disk_gb=float(free_disk_gb or 0.0),
         cuda_available=cuda,
         gpu_generation=gen,
         ram_tier=ram_tier,
-        auto_install_studio=bool(auto_ok and (image.enabled or video.enabled or music.enabled)),
+        auto_install_studio=bool(auto_ok),
         comfy_runtime=comfy,
         image=image,
         video=video,
         music=music,
         ltx2_eligible=ltx2,
+        under_spec=under_spec,
+        under_spec_reasons=under_reasons,
+        performance_disclaimer=disclaimer,
+        can_proceed_anyway=bool(packs_ok or cuda),  # allow bypass when something can still run
+        marketed_vram_gb=vram_m,
+        marketed_ram_gb=ram_m,
         warnings=warnings,
         notes=notes,
     )

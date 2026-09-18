@@ -69,13 +69,31 @@ class HardwareProfileMatrixTests(unittest.TestCase):
         self.assertTrue(p.ltx2_eligible)
         self.assertEqual(p.video.engine, 'ltx-2')
 
-    def test_ram_under_16_blocks_auto_install(self):
+    def test_ram_under_15_soft_under_spec_not_hard_brick(self):
         p = classify_studio_profile(
             vram_gb=12, ram_gb=8, free_disk_gb=200,
             gpu_model='RTX 3060', cuda_available=True,
         )
-        self.assertEqual(p.ram_tier, 'unsupported')
+        self.assertEqual(p.ram_tier, 'below_minimum')
         self.assertFalse(p.auto_install_studio)
+        self.assertTrue(p.under_spec)
+        self.assertTrue(p.can_proceed_anyway)
+        self.assertIn("I'm sorry", p.performance_disclaimer)
+        # Do not force CPU solely because RAM is soft-under when CUDA+VRAM exist
+        self.assertEqual(p.comfy_runtime, 'gpu')
+
+    def test_ram_15_2_gib_treated_as_marketed_16(self):
+        p = classify_studio_profile(
+            vram_gb=15.9, ram_gb=15.2, free_disk_gb=200,
+            gpu_model='NVIDIA GeForce RTX 5070 Ti', cuda_available=True,
+        )
+        self.assertEqual(p.ram_tier, 'minimum')
+        self.assertTrue(p.auto_install_studio)
+        self.assertFalse(p.under_spec)
+        self.assertEqual(p.marketed_ram_gb, 16.0)
+        self.assertEqual(p.marketed_vram_gb, 16.0)
+        self.assertEqual(p.profile_id, '16GB_FAST')
+        self.assertEqual(p.comfy_runtime, 'gpu')
 
     def test_no_fake_vram_or_crist_path(self):
         p = classify_studio_profile(

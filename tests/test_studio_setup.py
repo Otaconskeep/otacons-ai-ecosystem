@@ -37,6 +37,29 @@ class StudioSetupOrchestratorTests(unittest.TestCase):
         self.layout = resolve_layout(product_root=Path(__file__).resolve().parents[1] / 'expansion')
         self.layout.ensure_user_dirs()
         ss._WORKER = None
+        # Isolate from host hardware (CI/dev boxes often trip soft under-spec).
+        self._hw = mock.patch.object(ss, 'studio_hardware_snapshot', return_value={
+            'profile_id': '12GB_FAST',
+            'vram_gb': 12.0,
+            'marketed_vram_gb': 12.0,
+            'ram_gb': 32.0,
+            'marketed_ram_gb': 32.0,
+            'comfy_runtime': 'gpu',
+            'auto_install_studio': True,
+            'under_spec': False,
+            'under_spec_reasons': [],
+            'performance_disclaimer': '',
+            'can_proceed_anyway': True,
+            'ram_tier': 'recommended',
+            'image': {'enabled': True, 'engine': 'z-image-turbo', 'tier': 'recommended'},
+            'video': {'enabled': True, 'engine': 'wan-2.2-5b', 'tier': 'high_quality'},
+            'music': {'enabled': True, 'engine': 'ace-step-1.5', 'tier': '2b_lm17_xl_offload'},
+            'ltx2_eligible': False,
+            'warnings': [],
+            'assets': [],
+            'defaults': {},
+        })
+        self._hw.start()
 
     def tearDown(self):
         # Drain any background worker
@@ -44,6 +67,7 @@ class StudioSetupOrchestratorTests(unittest.TestCase):
         if w is not None and w.is_alive():
             w.join(timeout=5)
         ss._WORKER = None
+        self._hw.stop()
         self._cm.stop()
         self.tmp.cleanup()
 
@@ -378,7 +402,7 @@ class StudioSetupOrchestratorTests(unittest.TestCase):
         hold = threading.Event()
         release = threading.Event()
 
-        def slow_orch(layout):
+        def slow_orch(layout, proceed_anyway=False):
             entered['n'] += 1
             hold.set()
             release.wait(timeout=5)

@@ -43,6 +43,7 @@ VERIFYING = 'VERIFYING'
 READY = 'READY'
 DEGRADED = 'DEGRADED'
 FAILED = 'FAILED'
+UNDER_SPEC = 'UNDER_SPEC'
 
 _ACTIVE_STATES = frozenset({
     CHECKING, DOCKER_STOPPED, INSTALLING_COMFY, STARTING_COMFY,
@@ -527,6 +528,11 @@ def setup_status(layout: Optional[StateLayout] = None) -> dict[str, Any]:
         **state,
         'capability_state': live.state,
         'need_setup': live.state not in ('READY',),
+        'under_spec': bool(state.get('under_spec') or (state.get('phase') == UNDER_SPEC)),
+        'can_proceed_anyway': bool(
+            state.get('can_proceed_anyway', True)
+            or ((state.get('hardware_profile') or {}).get('can_proceed_anyway', True))
+        ),
         'diagnostics': diagnostics,
         'steps': [
             {'id': k, 'label': label, 'done': bool((state.get('checklist') or {}).get(k))}
@@ -540,8 +546,13 @@ def start_studio_setup(
     layout: Optional[StateLayout] = None,
     force: bool = False,
     background: bool = True,
+    proceed_anyway: bool = False,
 ) -> dict[str, Any]:
-    """Kick off (or resume) the orchestrator. Idempotent — one worker at a time."""
+    """Kick off (or resume) the orchestrator. Idempotent — one worker at a time.
+
+    proceed_anyway: user acknowledged Aria's under-spec disclaimer and asked to
+    bypass soft hardware guards (RAM GiB floor / performance warnings).
+    """
     global _WORKER
     layout = layout or resolve_layout()
     with _LOCK:
@@ -559,8 +570,9 @@ def start_studio_setup(
         state['running'] = True
         state['error'] = ''
         state['technical'] = ''
-        # Reset provision flags for a fresh attempt (Desktop flag cleared too).
-        # Preserve dispatch_attempts so the INSTALLING_COMFY watchdog can bound retries.
+        if proceed_anyway:
+            state['proceed_anyway'] = True
+            state['under_spec_acknowledged'] = True
         prior_dispatch = int((state.get('install_action') or {}).get('dispatch_attempts') or 0)
         state['docker_launch_tried'] = False
         state['desktop_launch_tried'] = False
@@ -580,7 +592,7 @@ def start_studio_setup(
 
         def _run():
             try:
-                _orchestrate(layout)
+                _orchestrate(layout, proceed_anyway=bool(proceed_anyway or state.get('proceed_anyway')))
             except Exception as exc:  # noqa: BLE001
                 st = load_setup_state(layout)
                 _mark_install_action(st, _INSTALL_FAILED, error=str(exc), layout=layout)
@@ -598,7 +610,6 @@ def start_studio_setup(
         if background:
             _WORKER = threading.Thread(target=_run, daemon=True, name='studio-setup')
             _WORKER.start()
-            # Verify worker accepted before callers treat setup as in-flight.
             if not _worker_alive():
                 st = load_setup_state(layout)
                 st = _fail_install_did_not_start(
@@ -689,8 +700,10 @@ def _wait_docker_ready(
     return bool(docker.get('ok')), docker
 
 
-def _orchestrate(layout: StateLayout) -> None:
+def _orchestrate(layout: StateLayout, *, proceed_anyway: bool = False) -> None:
     state = load_setup_state(layout)
+    if state.get('proceed_anyway') or state.get('under_spec_acknowledged'):
+        proceed_anyway = True
     state = _set_phase(
         state,
         CHECKING,
@@ -745,42 +758,60 @@ def _orchestrate(layout: StateLayout) -> None:
     state['hardware_profile'] = {
         'profile_id': hw.get('profile_id'),
         'vram_gb': hw.get('vram_gb'),
+        'marketed_vram_gb': hw.get('marketed_vram_gb'),
         'ram_gb': hw.get('ram_gb'),
+        'marketed_ram_gb': hw.get('marketed_ram_gb'),
         'comfy_runtime': hw.get('comfy_runtime'),
+        'under_spec': hw.get('under_spec'),
+        'under_spec_reasons': hw.get('under_spec_reasons') or [],
+        'performance_disclaimer': hw.get('performance_disclaimer') or '',
+        'can_proceed_anyway': hw.get('can_proceed_anyway', True),
         'warnings': hw.get('warnings') or [],
     }
     save_setup_state(state, layout=layout)
 
-    if not hw.get('auto_install_studio') and (hw.get('ram_tier') == 'unsupported' or hw.get('vram_gb', 0) < 6):
-        warns = '; '.join((hw.get('warnings') or [])[:2]) or 'Hardware below Studio auto-install floor.'
-        _set_phase(
+    # Soft under-spec: pause for Aria disclaimer unless user already acknowledged.
+    needs_ack = bool(hw.get('under_spec')) and not proceed_anyway
+    # Also pause when auto_install is false due to soft RAM floor but packs exist.
+    if needs_ack:
+        disclaimer = hw.get('performance_disclaimer') or (
+            "I'm sorry — this PC is under the comfortable Studio floor. "
+            "You can still proceed, but performance may suffer."
+        )
+        state = _set_phase(
             state,
-            FAILED if hw.get('ram_tier') == 'unsupported' else DEGRADED,
-            aria=(
-                f"This PC's hardware profile is {hw.get('profile_id')} "
-                f"({hw.get('vram_gb', 0):.0f} GB VRAM / {hw.get('ram_gb', 0):.0f} GB RAM). "
-                f"{warns} I can still connect an existing ComfyUI if you have one."
-            ),
-            message='Studio auto-install not recommended on this hardware.',
-            error=warns,
-            technical=json.dumps(hw)[:1500],
+            UNDER_SPEC,
+            aria=disclaimer,
+            message='Hardware under recommended Studio floor — Aria needs your OK.',
+            user_action='Read Aria’s note, then click “I understand — proceed anyway” if you want to continue.',
+            error='',
+            technical=json.dumps({
+                'reasons': hw.get('under_spec_reasons') or [],
+                'warnings': hw.get('warnings') or [],
+                'ram_gb': hw.get('ram_gb'),
+                'vram_gb': hw.get('vram_gb'),
+            })[:1500],
             layout=layout,
         )
-        # Still try connect-only if something is already up
-        found2 = _prefer_endpoint(layout)
-        if found2.get('found'):
-            save_studio_endpoint(found2['endpoint'], layout=layout)
-            _finish_components_and_ready(load_setup_state(layout), layout, found2['endpoint'])
+        state['running'] = False
+        state['under_spec'] = True
+        state['can_proceed_anyway'] = bool(hw.get('can_proceed_anyway', True))
+        save_setup_state(state, layout=layout)
         return
 
     profile_aria = (
         f"Docker is ready. Hardware profile {hw.get('profile_id')} "
-        f"({hw.get('vram_gb', 0):.0f} GB VRAM) — "
+        f"({hw.get('marketed_vram_gb') or hw.get('vram_gb', 0):.0f} GB VRAM) — "
         f"Comfy {hw.get('comfy_runtime')}, "
         f"image={(hw.get('image') or {}).get('tier')}, "
         f"video={(hw.get('video') or {}).get('engine')}, "
         f"music={(hw.get('music') or {}).get('tier')}."
     )
+    if proceed_anyway and hw.get('under_spec'):
+        profile_aria = (
+            "Understood — proceeding anyway with your acknowledgment. "
+            + profile_aria
+        )
     state = _set_phase(
         state,
         DOCKER_READY,
