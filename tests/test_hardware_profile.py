@@ -65,7 +65,8 @@ class HardwareProfileMatrixTests(unittest.TestCase):
         self.assertTrue(p.ltx2_eligible)
         self.assertEqual(p.video.engine, 'ltx-2')
         self.assertEqual(p.video.tier, 'distilled_24gb')
-        self.assertEqual(p.music.tier, 'xl_lm4b')
+        self.assertEqual(p.music.tier, 'aio_full')
+        self.assertEqual(p.music.settings.get('checkpoint'), 'ace_step_1.5_turbo_aio.safetensors')
 
     def test_2060_never_gets_ltx2(self):
         p = classify_studio_profile(

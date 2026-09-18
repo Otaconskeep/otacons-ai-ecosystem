@@ -200,6 +200,49 @@ class WorkshopApiTests(unittest.TestCase):
         self.assertFalse(h['music_ready'])
         self.assertFalse(h['video_ready'])
 
+    def test_generate_portrait_queues_image_job(self):
+        with TemporaryDirectory() as td:
+            with mock.patch.dict(os.environ, {
+                'OTACON_EXPANSION_DATA_ROOT': str(Path(td) / 'data'),
+                'OTACON_EXPANSION_CONFIG_ROOT': str(Path(td) / 'cfg'),
+            }):
+                from expansion.state_layout import resolve_layout
+                layout = resolve_layout()
+                layout.ensure_user_dirs()
+                actors = [{
+                    'id': 'act1',
+                    'name': 'Nova',
+                    'description': 'silver hair, teal jacket',
+                    'images': {},
+                    'ref_slots': {},
+                }]
+                wa._save_list(wa._actors_path(layout), actors)
+                got = {}
+
+                def send(data, status=200):
+                    got['data'] = data
+                    got['status'] = status
+
+                with mock.patch.object(wa, 'resolve_layout', return_value=layout), \
+                     mock.patch.object(wa, '_create_image_job', return_value={
+                         'id': 'pjob1',
+                         'status': 'running',
+                         'error': '',
+                     }):
+                    ok = wa.handle_workshop_write(
+                        'POST',
+                        '/video-studio/api/actors/act1/generate-portrait',
+                        {'agent_id': 'muse'},
+                        send,
+                    )
+                self.assertTrue(ok)
+                self.assertEqual(got.get('status'), 200)
+                self.assertTrue(got['data'].get('ok'))
+                self.assertEqual(got['data'].get('job_id'), 'pjob1')
+                saved = wa._load_list(wa._actors_path(layout))
+                self.assertEqual(saved[0].get('portrait_job_id'), 'pjob1')
+                self.assertEqual(saved[0].get('portrait_status'), 'generating')
+
 
 if __name__ == '__main__':
     unittest.main()

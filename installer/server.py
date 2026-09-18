@@ -510,11 +510,29 @@ def _capability_snapshot() -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
-    def send_bytes(self, data: bytes, content_type: str = 'application/octet-stream', filename: str = ''):
+    def send_bytes(
+        self,
+        data: bytes,
+        content_type: str = 'application/octet-stream',
+        filename: str = '',
+        *,
+        cache_control: str | None = None,
+        etag: str | None = None,
+    ):
+        inm = (self.headers.get('If-None-Match') or '').strip()
+        if etag and inm and inm == etag:
+            self.send_response(304)
+            self.send_header('ETag', etag)
+            self.send_header('Cache-Control', cache_control or 'public, max-age=31536000, immutable')
+            self.send_header('Access-Control-Allow-Origin', 'null' if BIND_MODE == 'lan' else '*')
+            self.end_headers()
+            return
         self.send_response(200)
         self.send_header('Content-Type', content_type or 'application/octet-stream')
         self.send_header('Content-Length', str(len(data)))
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', cache_control or 'no-store')
+        if etag:
+            self.send_header('ETag', etag)
         if filename:
             safe = str(filename).replace('"', '')
             self.send_header('Content-Disposition', f'inline; filename="{safe}"')
@@ -604,8 +622,21 @@ class Handler(BaseHTTPRequestHandler):
 
             # Required for /jobs/<id>/output and generate-image-v1/.../output —
             # without send_bytes those routes cannot return image/png to <img>.
-            def _bytes(data: bytes, content_type: str = 'application/octet-stream', filename: str = '') -> None:
-                self.send_bytes(data, content_type, filename)
+            def _bytes(
+                data: bytes,
+                content_type: str = 'application/octet-stream',
+                filename: str = '',
+                *,
+                cache_control: str | None = None,
+                etag: str | None = None,
+            ) -> None:
+                self.send_bytes(
+                    data,
+                    content_type,
+                    filename,
+                    cache_control=cache_control,
+                    etag=etag,
+                )
 
             if handle_workshop_get(
                 path,
@@ -1279,7 +1310,10 @@ def main():
         LAN_TOKEN = load_lan_token()
         print(f'Otacon local mode: http://127.0.0.1:{port} (not reachable from LAN)')
     # Threading so a hung GPU probe (WSL nvidia-smi D-state) cannot freeze Codec/UI.
-    ThreadingHTTPServer((BIND_HOST, port), Handler).serve_forever()
+    # Larger accept backlog — preview polls + concurrent PNG proxies under burst.
+    httpd = ThreadingHTTPServer((BIND_HOST, port), Handler)
+    httpd.request_queue_size = 128
+    httpd.serve_forever()
 
 
 # Avoid printing the full token into every log line; show a short hint only.

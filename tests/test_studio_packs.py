@@ -27,6 +27,8 @@ class StudioPacksTests(unittest.TestCase):
             root = Path(td) / 'models'
             root.mkdir()
             with mock.patch.object(sp, 'resolve_models_root', return_value=root), \
+                 mock.patch.object(sp, 'discover_comfy_container_models_dir', return_value={'ok': False}), \
+                 mock.patch.object(sp, '_live_pack_status', return_value=None), \
                  mock.patch.object(sp, '_profile_pack_specs', return_value=[{
                      'id': 'zimage',
                      'kind': 'image',
@@ -43,7 +45,7 @@ class StudioPacksTests(unittest.TestCase):
                 from expansion.state_layout import resolve_layout
                 layout = resolve_layout()
                 layout.ensure_user_dirs()
-                st = sp.packs_status(layout=layout, hw={'image': {'enabled': True}})
+                st = sp.packs_status(layout=layout, hw={'image': {'enabled': True}}, endpoint=None)
             self.assertFalse(st['ok'])
             self.assertTrue(st['soft_block'])
             self.assertEqual(st['action'], 'install_packs')
@@ -114,6 +116,53 @@ class StudioPacksTests(unittest.TestCase):
         self.assertIn('ltx2', specs)
         self.assertNotIn('wan', specs)
         self.assertEqual(specs['ltx2']['comfy_docs'], sp.COMFY_DOCS['ltx2'])
+
+    def test_compose_prefixed_volume_candidates(self):
+        names = sp._compose_volume_candidates()
+        self.assertIn('otacon-comfy-data', names)
+        self.assertIn('comfyui_otacon-comfy-data', names)
+
+    def test_packs_status_trusts_live_comfy_over_empty_host(self):
+        with TemporaryDirectory() as td:
+            root = Path(td) / 'models'
+            root.mkdir()
+            with mock.patch.object(sp, 'resolve_models_root', return_value=root), \
+                 mock.patch.object(sp, 'discover_comfy_container_models_dir', return_value={'ok': False}), \
+                 mock.patch.object(sp, '_profile_pack_specs', return_value=[{
+                     'id': 'zimage',
+                     'kind': 'image',
+                     'label': 'Z-Image',
+                     'engine': 'z-image-turbo',
+                     'files': sp.ZIMAGE_NVFP4,
+                     'disk_gb': 8,
+                     'priority': 1,
+                 }]), \
+                 mock.patch('expansion.capabilities.comfy_submit.image_workflow_status', return_value={
+                     'ok': True,
+                     'unet': 'z_image_turbo_nvfp4.safetensors',
+                     'clip': 'qwen_3_4b_fp4_mixed.safetensors',
+                     'vae': 'ae.safetensors',
+                     'detail': 'live',
+                     'missing': [],
+                 }), \
+                 mock.patch.dict(os.environ, {
+                     'OTACON_EXPANSION_DATA_ROOT': str(Path(td) / 'data'),
+                     'OTACON_EXPANSION_CONFIG_ROOT': str(Path(td) / 'cfg'),
+                 }):
+                from expansion.state_layout import resolve_layout
+                layout = resolve_layout()
+                layout.ensure_user_dirs()
+                st = sp.packs_status(
+                    layout=layout,
+                    endpoint='http://127.0.0.1:8188',
+                    hw={'image': {'enabled': True}},
+                )
+            self.assertTrue(st['image_ready'])
+            self.assertTrue(st['packs']['zimage']['ok'])
+            self.assertTrue(st['packs']['zimage']['live_comfy'])
+            self.assertFalse(st['soft_block'])
+            self.assertEqual(st['models_root_role'], 'host_staging_then_docker_cp')
+
 
 if __name__ == '__main__':
     unittest.main()

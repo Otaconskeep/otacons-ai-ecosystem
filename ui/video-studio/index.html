@@ -1036,8 +1036,8 @@ const VS_CODEC_STATIC_SRC = 'data:image/svg+xml;utf8,' + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="140">' +
   '<rect width="200" height="140" fill="#c0c0c0"/>' +
   '<rect x="2" y="2" width="196" height="136" fill="none" stroke="#000" stroke-width="2"/>' +
-  '<text x="100" y="64" text-anchor="middle" font-family="Tahoma,sans-serif" font-size="13" fill="#000080" font-weight="bold">NO SIGNAL</text>' +
-  '<text x="100" y="84" text-anchor="middle" font-family="Tahoma,sans-serif" font-size="10" fill="#000">CODEC FREQ ERROR</text>' +
+  '<text x="100" y="64" text-anchor="middle" font-family="Tahoma,sans-serif" font-size="13" fill="#800000" font-weight="bold">PREVIEW FAILED</text>' +
+  '<text x="100" y="84" text-anchor="middle" font-family="Tahoma,sans-serif" font-size="10" fill="#000">USE DOWNLOAD LINK</text>' +
   '</svg>'
 );
 document.addEventListener('error', (e) => {
@@ -2187,10 +2187,13 @@ async function vsRefreshJobs() {
     return;
   }
   if (!Array.isArray(jobs) || jobs.length === 0) {
-    el.innerHTML = '<div class="vs-empty">No renders yet — queue one above.</div>';
+    const empty = '<div class="vs-empty">No renders yet — queue one above.</div>';
+    if (el.dataset.vsJobsHtml === empty) return;
+    el.dataset.vsJobsHtml = empty;
+    el.innerHTML = empty;
     return;
   }
-  el.innerHTML = jobs.map(j => {
+  const html = jobs.map(j => {
     const created = new Date((j.created_ts || j.created_at || 0) * 1000).toLocaleString();
     const jt = j.job_type || j.type || 'video';
     const outUrl = `/video-studio/api/jobs/${j.id}/output`;
@@ -2360,6 +2363,11 @@ async function vsRefreshJobs() {
       <span class="vs-status ${j.status}">${vsStatusLabel(j.status)}</span>
     </div>`;
   }).join('');
+  // Crist 2026-09-18: skip innerHTML churn when markup unchanged so <img>
+  // previews can finish loading across the 8s poll.
+  if (el.dataset.vsJobsHtml === html) return;
+  el.dataset.vsJobsHtml = html;
+  el.innerHTML = html;
   try { await vsMountProbedMedia(el); } catch (_e) {}
   el.querySelectorAll('.vs-job-delete-btn').forEach(btn => {
     // 2026-09-08 fix: window.confirm() is a native dialog -- after several

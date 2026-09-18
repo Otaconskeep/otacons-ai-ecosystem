@@ -7,8 +7,10 @@ path without needing otacon-executor.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -21,6 +23,37 @@ from expansion.state_layout import StateLayout, resolve_layout
 SendJson = Callable[..., None]
 SendBytes = Callable[..., None]
 
+# Bounded in-process cache for Workshop output bytes (preview poll storm).
+_OUTPUT_CACHE: dict[str, tuple[float, bytes, str, str]] = {}
+_OUTPUT_CACHE_BYTES = 0
+_OUTPUT_CACHE_MAX = 64 * 1024 * 1024
+_OUTPUT_CACHE_LOCK = threading.Lock()
+
+
+def _cache_get(key: str) -> Optional[tuple[bytes, str, str]]:
+    with _OUTPUT_CACHE_LOCK:
+        hit = _OUTPUT_CACHE.get(key)
+        if not hit:
+            return None
+        _ts, data, mime, name = hit
+        return data, mime, name
+
+
+def _cache_put(key: str, data: bytes, mime: str, name: str) -> None:
+    global _OUTPUT_CACHE_BYTES
+    if not data or len(data) > _OUTPUT_CACHE_MAX // 2:
+        return
+    with _OUTPUT_CACHE_LOCK:
+        old = _OUTPUT_CACHE.pop(key, None)
+        if old:
+            _OUTPUT_CACHE_BYTES -= len(old[1])
+        while _OUTPUT_CACHE and _OUTPUT_CACHE_BYTES + len(data) > _OUTPUT_CACHE_MAX:
+            _k, ev = next(iter(_OUTPUT_CACHE.items()))
+            del _OUTPUT_CACHE[_k]
+            _OUTPUT_CACHE_BYTES -= len(ev[1])
+        _OUTPUT_CACHE[key] = (time.time(), data, mime, name)
+        _OUTPUT_CACHE_BYTES += len(data)
+
 
 def _prefs(layout: Optional[StateLayout] = None) -> Path:
     layout = layout or resolve_layout()
@@ -30,6 +63,70 @@ def _prefs(layout: Optional[StateLayout] = None) -> Path:
 
 def _actors_path(layout: Optional[StateLayout] = None) -> Path:
     return _prefs(layout) / 'workshop_actors.json'
+
+
+def _actors_media_dir(layout: Optional[StateLayout] = None) -> Path:
+    d = _prefs(layout) / 'workshop_actor_media'
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _sync_actor_portrait_status(actor: dict[str, Any], layout: Optional[StateLayout] = None) -> dict[str, Any]:
+    """Refresh portrait_status from the linked image job when still generating."""
+    jid = str(actor.get('portrait_job_id') or '')
+    if not jid:
+        return actor
+    if actor.get('portrait_status') == 'ready':
+        return actor
+    job = _get_job(jid, layout)
+    if not job:
+        return actor
+    job = _refresh_image_job(dict(job), layout)
+    st = job.get('status')
+    if st == 'completed':
+        actor['portrait_status'] = 'ready'
+        actor['portrait_error'] = ''
+        imgs = dict(actor.get('images') or {})
+        imgs['portrait'] = f"/video-studio/api/generate-image-v1/{jid}/output"
+        actor['images'] = imgs
+    elif st == 'failed':
+        actor['portrait_status'] = 'failed'
+        actor['portrait_error'] = job.get('error') or 'portrait failed'
+    else:
+        actor['portrait_status'] = 'generating'
+    return actor
+
+
+def _actors_public(layout: Optional[StateLayout] = None) -> list[dict[str, Any]]:
+    actors = _load_list(_actors_path(layout))
+    out = []
+    dirty = False
+    for a in actors:
+        synced = _sync_actor_portrait_status(dict(a), layout)
+        if synced != a:
+            dirty = True
+        out.append(synced)
+    if dirty:
+        _save_list(_actors_path(layout), out)
+    return out
+
+
+def _portrait_prompt_for_actor(actor: dict[str, Any]) -> str:
+    name = str(actor.get('name') or 'character').strip()
+    desc = str(
+        actor.get('description')
+        or actor.get('note')
+        or actor.get('personality')
+        or ''
+    ).strip()
+    base = (
+        f"identity-preserving portrait of {name}, natural lighting, sharp eyes, "
+        "clean background, single subject, head and shoulders"
+    )
+    if desc:
+        return f"{base}. {desc}"
+    return base
+
 
 
 def _styles_path(layout: Optional[StateLayout] = None) -> Path:
@@ -414,19 +511,36 @@ def _send_job_output(
     )
 
     def _proxy(fname: str, endpoint: str) -> bool:
-        data, mime, name = fetch_comfy_output_bytes(filename=fname, endpoint=endpoint)
-        if data is None:
-            send_json({
-                'error': 'output not ready',
-                'detail': (
-                    'Could not load that file through Otacon. '
-                    'If Comfy finished, try Generate again or open Creative after soft-update.'
-                ),
-                'filename': name or fname,
-            }, 404)
-            return True
+        cache_key = f'{endpoint}|{fname}'
+        cached = _cache_get(cache_key)
+        if cached:
+            data, mime, name = cached
+        else:
+            data, mime, name = fetch_comfy_output_bytes(filename=fname, endpoint=endpoint)
+            if data is None:
+                send_json({
+                    'error': 'output not ready',
+                    'detail': (
+                        'Could not load that file through Otacon. '
+                        'If Comfy finished, try Generate again or open Creative after soft-update.'
+                    ),
+                    'filename': name or fname,
+                }, 404)
+                return True
+            _cache_put(cache_key, data, mime, name or fname)
         if send_bytes:
-            send_bytes(data, mime, name or fname)
+            etag = '"' + hashlib.sha256(data).hexdigest()[:32] + '"'
+            try:
+                send_bytes(
+                    data,
+                    mime,
+                    name or fname,
+                    cache_control='public, max-age=31536000, immutable',
+                    etag=etag,
+                )
+            except TypeError:
+                # Older send_bytes without cache kwargs
+                send_bytes(data, mime, name or fname)
             return True
         # Never fall back to JSON for media routes — browsers treat that as a
         # broken <img>/<video>. Callers (installer.server) must pass send_bytes.
@@ -488,10 +602,38 @@ def handle_workshop_get(
         send_json(_telemetry())
         return True
     if rel == 'actors':
-        send_json(_load_list(_actors_path(layout)))
+        send_json(_actors_public(layout))
         return True
     if rel == 'styles':
         send_json(_load_list(_styles_path(layout)))
+        return True
+
+    m = re.match(r'actors/([^/]+)/media/([^/]+)$', rel)
+    if m and send_bytes:
+        aid = unquote(m.group(1))
+        name = unquote(m.group(2))
+        # Path traversal guard
+        if '/' in name or '\\' in name or name.startswith('.'):
+            send_json({'error': 'bad name'}, 400)
+            return True
+        fpath = _actors_media_dir(layout) / aid / name
+        if not fpath.is_file():
+            send_json({'error': 'not found'}, 404)
+            return True
+        data = fpath.read_bytes()
+        mime = 'image/png'
+        low = name.lower()
+        if low.endswith(('.jpg', '.jpeg')):
+            mime = 'image/jpeg'
+        elif low.endswith('.webp'):
+            mime = 'image/webp'
+        elif low.endswith('.gif'):
+            mime = 'image/gif'
+        etag = '"' + hashlib.sha256(data).hexdigest()[:32] + '"'
+        try:
+            send_bytes(data, mime, name, cache_control='public, max-age=86400', etag=etag)
+        except TypeError:
+            send_bytes(data, mime, name)
         return True
     if rel == 'jobs':
         local = [_refresh_image_job(dict(j), layout) for j in _workshop_jobs(layout)[:80]]
@@ -612,6 +754,7 @@ def handle_workshop_write(
             'id': aid,
             'name': str(data.get('name') or data.get('label') or 'Actor'),
             'note': str(data.get('note') or ''),
+            'description': str(data.get('description') or data.get('note') or ''),
             'images': data.get('images') or {},
             'ref_slots': data.get('ref_slots') or {},
             'reference_images': data.get('reference_images') or [],
@@ -620,6 +763,91 @@ def handle_workshop_write(
         actors.insert(0, actor)
         _save_list(_actors_path(layout), actors)
         send_json(actor)
+        return True
+
+    m = re.match(r'actors/([^/]+)/generate-portrait$', rel)
+    if m and method == 'POST':
+        aid = unquote(m.group(1))
+        actors = _load_list(_actors_path(layout))
+        actor = next((a for a in actors if a.get('id') == aid), None)
+        if not actor:
+            send_json({'error': 'actor not found'}, 404)
+            return True
+        prompt = _portrait_prompt_for_actor(actor)
+        job = _create_image_job(
+            prompt=prompt,
+            width=704,
+            height=1216,
+            negative='blurry, low quality, watermark, duplicate, montage, poster',
+            actor_ids=[aid],
+            style_id='',
+            layout=layout,
+        )
+        for i, a in enumerate(actors):
+            if a.get('id') == aid:
+                actors[i] = {
+                    **a,
+                    'portrait_job_id': job['id'],
+                    'portrait_status': 'failed' if job.get('status') == 'failed' else 'generating',
+                    'portrait_error': job.get('error') or '',
+                }
+                actor = actors[i]
+                break
+        _save_list(_actors_path(layout), actors)
+        code = 200 if job.get('status') != 'failed' else 409
+        send_json({
+            'ok': job.get('status') != 'failed',
+            'id': job['id'],
+            'job_id': job['id'],
+            'actor': actor,
+            'status': job.get('status'),
+            'error': job.get('error') or '',
+        }, code)
+        return True
+
+    m = re.match(r'actors/([^/]+)/reference-image$', rel)
+    if m and method == 'POST':
+        aid = unquote(m.group(1))
+        actors = _load_list(_actors_path(layout))
+        actor = next((a for a in actors if a.get('id') == aid), None)
+        if not actor:
+            send_json({'error': 'actor not found'}, 404)
+            return True
+        files = data.get('_files') if isinstance(data.get('_files'), dict) else {}
+        file_info = files.get('file') or files.get('image') or {}
+        raw = file_info.get('data') if isinstance(file_info, dict) else None
+        if not isinstance(raw, (bytes, bytearray)) or not raw:
+            send_json({'error': 'file required'}, 400)
+            return True
+        role = str(data.get('role') or 'display_headshot').strip() or 'display_headshot'
+        orig = str(file_info.get('filename') or 'ref.png')
+        ext = Path(orig).suffix.lower() or '.png'
+        if ext not in ('.png', '.jpg', '.jpeg', '.webp', '.gif'):
+            ext = '.png'
+        safe_name = f'{role}{ext}'
+        dest_dir = _actors_media_dir(layout) / aid
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / safe_name
+        dest.write_bytes(bytes(raw))
+        url = f'/video-studio/api/actors/{aid}/media/{safe_name}'
+        imgs = dict(actor.get('images') or {})
+        slots = dict(actor.get('ref_slots') or {})
+        if role == 'display_headshot':
+            imgs['display_headshot'] = url
+            slots['face_closeup'] = url
+        elif role == 'generation_reference':
+            imgs['generation_reference'] = url
+            slots['canonical_fullbody'] = url
+        else:
+            imgs[role] = url
+            slots[role] = url
+        for i, a in enumerate(actors):
+            if a.get('id') == aid:
+                actors[i] = {**a, 'images': imgs, 'ref_slots': slots}
+                actor = actors[i]
+                break
+        _save_list(_actors_path(layout), actors)
+        send_json({'ok': True, 'actor': actor, 'url': url})
         return True
 
     m = re.match(r'actors/([^/]+)$', rel)
@@ -846,6 +1074,7 @@ def _parse_multipart(content_type: str, raw: bytes) -> dict[str, Any]:
             out.setdefault('_files', {})[key] = {
                 'filename': file_m.group(1),
                 'bytes': len(body),
+                'data': body,
             }
             continue
         val = body.decode('utf-8', errors='replace')

@@ -187,40 +187,121 @@ def _docker_volume_mountpoint(name: str) -> Optional[Path]:
     return None
 
 
-def _container_models_via_exec() -> Optional[Path]:
-    """Return None — used only to discover path string inside container."""
-    return None
+def _path_writable(path: Path) -> bool:
+    """True when this process can create files under path (rootless-safe)."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / '.otacon_write_probe'
+        probe.write_text('ok', encoding='utf-8')
+        probe.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
 
 
-def resolve_models_root() -> Path:
-    """Host path where ComfyUI model files should land."""
+def _compose_volume_candidates() -> list[str]:
+    """Docker Compose prefixes volumes with the project name (dir name by default)."""
+    project = (
+        (os.environ.get('COMPOSE_PROJECT_NAME') or '').strip()
+        or 'comfyui'
+    )
+    base = ('otacon-comfy-models', 'otacon-comfy-data')
+    names: list[str] = []
+    for b in base:
+        names.append(b)
+        names.append(f'{project}_{b}')
+        # Common accidental prefixes from other compose dirs.
+        for alt in ('deploy', 'otacon', 'otacons'):
+            names.append(f'{alt}_{b}')
+    # Dedupe preserve order
+    seen: set[str] = set()
+    out: list[str] = []
+    for n in names:
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def discover_comfy_container_models_dir() -> dict[str, Any]:
+    """Authoritative models path inside otacon-comfyui (docker exec / inspect)."""
+    docker = _docker_bin()
+    if not docker:
+        return {'ok': False, 'action': 'no_docker'}
+    candidates = [
+        '/root/ComfyUI/models',
+        '/ComfyUI/models',
+        '/root/models',
+    ]
+    # Prefer Mounts from inspect when they point at a models tree.
+    try:
+        raw = subprocess.check_output(
+            [docker, 'inspect', '-f', '{{json .Mounts}}', 'otacon-comfyui'],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=8,
+        ).strip()
+        mounts = json.loads(raw) if raw else []
+        for m in mounts if isinstance(mounts, list) else []:
+            dest = str(m.get('Destination') or '')
+            if dest.rstrip('/').endswith('/models') or dest.rstrip('/').endswith('ComfyUI/models'):
+                candidates.insert(0, dest)
+    except (subprocess.SubprocessError, OSError, json.JSONDecodeError):
+        pass
+    for cand in candidates:
+        try:
+            code = subprocess.call(
+                [docker, 'exec', 'otacon-comfyui', 'test', '-d', cand],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+            )
+            if code == 0:
+                return {'ok': True, 'container_path': cand, 'container': 'otacon-comfyui'}
+        except (subprocess.SubprocessError, OSError):
+            continue
+    return {'ok': False, 'action': 'models_dir_missing', 'tried': candidates}
+
+
+def host_models_staging_root() -> Path:
+    """Writable host staging dir — downloads land here, then docker cp into Comfy."""
     env = (os.environ.get('OTACON_COMFY_MODELS') or '').strip()
     if env:
         p = Path(env).expanduser()
         p.mkdir(parents=True, exist_ok=True)
         return p
+    fallback = Path.home() / '.local' / 'share' / 'otacon' / 'comfy' / 'models'
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
 
-    for vol in ('otacon-comfy-models', 'otacon-comfy-data'):
+
+def resolve_models_root() -> Path:
+    """Host staging path for pack downloads (always writable by the installer user).
+
+    Never return a root-owned Docker volume mountpoint (0700 under
+    /var/lib/docker/volumes/...) — Compose prefixes make those names easy to
+    miss, and even the correct name is unusable rootless. Downloads go to the
+    host cache; `_sync_into_comfy_container` is the path into ComfyUI.
+    """
+    staging = host_models_staging_root()
+    # Optional: if a *writable* bind/volume models tree exists, prefer it so
+    # packs land where a bind-mounted Comfy already reads — still never use
+    # an unreadable volume silently.
+    for vol in _compose_volume_candidates():
         mp = _docker_volume_mountpoint(vol)
-        if not mp:
+        if not mp or not _path_writable(mp):
             continue
-        if vol.endswith('models'):
-            mp.mkdir(parents=True, exist_ok=True)
+        if vol.endswith('models') or vol.endswith('_models'):
             return mp
         for cand in (
             mp / 'ComfyUI' / 'models',
             mp / 'comfyui' / 'models',
             mp / 'models',
         ):
-            parent = cand.parent
-            if parent.is_dir() or vol == 'otacon-comfy-data':
+            if _path_writable(cand.parent) or _path_writable(cand):
                 cand.mkdir(parents=True, exist_ok=True)
                 return cand
-
-    # Host cache; sync into container after download when possible.
-    fallback = Path.home() / '.local' / 'share' / 'otacon' / 'comfy' / 'models'
-    fallback.mkdir(parents=True, exist_ok=True)
-    return fallback
+    return staging
 
 
 def _file_ok(path: Path, min_bytes: int = 1) -> bool:
@@ -409,39 +490,141 @@ def seed_workflow_assets() -> dict[str, Any]:
     return {'ok': True, 'dir': str(root), 'written': written}
 
 
+def _live_comfy_filenames(endpoint: str, kind: str) -> list[str]:
+    try:
+        from expansion.capabilities.comfy_submit import list_models
+        return list_models(endpoint, kind) or []
+    except Exception:
+        return []
+
+
+def _name_in_listing(name: str, listing: list[str]) -> bool:
+    n = (name or '').strip()
+    if not n:
+        return False
+    for item in listing:
+        s = str(item)
+        if s == n or s.endswith('/' + n) or s.endswith('\\' + n):
+            return True
+    return False
+
+
+def _live_pack_status(spec: dict[str, Any], endpoint: Optional[str]) -> Optional[dict[str, Any]]:
+    """Verify pack against what ComfyUI can load (authoritative when endpoint is up)."""
+    if not endpoint:
+        return None
+    sid = spec.get('id')
+    try:
+        if sid == 'zimage':
+            from expansion.capabilities.comfy_submit import image_workflow_status
+            live = image_workflow_status(endpoint)
+            if live.get('ok'):
+                return {
+                    'ok': True,
+                    'missing': [],
+                    'present': [live.get('unet'), live.get('clip'), live.get('vae')],
+                    'live_comfy': True,
+                    'detail': live.get('detail'),
+                }
+            return {
+                'ok': False,
+                'missing': live.get('missing') or [],
+                'present': [],
+                'live_comfy': True,
+                'detail': live.get('detail'),
+            }
+        # Map pack files → Comfy /models/<kind> listings.
+        kind_map = {
+            'diffusion_models': 'diffusion_models',
+            'text_encoders': 'text_encoders',
+            'vae': 'vae',
+            'checkpoints': 'checkpoints',
+            'loras': 'loras',
+            'audio_encoders': 'audio_encoders',
+        }
+        listings: dict[str, list[str]] = {}
+        missing: list[str] = []
+        present: list[str] = []
+        for f in spec.get('files') or []:
+            sub = str(f.get('subdir') or '')
+            name = str(f.get('name') or '')
+            kind = kind_map.get(sub) or sub
+            if kind not in listings:
+                listings[kind] = _live_comfy_filenames(endpoint, kind)
+                # Fallbacks some Comfy builds use
+                if not listings[kind] and kind == 'diffusion_models':
+                    listings[kind] = _live_comfy_filenames(endpoint, 'unet')
+                if not listings[kind] and kind == 'text_encoders':
+                    listings[kind] = _live_comfy_filenames(endpoint, 'clip')
+            if _name_in_listing(name, listings[kind]):
+                present.append(name)
+            else:
+                missing.append(f'{sub}/{name}')
+        return {
+            'ok': not missing,
+            'missing': missing,
+            'present': present,
+            'live_comfy': True,
+            'detail': 'indexed by ComfyUI' if not missing else 'missing from Comfy model index',
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            'ok': False,
+            'missing': [f'live_probe:{exc}'],
+            'present': [],
+            'live_comfy': False,
+        }
+
+
 def packs_status(
     *,
     layout: Optional[StateLayout] = None,
     endpoint: Optional[str] = None,
     hw: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Live status of creative packs (disk + optional Comfy probe for image)."""
+    """Live status of creative packs — prefer Comfy index over host disk.
+
+    Host staging under ~/.local/share/otacon/comfy/models is often empty even
+    when weights already live inside the container volume. Disk checks are the
+    offline fallback only.
+    """
     seed_workflow_assets()
     root = resolve_models_root()
+    root_writable = _path_writable(root)
     specs = _profile_pack_specs(hw)
     state = load_packs_state(layout)
+    if not endpoint:
+        try:
+            from expansion.capabilities.comfy_submit import _studio_endpoint
+            endpoint = _studio_endpoint()
+        except Exception:
+            endpoint = None
     packs: dict[str, Any] = {}
     all_ok = True
     needed: list[str] = []
     for spec in specs:
         disk = _pack_files_status(spec['files'], root)
-        # Image: also trust live Comfy listing when READY (models may live only in container).
-        live_ok = False
-        if spec['id'] == 'zimage' and endpoint:
-            try:
-                from expansion.capabilities.comfy_submit import image_workflow_status
-                live = image_workflow_status(endpoint)
-                live_ok = bool(live.get('ok'))
-                if live_ok:
-                    disk = {
-                        **disk,
-                        'ok': True,
-                        'missing': [],
-                        'live_comfy': True,
-                        'detail': live.get('detail'),
-                    }
-            except Exception:
-                pass
+        live = _live_pack_status(spec, endpoint)
+        if live is not None and live.get('live_comfy'):
+            # Authoritative when Comfy answered — do not require host staging files.
+            merged = {
+                **disk,
+                'ok': bool(live.get('ok')),
+                'missing': live.get('missing') if not live.get('ok') else [],
+                'present': live.get('present') or disk.get('present') or [],
+                'live_comfy': True,
+                'detail': live.get('detail'),
+                'files_ready': len(live.get('present') or []) if live.get('ok') else disk.get('files_ready', 0),
+            }
+            # If live says missing but disk has files, still report missing in Comfy
+            # (install sync may be needed) — keep disk present for diagnostics.
+            if not live.get('ok') and disk.get('ok'):
+                merged['detail'] = (
+                    'Files are on the host staging dir but not indexed by ComfyUI yet — '
+                    'sync into the container (docker cp) and refresh object_info.'
+                )
+                merged['host_staging_ok'] = True
+            disk = merged
         ok = bool(disk.get('ok'))
         if not ok:
             all_ok = False
@@ -458,8 +641,10 @@ def packs_status(
             'files_ready': disk.get('files_ready', 0),
             'files_total': disk.get('files_total', 0),
             'live_comfy': bool(disk.get('live_comfy')),
+            'detail': disk.get('detail') or '',
         }
     image_ok = bool((packs.get('zimage') or {}).get('ok'))
+    music_ok = bool((packs.get('ace_step') or {}).get('ok'))
     running = bool(state.get('running'))
     phase = state.get('phase') or ('READY' if all_ok else 'MISSING')
     if running:
@@ -482,13 +667,18 @@ def packs_status(
             'ComfyUI weights for this VRAM profile automatically — a 2060 gets Wan + '
             'Z-Image INT8; a 3090 gets LTX-2 distilled. Generate stays quiet until ready.'
         )
+    container = discover_comfy_container_models_dir()
     return {
         'ok': all_ok,
         'image_ready': image_ok,
+        'music_ready': music_ok,
         'generate_ready': image_ok,
         'needed': needed,
         'packs': packs,
         'models_root': str(root),
+        'models_root_writable': root_writable,
+        'models_root_role': 'host_staging_then_docker_cp',
+        'container_models': container,
         'phase': phase,
         'running': running,
         'progress': state.get('progress') or {},
@@ -569,7 +759,7 @@ def _try_hf_hub(spec: dict[str, Any], dest_dir: Path) -> bool:
 
 
 def _sync_into_comfy_container(root: Path) -> dict[str, Any]:
-    """If models landed on host cache, docker cp into running otacon-comfyui."""
+    """Copy host staging models into running otacon-comfyui (primary install path)."""
     docker = _docker_bin()
     if not docker:
         return {'ok': False, 'action': 'no_docker'}
@@ -584,28 +774,9 @@ def _sync_into_comfy_container(root: Path) -> dict[str, Any]:
         return {'ok': False, 'action': 'no_container'}
     if running != 'true':
         return {'ok': False, 'action': 'container_stopped'}
-    # Discover models path inside container
-    candidates = [
-        '/root/ComfyUI/models',
-        '/ComfyUI/models',
-        '/root/models',
-    ]
-    target = ''
-    for cand in candidates:
-        try:
-            code = subprocess.call(
-                [docker, 'exec', 'otacon-comfyui', 'test', '-d', cand],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=8,
-            )
-            if code == 0:
-                target = cand
-                break
-        except (subprocess.SubprocessError, OSError):
-            continue
+    found = discover_comfy_container_models_dir()
+    target = str(found.get('container_path') or '')
     if not target:
-        # create default
         target = '/root/ComfyUI/models'
         try:
             subprocess.check_call(
@@ -617,7 +788,8 @@ def _sync_into_comfy_container(root: Path) -> dict[str, Any]:
         except (subprocess.SubprocessError, OSError) as exc:
             return {'ok': False, 'action': 'mkdir_failed', 'error': str(exc)}
     copied = 0
-    for sub in ('diffusion_models', 'text_encoders', 'vae', 'checkpoints', 'loras'):
+    errors: list[str] = []
+    for sub in ('diffusion_models', 'text_encoders', 'vae', 'checkpoints', 'loras', 'audio_encoders'):
         src = root / sub
         if not src.is_dir():
             continue
@@ -631,16 +803,26 @@ def _sync_into_comfy_container(root: Path) -> dict[str, Any]:
             for f in src.iterdir():
                 if not f.is_file() or f.name.endswith('.part'):
                     continue
-                subprocess.check_call(
-                    [docker, 'cp', str(f), f'otacon-comfyui:{target}/{sub}/{f.name}'],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=600,
-                )
-                copied += 1
-        except (subprocess.SubprocessError, OSError):
+                try:
+                    subprocess.check_call(
+                        [docker, 'cp', str(f), f'otacon-comfyui:{target}/{sub}/{f.name}'],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=600,
+                    )
+                    copied += 1
+                except (subprocess.SubprocessError, OSError) as exc:
+                    errors.append(f'{sub}/{f.name}: {exc}')
+        except (subprocess.SubprocessError, OSError) as exc:
+            errors.append(f'{sub}: {exc}')
             continue
-    return {'ok': True, 'action': 'docker_cp', 'copied': copied, 'target': target}
+    return {
+        'ok': copied > 0 or not errors,
+        'action': 'docker_cp',
+        'copied': copied,
+        'target': target,
+        'errors': errors[:8],
+    }
 
 
 def _install_one_file(spec: dict[str, Any], root: Path, on_progress) -> None:

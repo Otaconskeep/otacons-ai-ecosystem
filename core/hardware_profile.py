@@ -365,118 +365,76 @@ def _video_path(vram_gb: float) -> tuple[CreativePath, bool, list[str]]:
 
 
 def _music_path(vram_gb: float) -> CreativePath:
-    """ACE-Step 1.5 default local music engine — VRAM-scaled."""
+    """ACE-Step 1.5 — single AIO checkpoint; VRAM tiers are runtime knobs only.
+
+    Installer ships checkpoints/ace_step_1.5_turbo_aio.safetensors (Comfy-Org).
+    Tier names remain for duration/offload guidance — they do not select alternate
+    weight files (no split DiT + LM download path).
+    """
+    aio = {
+        'model': 'ace_step_1.5_turbo_aio',
+        'checkpoint': 'ace_step_1.5_turbo_aio.safetensors',
+        'deployment': 'aio',
+        'lm': 'bundled',
+        'precision': 'fp16',
+        'batch': 1,
+    }
     if vram_gb <= 4:
         return CreativePath(
-            True, 'ace-step-1.5', '2b_turbo_dit_int8',
-            '≤4 GB: ACE-Step 2B Turbo, DiT-only, INT8 + heavy CPU offload.',
-            {
-                'model': 'ace_step_2b_turbo',
-                'lm': 'none',
-                'precision': 'int8',
-                'offload': 'heavy_cpu',
-                'max_duration_sec': 30,
-                'batch': 1,
-            },
+            True, 'ace-step-1.5', 'aio_heavy_offload',
+            '≤4 GB: ACE-Step 1.5 AIO with heavy CPU offload (short clips).',
+            {**aio, 'offload': 'heavy_cpu', 'max_duration_sec': 30},
             {'positive': _MUSIC_PROMPT},
         )
     if vram_gb < 6:
         return CreativePath(
-            True, 'ace-step-1.5', '2b_turbo_dit_int8',
-            '4–6 GB: ACE-Step 2B Turbo, DiT-only, INT8.',
-            {
-                'model': 'ace_step_2b_turbo',
-                'lm': 'none',
-                'precision': 'int8',
-                'offload': 'cpu',
-                'max_duration_sec': 60,
-                'batch': 1,
-            },
+            True, 'ace-step-1.5', 'aio_offload',
+            '4–6 GB: ACE-Step 1.5 AIO with CPU offload.',
+            {**aio, 'offload': 'cpu', 'max_duration_sec': 60},
             {'positive': _MUSIC_PROMPT},
         )
     if vram_gb < 8:
         return CreativePath(
-            True, 'ace-step-1.5', '2b_turbo_lm06',
-            '6–8 GB: ACE-Step 2B Turbo + 0.6B LM.',
-            {
-                'model': 'ace_step_2b_turbo',
-                'lm': '0.6b',
-                'precision': 'fp16',
-                'offload': 'light',
-                'max_duration_sec': 90,
-                'batch': 1,
-            },
+            True, 'ace-step-1.5', 'aio_light',
+            '6–8 GB: ACE-Step 1.5 AIO, light offload.',
+            {**aio, 'offload': 'light', 'max_duration_sec': 90},
             {'positive': _MUSIC_PROMPT},
         )
     if vram_gb < 12:
         return CreativePath(
-            True, 'ace-step-1.5', '2b_turbo_sft_lm06',
-            '8–12 GB: ACE-Step 2B Turbo/SFT + 0.6B LM.',
-            {
-                'model': 'ace_step_2b_sft',
-                'lm': '0.6b',
-                'precision': 'fp16',
-                'offload': False,
-                'max_duration_sec': 120,
-                'batch': 1,
-            },
+            True, 'ace-step-1.5', 'aio_8gb',
+            '8–12 GB: ACE-Step 1.5 AIO (recommended laptop path).',
+            {**aio, 'offload': False, 'max_duration_sec': 120},
             {'positive': _MUSIC_PROMPT},
         )
     if vram_gb < 16:
         return CreativePath(
-            True, 'ace-step-1.5', '2b_lm17_xl_offload',
-            '12–16 GB: ACE-Step 2B + 1.7B LM; XL possible with offload.',
-            {
-                'model': 'ace_step_2b_sft',
-                'lm': '1.7b',
-                'precision': 'fp16',
-                'xl_offload': True,
-                'max_duration_sec': 180,
-                'batch': 1,
-            },
+            True, 'ace-step-1.5', 'aio_12gb',
+            '12–16 GB: ACE-Step 1.5 AIO, longer clips.',
+            {**aio, 'offload': False, 'max_duration_sec': 180},
             {'positive': _MUSIC_PROMPT},
         )
     if vram_gb < 20:
         return CreativePath(
-            True, 'ace-step-1.5', 'xl_offload_lm17',
-            '16–20 GB: ACE-Step XL with CPU offload + 1.7B LM.',
-            {
-                'model': 'ace_step_xl',
-                'lm': '1.7b',
-                'precision': 'fp16',
-                'offload': 'cpu',
-                'max_duration_sec': 240,
-                'batch': 1,
-            },
+            True, 'ace-step-1.5', 'aio_16gb',
+            '16–20 GB: ACE-Step 1.5 AIO, long-form.',
+            {**aio, 'offload': False, 'max_duration_sec': 240},
             {'positive': _MUSIC_PROMPT},
         )
     if vram_gb < 24:
         return CreativePath(
-            True, 'ace-step-1.5', 'xl_lm17',
-            '20–24 GB: ACE-Step XL comfortably, 1.7B LM.',
-            {
-                'model': 'ace_step_xl',
-                'lm': '1.7b',
-                'precision': 'bf16',
-                'offload': False,
-                'max_duration_sec': 300,
-                'batch': 1,
-            },
+            True, 'ace-step-1.5', 'aio_20gb',
+            '20–24 GB: ACE-Step 1.5 AIO at full duration budget.',
+            {**aio, 'offload': False, 'max_duration_sec': 300},
             {'positive': _MUSIC_PROMPT},
         )
     return CreativePath(
-        True, 'ace-step-1.5', 'xl_lm4b',
-        '24 GB+: ACE-Step XL + 4B LM, best-quality local tier.',
-        {
-            'model': 'ace_step_xl',
-            'lm': '4b',
-            'precision': 'bf16',
-            'offload': False,
-            'max_duration_sec': 360,
-            'batch': 2 if vram_gb >= 32 else 1,
-        },
+        True, 'ace-step-1.5', 'aio_full',
+        '24 GB+: ACE-Step 1.5 AIO, longest local clips.',
+        {**aio, 'offload': False, 'max_duration_sec': 360, 'batch': 2 if vram_gb >= 32 else 1},
         {'positive': _MUSIC_PROMPT},
     )
+
 
 
 def _profile_id(vram_gb: float, model: str, ltx2: bool) -> str:
