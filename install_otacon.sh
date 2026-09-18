@@ -975,7 +975,13 @@ phase_privileged() {
   # Voice Trainer needs apt/docker — must run as root on Windows (no NOPASSWD:ALL).
   # Running it in the user phase hangs forever on `sudo` password with no TTY.
   if [[ "$INSTALL_VOICE_TRAINER" == "1" ]]; then
-    if command_exists nvidia-smi && nvidia-smi >/dev/null 2>&1; then
+    # Same WSL PATH trap as Expansion: prefer absolute nvidia-smi under /usr/lib/wsl/lib.
+    _vt_smi=""
+    if command_exists nvidia-smi; then _vt_smi="$(command -v nvidia-smi)"
+    elif [[ -x /usr/lib/wsl/lib/nvidia-smi ]]; then _vt_smi=/usr/lib/wsl/lib/nvidia-smi
+    elif [[ -x /usr/bin/nvidia-smi ]]; then _vt_smi=/usr/bin/nvidia-smi
+    fi
+    if [[ -n "$_vt_smi" ]] && PATH="/usr/lib/wsl/lib:${PATH:-}" LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$_vt_smi" >/dev/null 2>&1; then
       local user_home vt_dir vt_rc=0
       user_home="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
       [[ -n "$user_home" && -d "$user_home" ]] || die "Cannot resolve home for $TARGET_USER (Voice Trainer)"
@@ -1003,7 +1009,7 @@ phase_privileged() {
     else
       printf 'voice_trainer=skipped no-gpu\n' >>"$PRIV_MARKER"
       stage "6.3v" "INFO" "Voice Trainer skipped — no usable NVIDIA GPU"
-      warn "Voice Trainer skipped in privileged phase — nvidia-smi not usable"
+      warn "Voice Trainer skipped in privileged phase — nvidia-smi not usable (try Fix-Otacon-GPU.bat on WSL)"
     fi
   fi
 
@@ -2166,12 +2172,19 @@ fi
 VOICE_TRAINER_SKIPPED=0
 VOICE_TRAINER_SKIP_REASON=""
 if [[ "$INSTALL_VOICE_TRAINER" == "1" ]]; then
-  if ! command_exists nvidia-smi || ! nvidia-smi >/dev/null 2>&1; then
+  # WSL systemd PATH often hides nvidia-smi under /usr/lib/wsl/lib (same trap as Expansion).
+  _vt_smi_user=""
+  if command_exists nvidia-smi; then _vt_smi_user="$(command -v nvidia-smi)"
+  elif [[ -x /usr/lib/wsl/lib/nvidia-smi ]]; then _vt_smi_user=/usr/lib/wsl/lib/nvidia-smi
+  elif [[ -x /usr/bin/nvidia-smi ]]; then _vt_smi_user=/usr/bin/nvidia-smi
+  fi
+  if [[ -z "$_vt_smi_user" ]] || ! PATH="/usr/lib/wsl/lib:${PATH:-}" LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$_vt_smi_user" >/dev/null 2>&1; then
     VOICE_TRAINER_SKIPPED=1
     VOICE_TRAINER_SKIP_REASON="no usable NVIDIA GPU (nvidia-smi)"
     warn "Voice Trainer SKIPPED — ${VOICE_TRAINER_SKIP_REASON}."
     warn "  GPU features require NVIDIA drivers + nvidia-smi. Core install continues."
     warn "  Later (on a GPU host): curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
+    warn "  Tip: Fix-Otacon-GPU.bat if Windows has a GPU but WSL nvidia-smi fails."
     VOICE_TRAINER_OK=0
   elif [[ -f "$PRIV_MARKER" ]] && grep -q '^voice_trainer=ok' "$PRIV_MARKER" 2>/dev/null; then
     ok "Genome Voice Trainer already installed in privileged phase"

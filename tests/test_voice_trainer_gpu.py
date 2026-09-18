@@ -21,6 +21,29 @@ class TestVoiceTrainerGpu(unittest.TestCase):
         with mock.patch('core.platform._resolve_nvidia_smi', return_value=None):
             self.assertFalse(vt._gpu_usable())
 
+    def test_install_refuses_without_gpu(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            missing = Path(td) / 'nope'
+            with mock.patch.object(vt, '_vt_home', return_value=missing):
+                with mock.patch.object(vt, '_gpu_usable', return_value=False):
+                    out = vt.install_voice_trainer()
+        self.assertFalse(out['ok'])
+        self.assertEqual(out['action'], 'no_gpu')
+
+    def test_install_already_installed(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / 'marker.txt').write_text('x', encoding='utf-8')
+            with mock.patch.object(vt, '_vt_home', return_value=home):
+                with mock.patch.object(vt, 'ensure_voice_trainer_ui', return_value={'url': 'http://127.0.0.1:8765/'}):
+                    out = vt.install_voice_trainer()
+        self.assertTrue(out['ok'])
+        self.assertEqual(out['action'], 'already_installed')
+
 
 if __name__ == '__main__':
     unittest.main()

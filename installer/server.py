@@ -927,6 +927,7 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path in (
             '/api/expansion/jobs/create',
             '/api/expansion/voice-trainer/start',
+            '/api/expansion/voice-trainer/install',
             '/api/expansion/video-studio/config',
             '/api/expansion/video-studio/start',
             '/api/expansion/pages/register',

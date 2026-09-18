@@ -1320,34 +1320,80 @@ async function showGenomeSetup(){
   const note=(state.capabilities&&state.capabilities.voice_trainer_note)||'';
   const st=capStatus('voice_trainer');
   const path=(state.capabilities&&state.capabilities.voice_trainer_path)||'~/otacon-voice-trainer';
+  const disc=(state.capabilities&&state.capabilities.voice_trainer_discovery)||{};
+  const gpuOk=!!(disc.gpu||(state.capabilities&&state.capabilities.voice_trainer_gpu));
+  const whySkip=gpuOk
+    ?`GPU is visible now, but Genome was skipped at install time. Older Setup used a bare nvidia-smi check that missed WSL's /usr/lib/wsl/lib path (EXP_GENOME_STATE=no_gpu) even when Home SYSTEMS showed a card. Soft-update fixed that gate — this PC still needs the one-time install below.`
+    :`Expansion only auto-installs Genome when nvidia-smi works during Setup. Fix WSL GPU first (Fix-Otacon-GPU.bat), soft-update, then Install Genome.`;
   appRoot().innerHTML=`<div class="home">
   <header class="home-header"><div><p class="home-kicker">Expansion · Genome</p><h1 class="home-greeting">Voice Trainer</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
   <section class="home-group">
     <div class="guide-aria">
-      <img src="/assets/aria/aria.webp" alt="Aria">
+      <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
       <div>
         <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--ot-cyan);font-size:10px;margin:0 0 8px">Aria // guiding</p>
-        <p style="margin:0 0 10px;line-height:1.5">You already have Expansion. Genome is the voice lab — it needs a GPU path in WSL, then a short install. Piper TTS for Codec still works without Genome.</p>
-        <p><b>Status:</b> ${escapeHtml(st)}</p>
+        <p style="margin:0 0 10px;line-height:1.5">You already have Expansion. Genome is the voice lab — GPU in WSL, then one install. Piper TTS for Codec still works without Genome.</p>
+        <p><b>Status:</b> ${escapeHtml(st)}${gpuOk?' · GPU probe OK':''}</p>
         <p class="muted">${escapeHtml(note)}</p>
+        <p class="muted" style="margin-top:8px;white-space:pre-wrap;font-size:11px;line-height:1.45">${escapeHtml(whySkip)}</p>
       </div>
     </div>
     <ol class="guide-steps">
-      <li><b>Check Windows GPU</b> — open a Windows terminal and run <code>nvidia-smi</code>. If that works but WSL fails, download <code>Fix-Otacon-GPU.bat</code> from the Otaconskeep downloads page, run it, then reopen Ubuntu.</li>
-      <li><b>Check WSL GPU</b> — in Ubuntu: <code>nvidia-smi</code>. You want a GPU name, not an error.</li>
-      <li><b>Install Genome</b> — paste this in Ubuntu:<br><code>curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh | bash</code></li>
-      <li><b>Or</b> re-run Expansion Setup on this PC after GPU is visible — Expansion installs Genome automatically when NVIDIA works.</li>
-      <li><b>Start the UI</b> — click Start Genome below so <code>http://127.0.0.1:8765/</code> answers.</li>
+      <li><b>If WSL nvidia-smi fails</b> — run <code>Fix-Otacon-GPU.bat</code>, reopen Ubuntu, soft-update.</li>
+      <li><b>Install Genome</b> — click <b>Install Genome</b> below (same script Expansion uses). Docker pull can take several minutes.</li>
+      <li><b>Start the UI</b> — when status leaves <code>not_configured</code>, click Start Genome so <code>http://127.0.0.1:8765/</code> answers.</li>
     </ol>
     <p class="muted" style="margin-top:10px">Install path: <code>${escapeHtml(path)}</code></p>
+    <p class="muted" id="genomeInstallStatus" style="margin-top:8px;white-space:pre-wrap"></p>
     <div class="hud-cta-row" style="margin-top:14px">
-      <button type="button" class="hud-cta primary" onclick="otSfx('ok');startVoiceTrainer()">Start Genome</button>
+      <button type="button" class="hud-cta primary" id="genomeInstallBtn" onclick="otSfx('ok');installGenome()">${st==='not_configured'||st==='unavailable'?'Install Genome':'Re-install Genome'}</button>
+      <button type="button" class="hud-cta" onclick="otSfx('ok');startVoiceTrainer()">Start Genome</button>
       <button type="button" class="hud-cta" onclick="otSfx('transmit');openVoiceTrainer()">Open :8765</button>
       <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
     </div>
   </section>
+  <p class="home-foot">Otaconskeep Expansion · Genome</p>
 </div>`;
+}
+async function installGenome(){
+  const el=document.getElementById('genomeInstallStatus');
+  const btn=document.getElementById('genomeInstallBtn');
+  if(btn) btn.disabled=true;
+  if(el) el.textContent='Starting Genome install…';
+  try{
+    const r=await api('/api/expansion/voice-trainer/install',{});
+    if(el) el.textContent=(r.data&&(r.data.hint||r.data.detail||r.data.action))||JSON.stringify(r.data||{});
+    if(r.ok&&r.data&&(r.data.action==='installing'||r.data.action==='already_installed'||r.data.action==='installed')){
+      if(window.__genomePoll) clearInterval(window.__genomePoll);
+      window.__genomePoll=setInterval(async()=>{
+        try{
+          const s=await apiGet('/api/expansion/voice-trainer/install-status');
+          await loadCapabilities();
+          const st=capStatus('voice_trainer');
+          if(el) el.textContent='Install: '+(s.marker||s.state||'…')+' · capability: '+st+(s.installed?' · dir present':'');
+          if(s.installed||st==='ready'||st==='offline'||(s.marker&&String(s.marker).startsWith('ok'))){
+            clearInterval(window.__genomePoll);
+            otSfx('ok');
+            if(el) el.textContent='Genome files present — click Start Genome.';
+            if(btn) btn.disabled=false;
+          }
+          if(s.marker&&String(s.marker).startsWith('fail')){
+            clearInterval(window.__genomePoll);
+            otSfx('error');
+            if(btn) btn.disabled=false;
+          }
+        }catch(_e){}
+      },3000);
+    }else{
+      otSfx('error');
+      if(btn) btn.disabled=false;
+    }
+  }catch(err){
+    if(el) el.textContent=String(err&&err.message||err);
+    otSfx('error');
+    if(btn) btn.disabled=false;
+  }
 }
 async function showVideoStudioSetup(){
   state.view='home';

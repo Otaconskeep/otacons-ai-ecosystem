@@ -60,8 +60,10 @@ def main() -> int:
          "unified Deck instrument panel + live bars", fails)
     must("codec-noise" in js and "setCodecLinkMeters" in js,
          "Codec noise strip + TX/RX meters", fails)
-    must("showGenomeSetup" in js and "showVideoStudioSetup" in js and "Fix-Otacon-GPU" in js,
-         "Aria-guided Genome/Studio setup with GPU fix path", fails)
+    must("showGenomeSetup" in js and "installGenome" in js and "voice-trainer/install" in js and "Fix-Otacon-GPU" in js,
+         "Aria-guided Genome install button + GPU fix path", fails)
+    must("showVideoStudioSetup" in js,
+         "Aria-guided Studio setup", fails)
     must("startComfySidecar" in js and "useDetectedComfy" in js and "video-studio/detect" in js,
          "Comfy detect + Start sidecar UX wired", fails)
     floors = (ROOT / "ui" / "floors.js").read_text(encoding="utf-8", errors="replace")

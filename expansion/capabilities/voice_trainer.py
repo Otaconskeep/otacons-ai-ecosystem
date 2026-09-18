@@ -153,3 +153,138 @@ def ensure_voice_trainer_ui(port: int = DEFAULT_PORT) -> dict:
         'url': f'http://127.0.0.1:{port}/' if live else '',
         'log': str(log),
     }
+
+
+_INSTALL_MARKER = Path('/tmp/otacon-genome-install.status')
+_INSTALL_LOG = Path('/tmp/otacon-genome-install.log')
+_INSTALLER_URL = os.environ.get(
+    'OTACON_VOICE_TRAINER_URL',
+    'https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh',
+)
+
+
+def genome_install_status() -> dict:
+    """Status of a background Genome install kicked off from Setup."""
+    home = _vt_home()
+    installed = home.is_dir() and any(home.iterdir())
+    marker = ''
+    if _INSTALL_MARKER.is_file():
+        try:
+            marker = _INSTALL_MARKER.read_text(encoding='utf-8', errors='replace').strip()
+        except OSError:
+            marker = ''
+    return {
+        'installed': installed,
+        'path': str(home),
+        'marker': marker,
+        'log': str(_INSTALL_LOG) if _INSTALL_LOG.is_file() else '',
+        'gpu': _gpu_usable(),
+    }
+
+
+def install_voice_trainer(*, wait_sec: float = 0.0) -> dict:
+    """Install Genome Voice Trainer (same script Expansion uses when GPU is visible).
+
+    Runs in the background by default so the UI does not hang on docker pulls.
+    Poll via genome_install_status() / capabilities until path exists.
+    """
+    home = _vt_home()
+    if home.is_dir() and any(home.iterdir()):
+        ui = ensure_voice_trainer_ui()
+        return {
+            'ok': True,
+            'action': 'already_installed',
+            'path': str(home),
+            **{k: ui[k] for k in ('url',) if k in ui},
+        }
+    if not _gpu_usable():
+        return {
+            'ok': False,
+            'action': 'no_gpu',
+            'error': 'NVIDIA not visible to this process (nvidia-smi).',
+            'hint': (
+                'Home SYSTEMS may still show a GPU via a hardened probe. '
+                'Run Fix-Otacon-GPU.bat, reopen Ubuntu, soft-update Expansion, then Install Genome again.'
+            ),
+        }
+    # Already installing?
+    if _INSTALL_MARKER.is_file():
+        try:
+            st = _INSTALL_MARKER.read_text(encoding='utf-8', errors='replace').strip()
+        except OSError:
+            st = 'running'
+        if st.startswith('running') or st.startswith('started'):
+            return {
+                'ok': True,
+                'action': 'installing',
+                'path': str(home),
+                'log': str(_INSTALL_LOG),
+                'hint': 'Genome install already in progress — wait, then Start Genome.',
+            }
+
+    env = dict(os.environ)
+    try:
+        from core.platform import docker_env, _nvidia_smi_env
+        env.update(_nvidia_smi_env())
+        env.update(docker_env())
+    except Exception:
+        pass
+    env['OTACON_VT_DIR'] = str(home)
+    env['OTACON_VT_SKIP_UI'] = '1'
+    env['HOME'] = str(Path.home())
+
+    try:
+        _INSTALL_MARKER.write_text('started\n', encoding='utf-8')
+        logf = open(_INSTALL_LOG, 'ab')
+        proc = subprocess.Popen(
+            ['bash', '-c', f'curl -fsSL --connect-timeout 30 --max-time 120 "{_INSTALLER_URL}" | bash'],
+            env=env,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        try:
+            _INSTALL_MARKER.write_text(f'fail {exc}\n', encoding='utf-8')
+        except OSError:
+            pass
+        return {'ok': False, 'action': 'start_failed', 'error': str(exc)}
+
+    def _watch():
+        rc = proc.wait()
+        try:
+            if rc == 0 and home.is_dir():
+                _INSTALL_MARKER.write_text('ok\n', encoding='utf-8')
+                ensure_voice_trainer_ui()
+            else:
+                _INSTALL_MARKER.write_text(f'fail rc={rc}\n', encoding='utf-8')
+        except OSError:
+            pass
+
+    import threading
+    threading.Thread(target=_watch, daemon=True, name='genome-install').start()
+
+    if wait_sec and wait_sec > 0:
+        import time
+        deadline = time.time() + wait_sec
+        while time.time() < deadline:
+            if home.is_dir() and any(home.iterdir()):
+                return {
+                    'ok': True,
+                    'action': 'installed',
+                    'path': str(home),
+                    **ensure_voice_trainer_ui(),
+                }
+            time.sleep(1.0)
+
+    return {
+        'ok': True,
+        'action': 'installing',
+        'pid': proc.pid,
+        'path': str(home),
+        'log': str(_INSTALL_LOG),
+        'hint': (
+            'Genome install started in the background (docker pull can take several minutes). '
+            'Stay on this page — Status flips when ~/otacon-voice-trainer appears, then click Start Genome.'
+        ),
+    }

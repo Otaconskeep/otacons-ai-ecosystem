@@ -366,6 +366,24 @@ echo "EXP_DATA_DIR=$DATA_DIR"
 # Genome Voice Trainer — Expansion premium (GPU). Install + ensure UI on :8765.
 # Skip: OTACON_INSTALL_VOICE_TRAINER=0
 # ------------------------------------------------------------------------------
+# WSL systemd / stripped PATH often hides nvidia-smi under /usr/lib/wsl/lib —
+# bare `command -v nvidia-smi` falsely skips Genome on GPU hosts (EXP_GENOME_STATE=no_gpu).
+resolve_nvidia_smi() {
+  if command -v nvidia-smi >/dev/null 2>&1; then command -v nvidia-smi; return 0; fi
+  local p
+  for p in /usr/lib/wsl/lib/nvidia-smi /usr/bin/nvidia-smi /usr/local/bin/nvidia-smi; do
+    if [[ -x "$p" ]]; then printf '%s\n' "$p"; return 0; fi
+  done
+  return 1
+}
+nvidia_usable() {
+  local smi
+  smi="$(resolve_nvidia_smi)" || return 1
+  PATH="/usr/lib/wsl/lib:/usr/bin:/bin:${PATH:-}" \
+    LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    "$smi" >/dev/null 2>&1
+}
+
 INSTALL_VOICE_TRAINER="${OTACON_INSTALL_VOICE_TRAINER:-1}"
 VOICE_TRAINER_INSTALLER_URL="${OTACON_VOICE_TRAINER_URL:-https://raw.githubusercontent.com/Otaconskeep/otacon-voice-trainer/main/install_voice_trainer.sh}"
 VT_HOME="${OTACON_VT_DIR:-$OWNER_HOME/otacon-voice-trainer}"
@@ -373,17 +391,20 @@ EXP_GENOME_STATE=skipped
 if [[ "$INSTALL_VOICE_TRAINER" != "1" ]]; then
   warn "Genome Voice Trainer skipped (OTACON_INSTALL_VOICE_TRAINER=0)."
   EXP_GENOME_STATE=skipped_env
-elif ! command -v nvidia-smi >/dev/null 2>&1 || ! nvidia-smi >/dev/null 2>&1; then
+elif ! nvidia_usable; then
   warn "Genome Voice Trainer (Expansion premium) needs NVIDIA GPU — nvidia-smi not usable here."
   warn "  Piper TTS still works on CPU. On a GPU host re-run Expansion or: curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
+  warn "  Tip: Fix-Otacon-GPU.bat if Windows has a GPU but WSL nvidia-smi fails."
   EXP_GENOME_STATE=no_gpu
 else
-  log "Expansion premium: ensuring Genome Voice Trainer (GPU Piper)"
+  log "Expansion premium: ensuring Genome Voice Trainer (GPU Piper via $(resolve_nvidia_smi))"
   if [[ -d "$VT_HOME" ]] && docker image inspect piper-voice-trainer:gpu >/dev/null 2>&1; then
     ok "Genome already present at $VT_HOME"
     EXP_GENOME_STATE=present
   elif [[ "$(id -u)" == "0" ]]; then
     if run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" OTACON_VT_DIR="$VT_HOME" OTACON_VT_SKIP_UI=1 \
+        PATH="/usr/lib/wsl/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}" \
+        LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         bash -c "curl -fsSL \"$VOICE_TRAINER_INSTALLER_URL\" | bash"
     then
       ok "Genome Voice Trainer installed for Expansion"

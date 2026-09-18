@@ -79,6 +79,8 @@ def test_expansion_windows_installer_contracts():
     must("backup/pre-expansion-" in SH, "saves backup branch before hard reset", fails)
     must("EXP_GENOME_STATE" in SH and "Genome Voice Trainer" in SH,
          "Expansion installer owns Genome premium path", fails)
+    must("resolve_nvidia_smi" in SH and "/usr/lib/wsl/lib/nvidia-smi" in SH,
+         "Genome GPU gate resolves WSL nvidia-smi path", fails)
 
     must("OtaconExpansion-Setup.bat" in FETCH, "bootstrap-fetch includes Expansion Setup bat", fails)
     must("install-otacon-expansion.ps1" in FETCH, "bootstrap-fetch includes Expansion PS1", fails)
