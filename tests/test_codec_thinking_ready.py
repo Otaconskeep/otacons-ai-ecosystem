@@ -46,6 +46,8 @@ def main() -> int:
          "Command Deck HUD with agent room opens + sfx", fails)
     must("showGenomeSetup" in js and "showVideoStudioSetup" in js and "Fix-Otacon-GPU" in js,
          "Aria-guided Genome/Studio setup with GPU fix path", fails)
+    must("startComfySidecar" in js and "useDetectedComfy" in js and "video-studio/detect" in js,
+         "Comfy detect + Start sidecar UX wired", fails)
     must("five-agent Lite roster" not in js,
          "no Lite-roster copy on Expansion home", fails)
     must("Keep-only" not in js and "KEEP ONLY" not in js,

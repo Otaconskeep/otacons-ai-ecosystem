@@ -50,9 +50,11 @@ def handle_expansion_get(path: str, send_json) -> bool:
     if path == '/api/expansion/creative':
         from expansion.jobs import JobStore
         from expansion.capabilities.video_studio import probe_video_studio, studio_runtime_context
+        from expansion.capabilities.comfy_sidecar import detect_local_comfy
         from expansion.readiness import evaluate_foundation
         jobs = [j for j in JobStore().list(agent_id='muse', limit=40)]
         vs = probe_video_studio()
+        detected = detect_local_comfy()
         send_json({
             'surface': 'muse_creative',
             'creative_queue': [asdict(j) for j in jobs
@@ -68,14 +70,26 @@ def handle_expansion_get(path: str, send_json) -> bool:
             },
             'video_studio': vs.to_dict(),
             'video_studio_readiness': vs.state,
+            'comfy_detect': detected,
             'runtime_context': studio_runtime_context('muse'),
             'foundation': evaluate_foundation().to_dict(),
             'honest_note': (
-                'Expansion Video Studio (premium) — READY when ComfyUI at OTACON_COMFYUI_URL '
-                'is healthy. NOT_CONFIGURED means set the endpoint; LIMITED means endpoint set '
-                'but not answering. Full LTX/music/widget packs land as Studio deps ship.'
+                'Expansion Video Studio — READY when local ComfyUI is up. '
+                'Use Detect / Start Comfy (Docker sidecar on :8188). Models/LTX land later.'
             ),
-            'note': 'Muse owns Video Studio. Configure a public ComfyUI URL to go READY.',
+            'note': 'Muse owns Video Studio. Comfy is an optional sidecar — same Start UX as Genome.',
+        })
+        return True
+    if path == '/api/expansion/video-studio/detect':
+        from expansion.capabilities.comfy_sidecar import detect_local_comfy
+        from expansion.capabilities.video_studio import probe_video_studio
+        detected = detect_local_comfy()
+        report = probe_video_studio()
+        send_json({
+            **detected,
+            'configured_state': report.state,
+            'configured_detail': report.detail,
+            'video_studio': report.to_dict(),
         })
         return True
     if path == '/api/expansion/ops':
@@ -359,10 +373,7 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
         })
         return True
     if path == '/api/expansion/video-studio/config':
-        from expansion.capabilities.video_studio import probe_video_studio
-        from expansion.persist import atomic_write_json
-        from expansion.state_layout import resolve_layout
-        layout = resolve_layout()
+        from expansion.capabilities.comfy_sidecar import save_studio_endpoint
         endpoint = str(
             (data or {}).get('endpoint')
             or (data or {}).get('comfyui_url')
@@ -371,29 +382,14 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
         if not endpoint:
             send_json({'ok': False, 'error': 'endpoint required'}, 400)
             return True
-        cfg_path = layout.user_preferences / 'video_studio.json'
-        layout.user_preferences.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(cfg_path, {
-            'endpoint': endpoint,
-            'comfyui_url': endpoint,
-            'provider': 'comfyui',
-        })
-        # Also mirror into topology when possible
         try:
-            from expansion.topology import load_topology, save_topology
-            topo = load_topology()
-            topo.comfyui_url = endpoint
-            save_topology(topo)
-        except Exception:
-            pass
-        report = probe_video_studio(layout)
-        send_json({
-            'ok': True,
-            'endpoint': endpoint,
-            'state': report.state,
-            'detail': report.detail,
-            'video_studio': report.to_dict(),
-        })
+            send_json(save_studio_endpoint(endpoint))
+        except ValueError as exc:
+            send_json({'ok': False, 'error': str(exc)}, 400)
+        return True
+    if path == '/api/expansion/video-studio/start':
+        from expansion.capabilities.comfy_sidecar import ensure_comfy_sidecar
+        send_json(ensure_comfy_sidecar())
         return True
     if path == '/api/expansion/jobs/create':
         from expansion.pipeline import LivingPipeline

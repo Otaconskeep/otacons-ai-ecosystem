@@ -1077,9 +1077,22 @@ async function showVideoStudioSetup(){
   setBodyMode('home');
   await loadCapabilities();
   otSfx('click');
+  let detect={found:false,endpoint:'',detail:'Detecting…',candidates:[]};
+  try{ detect=await apiGet('/api/expansion/video-studio/detect', 6000); }catch(_e){}
   const detail=(state.capabilities&&state.capabilities.video_detail)||'';
   const st=capStatus('video');
-  const ep=(state.capabilities&&state.capabilities.video_endpoint)||'http://127.0.0.1:8188';
+  const ep=(detect&&detect.endpoint)||(state.capabilities&&state.capabilities.video_endpoint)||'http://127.0.0.1:8188';
+  const found=!!(detect&&detect.found);
+  const foundBlock=found
+    ? `<div class="card" style="margin:12px 0;padding:12px;border:1px solid rgba(46,230,214,.35)">
+        <p style="margin:0 0 8px"><b>Found ComfyUI</b> at <code>${escapeHtml(detect.endpoint)}</code></p>
+        <p class="muted" style="margin:0 0 10px">${escapeHtml(detect.detail||'')}</p>
+        <button type="button" class="hud-cta primary" onclick="otSfx('ok');useDetectedComfy('${escapeHtml(detect.endpoint)}')">Use this → READY</button>
+      </div>`
+    : `<div class="card" style="margin:12px 0;padding:12px;border:1px solid rgba(245,165,36,.35)">
+        <p style="margin:0 0 8px"><b>No Comfy on :8188 / :8199</b></p>
+        <p class="muted" style="margin:0">${escapeHtml((detect&&detect.detail)||'Not answering yet.')}</p>
+      </div>`;
   appRoot().innerHTML=`<div class="home">
   <header class="home-header"><div><p class="home-kicker">Expansion · Muse</p><h1 class="home-greeting">Video Studio</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
@@ -1088,26 +1101,66 @@ async function showVideoStudioSetup(){
       <img src="/assets/aria/aria.webp" alt="Aria">
       <div>
         <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--ot-cyan);font-size:10px;margin:0 0 8px">Aria // guiding</p>
-        <p style="margin:0 0 10px;line-height:1.5">Studio is Expansion premium. I need ComfyUI running on this machine (or your LAN). Once it answers, paste the URL below and I will probe it. You do not need Studio for Codec voice.</p>
-        <p><b>Status:</b> ${escapeHtml(st)}</p>
-        <p class="muted">${escapeHtml(detail)}</p>
+        <p style="margin:0 0 10px;line-height:1.5">Studio is Expansion premium — same idea as Genome. I look for Comfy on this PC first. If it is not up, Start Comfy pulls our Docker sidecar on port 8188. Models/LTX come later; READY only needs Comfy answering.</p>
+        <p><b>Configured:</b> ${escapeHtml(st)} · ${escapeHtml(detail||'—')}</p>
       </div>
     </div>
-    <ol class="guide-steps">
-      <li><b>Install ComfyUI</b> (one-time) — from Windows or WSL follow the official ComfyUI desktop/portable guide: <code>https://github.com/comfyanonymous/ComfyUI</code>. Prefer a local install on this PC.</li>
-      <li><b>Start ComfyUI</b> — default UI is usually <code>http://127.0.0.1:8188</code>. Open that in a browser; you should see the Comfy graph page.</li>
-      <li><b>Tell Expansion</b> — paste that URL below and click Save &amp; probe. READY means Muse Studio can see Comfy.</li>
-      <li><b>Models</b> — LTX / music packs are separate downloads; READY only requires Comfy answering. Extra models unlock richer workflows later.</li>
-    </ol>
-    <label style="display:block;margin:14px 0 6px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ot-muted)">ComfyUI URL</label>
-    <input id="comfyUrl" value="${escapeHtml(ep)}" style="width:100%;max-width:520px;padding:10px;background:#020508;border:1px solid rgba(46,230,214,.35);color:var(--ot-text);font:inherit">
-    <div class="hud-cta-row" style="margin-top:14px">
-      <button type="button" class="hud-cta primary" onclick="otSfx('ok');saveComfyUrl()">Save &amp; probe</button>
+    ${foundBlock}
+    <div class="hud-cta-row" style="margin-top:8px">
+      <button type="button" class="hud-cta primary" onclick="otSfx('ok');startComfySidecar()">Start / Install Comfy</button>
+      <button type="button" class="hud-cta" onclick="otSfx('click');showVideoStudioSetup()">Detect again</button>
       <button type="button" class="hud-cta" onclick="otSfx('click');showExpansionSurface('creative')">Open Muse room</button>
+    </div>
+    <details style="margin-top:16px">
+      <summary style="cursor:pointer;color:var(--ot-muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase">Advanced — paste URL</summary>
+      <label style="display:block;margin:12px 0 6px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ot-muted)">ComfyUI URL</label>
+      <input id="comfyUrl" value="${escapeHtml(ep)}" style="width:100%;max-width:520px;padding:10px;background:#020508;border:1px solid rgba(46,230,214,.35);color:var(--ot-text);font:inherit">
+      <div class="hud-cta-row" style="margin-top:10px">
+        <button type="button" class="hud-cta" onclick="otSfx('ok');saveComfyUrl()">Save &amp; probe</button>
+      </div>
+      <ol class="guide-steps">
+        <li>Docker Desktop / Engine required for <b>Start Comfy</b> (WSL2 on Windows).</li>
+        <li>Or install <a href="https://github.com/comfyanonymous/ComfyUI" target="_blank" rel="noopener">ComfyUI portable</a> yourself, then Detect / Use this.</li>
+        <li>Keep-style GPU Comfy on :8199 is also auto-detected if already running.</li>
+      </ol>
+    </details>
+    <div class="hud-cta-row" style="margin-top:14px">
       <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
     </div>
   </section>
 </div>`;
+}
+async function useDetectedComfy(endpoint){
+  const el=document.getElementById('comfyUrl');
+  if(el) el.value=endpoint;
+  else{
+    const hidden=document.createElement('input');
+    hidden.id='comfyUrl'; hidden.type='hidden'; hidden.value=endpoint;
+    document.body.appendChild(hidden);
+  }
+  await saveComfyUrl();
+}
+async function startComfySidecar(){
+  try{
+    const status=document.querySelector('.guide-aria .muted');
+    if(status) status.textContent='Starting Comfy sidecar (first pull can take a few minutes)…';
+    const r=await api('/api/expansion/video-studio/start',{});
+    await loadCapabilities();
+    if(r&&r.ok&&r.data&&r.data.ok){
+      otSfx('ok');
+      alert('Comfy '+(r.data.action||'ready')+': '+(r.data.endpoint||'')+' · '+((r.data.state)||''));
+      if(String(r.data.state||'').toUpperCase()==='READY') showExpansionSurface('creative');
+      else showVideoStudioSetup();
+    }else{
+      otSfx('error');
+      const msg=(r&&r.data&&(r.data.error||r.data.hint||r.data.action))||'Start failed';
+      alert(msg);
+      showVideoStudioSetup();
+    }
+  }catch(e){
+    otSfx('error');
+    alert('Start failed: '+String(e&&e.message||e));
+  }
 }
 async function saveComfyUrl(){
   const el=document.getElementById('comfyUrl');
@@ -1118,9 +1171,12 @@ async function saveComfyUrl(){
     await loadCapabilities();
     if(r&&r.ok){
       const st=(r.data&&r.data.state)||capStatus('video');
-      alert('Saved. Video Studio state: '+st);
+      otSfx('ok');
       if(String(st).toUpperCase()==='READY'||st==='ready') showExpansionSurface('creative');
-      else showVideoStudioSetup();
+      else{
+        alert('Saved. Video Studio state: '+st);
+        showVideoStudioSetup();
+      }
     }else{
       alert((r&&r.data&&r.data.error)||'Save failed');
     }

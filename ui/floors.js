@@ -1027,7 +1027,8 @@
         '<label>ComfyUI URL</label>' +
         '<input id="fl-comfy-url" value="http://127.0.0.1:8188" style="width:100%;max-width:420px;padding:.4rem;margin:.4rem 0">' +
         '<div class="fl-rail">' +
-        btn('Save & probe', "typeof saveComfyUrlFromFloor==='function'&&saveComfyUrlFromFloor()", false) +
+        btn('Detect Comfy', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", false) +
+        btn('Start Comfy', "typeof startComfySidecar==='function'&&startComfySidecar()", false) +
         btn('Open setup', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", true) +
         '</div></div>';
     } else {
