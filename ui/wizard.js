@@ -1400,20 +1400,28 @@ async function showVideoStudioSetup(){
   setBodyMode('home');
   await loadCapabilities();
   otSfx('click');
-  let detect={found:false,endpoint:'',detail:'Detecting…',candidates:[]};
-  try{ detect=await apiGet('/api/expansion/video-studio/detect', 6000); }catch(_e){}
+  let detect={found:false,endpoint:'',detail:'Detecting…',candidates:[],docker:null};
+  try{ detect=await apiGet('/api/expansion/video-studio/detect', 8000); }catch(_e){}
   const detail=(state.capabilities&&state.capabilities.video_detail)||'';
   const st=capStatus('video');
   const ep=(detect&&detect.endpoint)||(state.capabilities&&state.capabilities.video_endpoint)||'http://127.0.0.1:8188';
   const found=!!(detect&&detect.found);
+  const docker=(detect&&detect.docker)||{};
+  const dockerOk=!!docker.ok;
+  const dockerLine=dockerOk
+    ?(docker.detail||'Docker engine ready')
+    :(docker.detail||docker.status||'Docker not checked');
+  const whyDocker=!dockerOk
+    ?`Start / Install Comfy needs Docker Desktop running. The error “unable to get image yanwk/comfyui-boot:cpu — error during connect” means the engine was not connected — not a bad image. Start Docker Desktop on Windows, wait until it is healthy, then try again. Or skip Docker and run ComfyUI portable on :8188.`
+    :`Docker is ready. First Start pulls yanwk/comfyui-boot:cpu (can take several minutes). Models/LTX come later — READY only needs Comfy answering on :8188.`;
   const foundBlock=found
-    ? `<div class="card" style="margin:12px 0;padding:12px;border:1px solid rgba(46,230,214,.35)">
+    ? `<div style="margin:12px 0;padding:12px;border:1px solid rgba(46,230,214,.35)">
         <p style="margin:0 0 8px"><b>Found ComfyUI</b> at <code>${escapeHtml(detect.endpoint)}</code></p>
         <p class="muted" style="margin:0 0 10px">${escapeHtml(detect.detail||'')}</p>
         <button type="button" class="hud-cta primary" onclick="otSfx('ok');useDetectedComfy('${escapeHtml(detect.endpoint)}')">Use this → READY</button>
       </div>`
-    : `<div class="card" style="margin:12px 0;padding:12px;border:1px solid rgba(245,165,36,.35)">
-        <p style="margin:0 0 8px"><b>No Comfy on :8188 / :8199</b></p>
+    : `<div style="margin:12px 0;padding:12px;border:1px solid rgba(245,165,36,.35)">
+        <p style="margin:0 0 8px"><b>No Comfy on :8188 / :8199 yet</b></p>
         <p class="muted" style="margin:0">${escapeHtml((detect&&detect.detail)||'Not answering yet.')}</p>
       </div>`;
   appRoot().innerHTML=`<div class="home">
@@ -1421,18 +1429,27 @@ async function showVideoStudioSetup(){
   <div class="home-meta">${btnHome()}</div></header>
   <section class="home-group">
     <div class="guide-aria">
-      <img src="/assets/aria/aria.webp" alt="Aria">
+      <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
       <div>
         <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--ot-cyan);font-size:10px;margin:0 0 8px">Aria // guiding</p>
-        <p style="margin:0 0 10px;line-height:1.5">Studio is Expansion premium — same idea as Genome. I look for Comfy on this PC first. If it is not up, Start Comfy pulls our Docker sidecar on port 8188. Models/LTX come later; READY only needs Comfy answering.</p>
-        <p><b>Configured:</b> ${escapeHtml(st)} · ${escapeHtml(detail||'—')}</p>
+        <p style="margin:0 0 10px;line-height:1.5">Studio is Expansion premium. I look for Comfy on this PC first. If it is not up, Start Comfy uses Docker on port 8188 — same idea as Genome. Piper Codec still works without Studio.</p>
+        <p><b>Status:</b> ${escapeHtml(st)} · ${escapeHtml(detail||'—')}</p>
+        <p><b>Docker:</b> ${dockerOk?'OK':'needs attention'} — ${escapeHtml(dockerLine)}</p>
+        <p class="muted" style="margin-top:8px;white-space:pre-wrap;font-size:11px;line-height:1.45">${escapeHtml(whyDocker)}</p>
       </div>
     </div>
     ${foundBlock}
-    <div class="hud-cta-row" style="margin-top:8px">
-      <button type="button" class="hud-cta primary" onclick="otSfx('ok');startComfySidecar()">Start / Install Comfy</button>
+    <ol class="guide-steps">
+      <li><b>Start Docker Desktop</b> on Windows — wait until it says Running (whale steady). Without this, Start Comfy fails with “error during connect”.</li>
+      <li><b>Start / Install Comfy</b> — pulls the sidecar image once. Stay on this page; status updates below.</li>
+      <li><b>Or skip Docker</b> — install <a href="https://github.com/comfyanonymous/ComfyUI" target="_blank" rel="noopener">ComfyUI portable</a>, run it on :8188, then Detect / Use this.</li>
+    </ol>
+    <p class="muted" id="comfyInstallStatus" style="margin-top:10px;white-space:pre-wrap"></p>
+    <div class="hud-cta-row" style="margin-top:14px">
+      <button type="button" class="hud-cta primary" id="comfyStartBtn" onclick="otSfx('ok');startComfySidecar()">${dockerOk?'Start / Install Comfy':'Start Comfy (after Docker)'}</button>
       <button type="button" class="hud-cta" onclick="otSfx('click');showVideoStudioSetup()">Detect again</button>
       <button type="button" class="hud-cta" onclick="otSfx('click');showExpansionSurface('creative')">Open Muse room</button>
+      <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
     </div>
     <details style="margin-top:16px">
       <summary style="cursor:pointer;color:var(--ot-muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase">Advanced — paste URL</summary>
@@ -1441,16 +1458,10 @@ async function showVideoStudioSetup(){
       <div class="hud-cta-row" style="margin-top:10px">
         <button type="button" class="hud-cta" onclick="otSfx('ok');saveComfyUrl()">Save &amp; probe</button>
       </div>
-      <ol class="guide-steps">
-        <li>Docker Desktop / Engine required for <b>Start Comfy</b> (WSL2 on Windows).</li>
-        <li>Or install <a href="https://github.com/comfyanonymous/ComfyUI" target="_blank" rel="noopener">ComfyUI portable</a> yourself, then Detect / Use this.</li>
-        <li>Keep-style GPU Comfy on :8199 is also auto-detected if already running.</li>
-      </ol>
+      <p class="muted" style="margin-top:8px;font-size:11px">Keep-style GPU Comfy on :8199 is auto-detected if already running.</p>
     </details>
-    <div class="hud-cta-row" style="margin-top:14px">
-      <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
-    </div>
   </section>
+  <p class="home-foot">Otaconskeep Expansion · Studio</p>
 </div>`;
 }
 async function useDetectedComfy(endpoint){
@@ -1464,25 +1475,33 @@ async function useDetectedComfy(endpoint){
   await saveComfyUrl();
 }
 async function startComfySidecar(){
+  const el=document.getElementById('comfyInstallStatus');
+  const btn=document.getElementById('comfyStartBtn');
+  if(btn) btn.disabled=true;
+  if(el) el.textContent='Checking Docker, then starting Comfy (first image pull can take several minutes)…';
   try{
-    const status=document.querySelector('.guide-aria .muted');
-    if(status) status.textContent='Starting Comfy sidecar (first pull can take a few minutes)…';
-    const r=await api('/api/expansion/video-studio/start',{});
+    const r=await api('/api/expansion/video-studio/start',{}, 320000);
     await loadCapabilities();
     if(r&&r.ok&&r.data&&r.data.ok){
       otSfx('ok');
-      alert('Comfy '+(r.data.action||'ready')+': '+(r.data.endpoint||'')+' · '+((r.data.state)||''));
+      if(el) el.textContent='Comfy '+(r.data.action||'ready')+': '+(r.data.endpoint||'')+' · '+((r.data.state)||'');
       if(String(r.data.state||'').toUpperCase()==='READY') showExpansionSurface('creative');
       else showVideoStudioSetup();
     }else{
       otSfx('error');
-      const msg=(r&&r.data&&(r.data.error||r.data.hint||r.data.action))||'Start failed';
-      alert(msg);
-      showVideoStudioSetup();
+      const d=r&&r.data||{};
+      const msg=[d.hint,d.error,d.action].filter(Boolean).join('\n\n')||'Start failed';
+      if(el){ el.textContent=msg; if(btn) btn.disabled=false; }
+      else{
+        alert(msg);
+        showVideoStudioSetup();
+      }
     }
   }catch(e){
     otSfx('error');
-    alert('Start failed: '+String(e&&e.message||e));
+    const msg='Start failed: '+String(e&&e.message||e);
+    if(el){ el.textContent=msg; if(btn) btn.disabled=false; }
+    else{ alert(msg); showVideoStudioSetup(); }
   }
 }
 async function saveComfyUrl(){

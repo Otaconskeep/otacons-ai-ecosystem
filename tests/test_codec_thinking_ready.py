@@ -66,6 +66,8 @@ def main() -> int:
          "Aria-guided Studio setup", fails)
     must("startComfySidecar" in js and "useDetectedComfy" in js and "video-studio/detect" in js,
          "Comfy detect + Start sidecar UX wired", fails)
+    must("error during connect" in js and "Docker Desktop" in js and "comfyInstallStatus" in js,
+         "Studio Setup explains Docker connect failures plainly", fails)
     floors = (ROOT / "ui" / "floors.js").read_text(encoding="utf-8", errors="replace")
     must("readinessHud" in floors and "fl-ready-grid" in floors,
          "Command readiness HUD (not raw JSON)", fails)

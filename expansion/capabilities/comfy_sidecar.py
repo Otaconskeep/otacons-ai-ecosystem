@@ -88,14 +88,141 @@ def save_studio_endpoint(endpoint: str, layout: Optional[StateLayout] = None) ->
     }
 
 
-def _docker_compose_cmd(compose: Path) -> list[str] | None:
+def _docker_bin_and_env() -> tuple[str | None, dict | None]:
     try:
         from core.platform import _resolve_docker, docker_env
-        docker = _resolve_docker()
-        env = docker_env()
+        return _resolve_docker(), docker_env()
     except Exception:
-        docker = shutil.which('docker')
-        env = None
+        return shutil.which('docker'), None
+
+
+def probe_docker_engine(*, timeout: float = 6.0) -> dict:
+    """Honest Docker readiness for Studio Setup (CLI vs daemon).
+
+    Friends often see ``unable to get image … error during connect`` when
+    Docker Desktop is installed but the engine is stopped — that is not a
+    bad Comfy image, it is a dead Docker pipe.
+    """
+    docker, env = _docker_bin_and_env()
+    if not docker:
+        return {
+            'ok': False,
+            'status': 'missing',
+            'docker': '',
+            'detail': 'Docker CLI not found in PATH / WSL candidates',
+            'hint': (
+                'Install Docker Desktop for Windows (WSL2 backend), start it, '
+                'then reopen Ubuntu. Or skip Docker and run ComfyUI portable on :8188.'
+            ),
+        }
+    try:
+        r = subprocess.run(
+            [docker, 'info', '--format', '{{.ServerVersion}}'],
+            capture_output=True,
+            text=True,
+            timeout=max(2.0, timeout),
+            check=False,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            'ok': False,
+            'status': 'daemon_timeout',
+            'docker': docker,
+            'detail': 'docker info timed out',
+            'hint': (
+                'Docker CLI is present but the engine did not answer. '
+                'Start Docker Desktop on Windows, wait until it says Running, then Detect again.'
+            ),
+        }
+    except OSError as exc:
+        return {
+            'ok': False,
+            'status': 'exec_failed',
+            'docker': docker,
+            'detail': str(exc),
+            'hint': 'Could not run docker. Reinstall Docker Desktop or use ComfyUI portable.',
+        }
+    out = ((r.stdout or '') + '\n' + (r.stderr or '')).strip()
+    if r.returncode == 0 and (r.stdout or '').strip():
+        return {
+            'ok': True,
+            'status': 'ready',
+            'docker': docker,
+            'detail': f'Docker engine {(r.stdout or "").strip()}',
+            'hint': '',
+        }
+    low = out.lower()
+    if _docker_connect_failure(low):
+        return {
+            'ok': False,
+            'status': 'daemon_down',
+            'docker': docker,
+            'detail': (out or 'docker engine not reachable')[:400],
+            'hint': (
+                'Docker Desktop is not running (or WSL cannot reach it). '
+                'Open Docker Desktop on Windows → wait until the whale is steady → '
+                'then click Start / Install Comfy again. '
+                'No Docker? Install ComfyUI portable and use Detect.'
+            ),
+        }
+    return {
+        'ok': False,
+        'status': 'unhealthy',
+        'docker': docker,
+        'detail': (out or f'docker info exit {r.returncode}')[:400],
+        'hint': 'Fix Docker, then Start Comfy — or use ComfyUI portable on :8188.',
+    }
+
+
+def _docker_connect_failure(text: str) -> bool:
+    low = (text or '').lower()
+    needles = (
+        'error during connect',
+        'cannot connect',
+        'could not connect',
+        'is the docker daemon running',
+        'dockerdesktop',
+        'pipe/dockerdesktop',
+        'npipe:////./pipe',
+        'connectex',
+        'connection refused',
+        'no such file or directory',  # missing docker.sock
+        'cannot find the file specified',
+        'open //./pipe/docker_engine',
+    )
+    return any(n in low for n in needles)
+
+
+def _compose_failure_hint(err: str) -> tuple[str, str]:
+    """Return (action, hint) for a failed docker compose up."""
+    low = (err or '').lower()
+    if _docker_connect_failure(low) or 'unable to get image' in low and 'connect' in low:
+        return (
+            'docker_daemon_down',
+            (
+                'Could not pull Comfy because Docker’s engine is not connected. '
+                'Start Docker Desktop on Windows, wait until it is healthy, then Start / Install Comfy again. '
+                'This is not a bad yanwk/comfyui-boot image — the pull never reached the registry.'
+            ),
+        )
+    if 'pull access denied' in low or 'not found' in low and 'manifest' in low:
+        return (
+            'image_pull_denied',
+            'Docker could not pull yanwk/comfyui-boot:cpu — check network / Hub login, or use ComfyUI portable.',
+        )
+    if 'no space' in low or 'disk' in low:
+        return 'disk_full', 'Free disk space on the Docker drive, then Start Comfy again.'
+    if 'port is already allocated' in low or 'bind for 0.0.0.0:8188' in low:
+        return (
+            'port_busy',
+            'Port 8188 is already in use. Click Detect — another Comfy may already be running.',
+        )
+    return 'compose_failed', 'Check: docker logs otacon-comfyui — or use ComfyUI portable on :8188.'
+
+
+def _docker_compose_cmd(compose: Path) -> list[str] | None:
+    docker, env = _docker_bin_and_env()
     if not docker:
         return None
     # Prefer `docker compose` plugin
@@ -143,6 +270,16 @@ def ensure_comfy_sidecar(
             'hint': 'Re-pull otacons-ai-ecosystem or set OTACON_INSTALL_DIR.',
         }
 
+    docker_st = probe_docker_engine()
+    if not docker_st.get('ok'):
+        return {
+            'ok': False,
+            'action': docker_st.get('status') or 'docker_missing',
+            'error': docker_st.get('detail') or 'Docker not ready',
+            'hint': docker_st.get('hint') or '',
+            'docker': docker_st,
+        }
+
     cmd_base = _docker_compose_cmd(compose)
     if not cmd_base:
         return {
@@ -151,9 +288,9 @@ def ensure_comfy_sidecar(
             'error': 'Docker / docker compose not available',
             'hint': (
                 'Start Docker Desktop (Windows) so the engine is up, then click Start Comfy again. '
-                'WSL systemd needs Docker on PATH — run Fix-Otacon-GPU.bat or restart after Desktop starts. '
                 'Or install ComfyUI portable and use Detect / paste http://127.0.0.1:8188'
             ),
+            'docker': docker_st,
         }
 
     try:
@@ -173,24 +310,28 @@ def ensure_comfy_sidecar(
             env=run_env,
         )
     except subprocess.TimeoutExpired:
-        return {'ok': False, 'action': 'start_timeout', 'error': 'docker compose up timed out'}
+        return {
+            'ok': False,
+            'action': 'start_timeout',
+            'error': 'docker compose up timed out (first image pull can be large)',
+            'hint': (
+                'Leave Docker Desktop running and try again. '
+                'Or install ComfyUI portable if pulls keep timing out.'
+            ),
+            'docker': docker_st,
+        }
     except OSError as exc:
-        return {'ok': False, 'action': 'start_failed', 'error': str(exc)}
+        return {'ok': False, 'action': 'start_failed', 'error': str(exc), 'docker': docker_st}
 
     if up.returncode != 0:
         err = (up.stderr or up.stdout or 'compose failed')[:800]
-        hint = 'Check docker logs: docker logs otacon-comfyui'
-        low = err.lower()
-        if 'pipe' in low or 'dockerdesktop' in low or 'cannot connect' in low or 'is the docker daemon running' in low:
-            hint = (
-                'Docker CLI found but the engine is not running. '
-                'Start Docker Desktop on Windows, wait until it is healthy, then Start Comfy again.'
-            )
+        action, hint = _compose_failure_hint(err)
         return {
             'ok': False,
-            'action': 'compose_failed',
+            'action': action,
             'error': err,
             'hint': hint,
+            'docker': docker_st,
         }
 
     deadline = time.time() + max(5.0, wait_sec)

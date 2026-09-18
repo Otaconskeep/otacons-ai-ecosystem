@@ -92,15 +92,17 @@ def handle_expansion_get(path: str, send_json) -> bool:
         })
         return True
     if path == '/api/expansion/video-studio/detect':
-        from expansion.capabilities.comfy_sidecar import detect_local_comfy
+        from expansion.capabilities.comfy_sidecar import detect_local_comfy, probe_docker_engine
         from expansion.capabilities.video_studio import probe_video_studio
         detected = detect_local_comfy()
         report = probe_video_studio()
+        docker = probe_docker_engine()
         send_json({
             **detected,
             'configured_state': report.state,
             'configured_detail': report.detail,
             'video_studio': report.to_dict(),
+            'docker': docker,
         })
         return True
     if path == '/api/expansion/ops':
