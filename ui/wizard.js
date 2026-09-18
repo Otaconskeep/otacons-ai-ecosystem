@@ -277,36 +277,168 @@ function formatNow(){
   }catch(e){ return new Date().toISOString(); }
 }
 
-/* Tiny WebAudio pack — no asset files */
-let _otAudioCtx=null;
-function otSfx(kind){
+/* WebAudio pack — boot sting, transmit thump, codec ring, ambient bed */
+let _otAudioCtx=null,_otAmb=null;
+function otAudio(){
   try{
     const AC=window.AudioContext||window.webkitAudioContext;
-    if(!AC) return;
+    if(!AC) return null;
     if(!_otAudioCtx) _otAudioCtx=new AC();
-    const ctx=_otAudioCtx;
-    if(ctx.state==='suspended') ctx.resume();
-    const t=ctx.currentTime;
-    const o=ctx.createOscillator();
-    const g=ctx.createGain();
-    o.connect(g); g.connect(ctx.destination);
-    const map={
-      boot:[220,440,0.08,0.18],
-      click:[680,420,0.02,0.06],
-      transmit:[520,780,0.04,0.12],
-      switch:[340,560,0.05,0.14],
-      error:[180,90,0.06,0.2],
-      ok:[440,660,0.04,0.1]
+    if(_otAudioCtx.state==='suspended') _otAudioCtx.resume();
+    return _otAudioCtx;
+  }catch(_e){ return null; }
+}
+function otTone(ctx,type,f0,f1,t0,atk,dur,vol){
+  const o=ctx.createOscillator(), g=ctx.createGain();
+  o.type=type||'square';
+  o.connect(g); g.connect(ctx.destination);
+  o.frequency.setValueAtTime(f0, t0);
+  if(f1 && f1!==f0) o.frequency.exponentialRampToValueAtTime(Math.max(40,f1), t0+dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol||0.04, t0+atk);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  o.start(t0); o.stop(t0+dur+0.03);
+}
+function otNoiseThump(ctx,t0,dur,vol){
+  const n=Math.floor(ctx.sampleRate*dur);
+  const buf=ctx.createBuffer(1,n,ctx.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n,2.4);
+  const src=ctx.createBufferSource(), g=ctx.createGain(), f=ctx.createBiquadFilter();
+  f.type='lowpass'; f.frequency.value=180;
+  src.buffer=buf; src.connect(f); f.connect(g); g.connect(ctx.destination);
+  g.gain.setValueAtTime(vol||0.12, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  src.start(t0); src.stop(t0+dur+0.02);
+}
+function otAmbientStart(){
+  const ctx=otAudio();
+  if(!ctx||_otAmb) return;
+  try{
+    const master=ctx.createGain();
+    master.gain.value=0.012;
+    master.connect(ctx.destination);
+    const mk=(freq,type,detune)=>{
+      const o=ctx.createOscillator(), g=ctx.createGain(), lfo=ctx.createOscillator(), lg=ctx.createGain();
+      o.type=type; o.frequency.value=freq; o.detune.value=detune||0;
+      g.gain.value=0.35;
+      lfo.frequency.value=0.07+Math.random()*0.05;
+      lg.gain.value=0.12;
+      lfo.connect(lg); lg.connect(g.gain);
+      o.connect(g); g.connect(master);
+      o.start(); lfo.start();
+      return [o,lfo];
     };
-    const m=map[kind]||map.click;
-    o.type=kind==='error'?'sawtooth':'square';
-    o.frequency.setValueAtTime(m[0], t);
-    o.frequency.exponentialRampToValueAtTime(Math.max(40,m[1]), t+m[3]);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.045, t+m[2]);
-    g.gain.exponentialRampToValueAtTime(0.0001, t+m[3]);
-    o.start(t); o.stop(t+m[3]+0.02);
+    _otAmb={master, nodes:[...mk(55,'sine',0),...mk(82.5,'triangle',6),...mk(110,'sine',-4)]};
+  }catch(_e){ _otAmb=null; }
+}
+function otAmbientStop(){
+  if(!_otAmb) return;
+  try{
+    _otAmb.nodes.forEach(n=>{ try{n.stop();}catch(_e){} });
+    _otAmb.master.disconnect();
   }catch(_e){}
+  _otAmb=null;
+}
+function otSfx(kind){
+  try{
+    const ctx=otAudio();
+    if(!ctx) return;
+    const t=ctx.currentTime;
+    if(kind==='boot'){
+      [[196,0],[247,0.07],[294,0.14],[392,0.22],[523,0.32]].forEach(([f,off])=>{
+        otTone(ctx,'square',f,f*1.02,t+off,0.02,0.16,0.035);
+      });
+      otTone(ctx,'sawtooth',98,196,t,0.04,0.45,0.02);
+      return;
+    }
+    if(kind==='transmit'){
+      otNoiseThump(ctx,t,0.14,0.14);
+      otTone(ctx,'square',620,180,t+0.02,0.01,0.1,0.05);
+      return;
+    }
+    if(kind==='switch'||kind==='ring'){
+      // Codec agent-switch ring
+      otTone(ctx,'square',880,880,t,0.01,0.08,0.05);
+      otTone(ctx,'square',660,660,t+0.1,0.01,0.1,0.045);
+      otTone(ctx,'triangle',1320,990,t+0.22,0.01,0.16,0.03);
+      return;
+    }
+    if(kind==='error'){
+      otTone(ctx,'sawtooth',180,70,t,0.02,0.22,0.055);
+      return;
+    }
+    if(kind==='ok'){
+      otTone(ctx,'square',440,660,t,0.02,0.12,0.04);
+      otTone(ctx,'triangle',660,880,t+0.08,0.02,0.14,0.03);
+      return;
+    }
+    // click default
+    otTone(ctx,'square',720,380,t,0.008,0.05,0.028);
+  }catch(_e){}
+}
+function hudGauge(label, pct, tone){
+  const p=Math.max(0,Math.min(100,Number(pct)||0));
+  const r=34, c=40, circ=2*Math.PI*r;
+  const dash=circ*((100-p)/100);
+  const col=tone==='warn'?'var(--ot-amber)':(tone==='bad'?'var(--ot-magenta)':'var(--ot-cyan)');
+  return `<div class="hud-gauge" title="${escapeHtml(label)}">
+    <svg viewBox="0 0 80 80" aria-hidden="true">
+      <circle class="g-bg" cx="${c}" cy="${c}" r="${r}"/>
+      <circle class="g-fg" cx="${c}" cy="${c}" r="${r}" style="stroke:${col};stroke-dasharray:${circ};stroke-dashoffset:${dash}"/>
+    </svg>
+    <b>${p|0}</b><span>${escapeHtml(label)}</span>
+  </div>`;
+}
+function hudRadarHtml(threat){
+  const blips=[[38,22],[62,48],[28,58],[70,28],[48,70]].map((xy,i)=>
+    `<i class="blip" style="left:${xy[0]}%;top:${xy[1]}%;animation-delay:${i*0.4}s"></i>`).join('');
+  return `<div class="hud-radar ${threat?'threat':''}">
+    <div class="radar-face"><div class="radar-sweep"></div>${blips}</div>
+    <div class="radar-lbl">SCAN · ${threat?'AMBER':'CLEAR'}</div>
+  </div>`;
+}
+function hudSeqHtml(){
+  const bars=Array.from({length:16},(_,i)=>`<i style="--h:${30+((i*37)%70)}%;animation-delay:${(i%8)*0.08}s"></i>`).join('');
+  return `<div class="hud-seq" aria-hidden="true">${bars}</div>`;
+}
+function hudTeleHtml(lines){
+  const row=(lines||[]).map(l=>`<span>${escapeHtml(l)}</span>`).join('');
+  return `<div class="hud-tele"><div class="hud-tele-track">${row}${row}</div></div>`;
+}
+async function linkOperatorCam(){
+  otSfx('click');
+  const port=document.getElementById('port-operator');
+  if(!port) return;
+  try{
+    if(window.__opCamStream){
+      window.__opCamStream.getTracks().forEach(t=>t.stop());
+      window.__opCamStream=null;
+    }
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:480}},audio:false});
+    window.__opCamStream=stream;
+    port.innerHTML=`<video id="opCam" autoplay playsinline muted></video><div class="codec-port-crt"></div><div class="codec-port-lbl">OPERATOR</div>`;
+    const v=document.getElementById('opCam');
+    if(v){ v.srcObject=stream; }
+    otSfx('ok');
+  }catch(_e){
+    port.innerHTML=`<div class="op-port-fill op-port-live">
+      <div class="op-sil"></div>
+      <span>OPERATOR · LINK DENIED</span>
+      <button type="button" class="op-cam-btn" onclick="linkOperatorCam()">Retry camera</button>
+    </div><div class="codec-port-crt"></div><div class="codec-port-lbl">YOU</div>`;
+    otSfx('error');
+  }
+}
+function operatorPortHtml(){
+  return `<div class="op-port-fill op-port-live">
+    <div class="op-sil" aria-hidden="true"></div>
+    <div class="op-scan"></div>
+    <span>OPERATOR · STANDBY</span>
+    <button type="button" class="op-cam-btn" onclick="linkOperatorCam()">Link camera</button>
+  </div>
+  <div class="codec-port-crt"></div>
+  <div class="codec-port-lbl">YOU</div>`;
 }
 
 function agentRoomKind(a){
@@ -401,6 +533,28 @@ async function showHome(){
   const ariaLine=expOn
     ?'Priority channels are live. Open Codec to talk to the roster, Genome for voice training, Studio when Comfy is up.'
     :'Core deck online. Expansion unlocks the five-agent roster and premium rooms.';
+  const threat=!chatOk||!ttsOk||(expOn&&!videoOk);
+  const hScan=(scanPack&&scanPack.hardware)||{};
+  const cpuCoresN=hScan.cpu&&hScan.cpu.cores?Number(hScan.cpu.cores):0;
+  const ramGbN=Number(hScan.ram_gb||0);
+  const instruments=`<div class="hud-instruments">
+    ${hudRadarHtml(threat)}
+    <div class="hud-gauge-row">
+      ${hudGauge('CORE', chatOk?88:22, chatOk?'':'bad')}
+      ${hudGauge('VOICE', ttsOk?76:18, ttsOk?'':'warn')}
+      ${hudGauge('LOAD', cpuCoresN?Math.min(100,cpuCoresN*8):12, '')}
+      ${hudGauge('MEM', ramGbN?Math.min(100,Math.round((ramGbN/64)*100)):8, '')}
+    </div>
+    ${hudSeqHtml()}
+    ${hudTeleHtml([
+      'LINK '+ (chatOk?'UP':'DOWN'),
+      'TTS '+ (ttsOk?'READY':'WAIT'),
+      'GENOME '+ (vtOk?'LIVE':(vtOffline?'START':'SETUP')),
+      'STUDIO '+ (videoOk?'READY':'LIMITED'),
+      'MODEL '+ String(model).slice(0,24),
+      gpuHomeLine.slice(0,28)
+    ])}
+  </div>`;
 
   const agentStrip=(state.roster||[]).map(a=>{
     const id=a.id||a.agent_id;
@@ -494,6 +648,7 @@ async function showHome(){
           </div>
         </div>
       </div>
+      ${instruments}
     </main>
     <aside class="hud-agents">
       <h3>${expOn?'Roster':'Agent'}</h3>
@@ -518,6 +673,7 @@ async function showHome(){
     document.body.appendChild(boot);
     setTimeout(()=>{ boot.classList.add('done'); sessionStorage.setItem('ot_boot_done','1'); setTimeout(()=>boot.remove(),700); },900);
   }
+  otAmbientStart();
 }
 
 /* ---------------- Setup wizard ---------------- */
@@ -794,6 +950,7 @@ function messageHtml(role, content, msgId){
 function bootCodecOnce(){
   if(state.codecBooted) return;
   state.codecBooted=true;
+  otSfx('boot');
   const el=document.createElement('div');
   el.className='codec-boot';
   el.innerHTML=`<div class=codec-boot-line>OTACON // CODEC</div><div class="codec-boot-line muted">ESTABLISHING LOCAL LINK…</div>`;
@@ -879,17 +1036,16 @@ async function showChat(){
   <div class="cc-layout">
     <div id="codec-room-body">
       <div id="codec-wrap">
-        <div id="codec-bar">OTACON CODEC · ${state.roster.length?'EXPANSION':'LITE'} · TRANSMISSION LOCAL · GHOST PASTEL HUD</div>
+        <div id="codec-bar">OTACON CODEC · ${state.roster.length?'EXPANSION':'LITE'} · TRANSMISSION LOCAL · TACTICAL HUD</div>
         <div id="codec-header">
           <div class="codec-inner code-border-inner">
             <div class="codec-port port-left" id="port-operator">
-              <div class="op-port-fill"><span>Operator</span></div>
-              <div class="codec-port-crt"></div>
-              <div class="codec-port-lbl">YOU</div>
+              ${operatorPortHtml()}
             </div>
             <div class="codec-mid">
               <div class="codec-title">CODEC</div>
               <div class="codec-freq-line">FREQ&nbsp;<span id="codec-freq">140.85</span>&nbsp;MHz</div>
+              <div class="codec-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
               <div class="codec-sigs">
                 <div class="codec-sig-b" style="height:40%"></div>
                 <div class="codec-sig-b" style="height:70%"></div>
@@ -919,51 +1075,51 @@ async function showChat(){
     </div>
 
     <aside class="cc-side">
-      <div class="cc-panel">
-        <h2>Link status</h2>
-        <div class="cc-kv">
-          <span class=muted>CHAT</span><b class="${chatOk?'cc-ok':'cc-warn'}">${chatOk?'READY':'UNAVAILABLE'}</b>
-          <span class=muted>VOICE</span><b class="${ttsOk?'cc-ok':'cc-warn'}">${ttsOk?'READY':'NOT READY'}</b>
+      <div class="cc-rack">
+        <div class="cc-rack-h">LINK · INSTRUMENTS</div>
+        <div class="cc-led-bank">
+          <div class="cc-led ${chatOk?'on':''}"><b></b><span>CHAT</span><em>${chatOk?'RDY':'DN'}</em></div>
+          <div class="cc-led ${ttsOk?'on':''}"><b></b><span>VOICE</span><em>${ttsOk?'RDY':'DN'}</em></div>
+          <div class="cc-led ${sttOk?'on':''}"><b></b><span>MIC</span><em>${sttOk?'RDY':'OFF'}</em></div>
+          <div class="cc-led ${vtOk?'on':(vtOffline?'warn':'')}"><b></b><span>GNM</span><em>${vtOk?'LIVE':(vtOffline?'STRT':'—')}</em></div>
+        </div>
+        <div class="cc-mini-meters">
+          <div class="cc-mm"><span>TX</span><i style="width:${chatOk?72:12}%"></i></div>
+          <div class="cc-mm"><span>RX</span><i style="width:${ttsOk?64:10}%"></i></div>
+          <div class="cc-mm"><span>CPU</span><i id="ccCpuBar" style="width:40%"></i></div>
+        </div>
+        <div class="cc-kv tight">
           <span class=muted>MODEL</span><b id=codecModel>${escapeHtml(String(model))}</b>
           <span class=muted>GPU</span><b>${escapeHtml(gpuLine)}</b>
           <span class=muted>STATE</span><b id=codecStatus>IDLE</b>
         </div>
       </div>
-      <div class="cc-panel">
-        <h2>Voice</h2>
-        <label class=muted style="display:block;margin-bottom:6px;font-size:10px;letter-spacing:.1em">PROFILE
-          <select id=chatVoice onchange="assignVoice(this.value)" style="width:100%;margin-top:6px;background:#050406;border:1px solid rgba(151,159,236,.25);color:var(--mf-text);padding:8px;font:inherit">${voiceOpts}</select>
-        </label>
-        <label class=muted style="display:flex;gap:8px;align-items:center;font-size:10px;letter-spacing:.08em;margin:10px 0">
-          <input type=checkbox id=autoSpeak ${state.autoSpeak?'checked':''} onchange="setAutoSpeak(this.checked)"> AUTO SPEAK
-        </label>
-        <button type=button class="cc-btn" onclick="previewSelectedVoiceChat()">Preview</button>
+      <div class="cc-rack">
+        <div class="cc-rack-h">VOICE · CHANNEL</div>
+        <div class="cc-knob-row">
+          <label class="cc-knob"><span>PROFILE</span>
+            <select id=chatVoice onchange="assignVoice(this.value)">${voiceOpts}</select>
+          </label>
+          <label class="cc-tog"><input type=checkbox id=autoSpeak ${state.autoSpeak?'checked':''} onchange="setAutoSpeak(this.checked)"><span>AUTO SPEAK</span></label>
+        </div>
+        <button type=button class="cc-btn" onclick="otSfx('click');previewSelectedVoiceChat()">Preview</button>
         <p class=muted id=sidePreviewStatus style="font-size:10px;margin-top:8px;white-space:pre-wrap"></p>
       </div>
-      <div class="cc-panel">
-        <h2>Threads</h2>
+      <div class="cc-rack">
+        <div class="cc-rack-h">THREADS</div>
         <div id=conversation-list></div>
-        <div class="cc-links"><button type=button class="cc-btn" onclick="newConversation()">New Thread</button></div>
+        <div class="cc-links"><button type=button class="cc-btn" onclick="otSfx('click');newConversation()">New Thread</button></div>
       </div>
-      <div class="cc-panel" id=memory-panel>
-        <h2>Memory</h2>
-        <p class=muted style="font-size:10px;margin:0 0 8px">Facts ${escapeHtml(agentName)} keeps for later.</p>
+      <div class="cc-rack" id=memory-panel>
+        <div class="cc-rack-h">MEMORY · ${escapeHtml(String(agentName).toUpperCase())}</div>
         <div id=memories></div>
         <input id=memory placeholder="Add a memory">
         <button type=button class="cc-btn" onclick="addMemory()" style="margin-top:8px">Save Memory</button>
       </div>
-      <div class="cc-panel">
-        <h2>Voice Trainer</h2>
-        <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Genome Voice Trainer on :8765.':vtOffline?'Genome installed — start UI.':'Expansion Genome — open Setup to install/start.'}</p>
-        ${vtOk?'<button type=button class="cc-btn" onclick="openVoiceTrainer()">Open Genome (8765)</button>':(vtOffline?'<button type=button class="cc-btn" onclick="startVoiceTrainer()">Start Genome</button>':'<button type=button class="cc-btn" onclick="showGenomeSetup()">Setup Genome</button>')}
-      </div>
-      <div class="cc-panel">
-        <h2>How to run</h2>
-        <ol>
-          <li><strong>Transmit</strong> — chat hits local Ollama, then Piper TTS if Auto Speak is on.</li>
-          <li><strong>Portrait</strong> stays in the right port — never in chat rows.</li>
-          <li><strong>Setup</strong> for hardware scan / first-run config.</li>
-        </ol>
+      <div class="cc-rack">
+        <div class="cc-rack-h">GENOME</div>
+        <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Voice Trainer on :8765.':vtOffline?'Installed — start UI.':'Open Setup to install/start.'}</p>
+        ${vtOk?'<button type=button class="cc-btn" onclick="otSfx(\'click\');openVoiceTrainer()">Open :8765</button>':(vtOffline?'<button type=button class="cc-btn" onclick="otSfx(\'ok\');startVoiceTrainer()">Start Genome</button>':'<button type=button class="cc-btn" onclick="otSfx(\'click\');showGenomeSetup()">Setup Genome</button>')}
       </div>
     </aside>
   </div>
@@ -975,6 +1131,7 @@ async function showChat(){
   setCodecMode('idle');
   bootCodecOnce();
   refreshCodecMood();
+  otAmbientStart();
   if(window.__codecFreqTimer) clearInterval(window.__codecFreqTimer);
   window.__codecFreqTimer=setInterval(animateFreq,900);
   const inp=document.getElementById('chat-inp'); if(inp) inp.focus();
@@ -983,6 +1140,7 @@ async function showChat(){
 async function selectExpansionAgent(id){
   if(!id) return;
   const same=id===state.agentId;
+  if(!same) otSfx('ring');
   state.agentId=id;
   const r=(state.roster||[]).find(a=>(a.id||a.agent_id)===id);
   if(r){
@@ -1277,6 +1435,7 @@ async function delMemory(id){await api('/api/memory/delete',{agent_id:currentAge
 async function sendChat(){
   let el=document.getElementById('chat-inp'), box=document.getElementById('chat-msgs'), m=el&&el.value.trim();
   if(!m||!box) return;
+  otSfx('transmit');
   await ensureLanAuthSession();
   let uid=box.querySelectorAll('.msg-row-user,.msg-row-bot').length;
   box.insertAdjacentHTML('beforeend', `<div class="msg-row-user"><div class="msg-user">${escapeHtml(m)}</div></div><div class="msg-row-bot" id=wait><div class="msg-bot"><div class="typing-dots"><span></span><span></span><span></span></div></div></div>`);

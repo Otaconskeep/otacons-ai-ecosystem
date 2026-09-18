@@ -44,6 +44,10 @@ def main() -> int:
          "wizard preview/setup no longer hardcodes agent_001", fails)
     must("hud-deck" in js and "openAgentRoom" in js and "otSfx" in js,
          "Command Deck HUD with agent room opens + sfx", fails)
+    must("hud-instruments" in js and "hudRadarHtml" in js and "otAmbientStart" in js,
+         "Deck instruments + ambient bed", fails)
+    must("linkOperatorCam" in js and "operatorPortHtml" in js and "cc-rack" in js,
+         "Codec OPERATOR port + instrument rack sidebar", fails)
     must("showGenomeSetup" in js and "showVideoStudioSetup" in js and "Fix-Otacon-GPU" in js,
          "Aria-guided Genome/Studio setup with GPU fix path", fails)
     must("startComfySidecar" in js and "useDetectedComfy" in js and "video-studio/detect" in js,
