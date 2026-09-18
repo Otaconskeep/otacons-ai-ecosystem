@@ -121,6 +121,30 @@ def handle_expansion_get(path: str, send_json) -> bool:
             or ''
         )
         workflow = image_workflow_status(endpoint or None)
+        try:
+            from expansion.capabilities.studio_packs import packs_status
+            packs = packs_status(layout=layout, endpoint=endpoint or None, hw=hw)
+        except Exception as exc:  # noqa: BLE001
+            packs = {
+                'ok': False,
+                'image_ready': bool(workflow.get('ok')),
+                'soft_block': not bool(workflow.get('ok')),
+                'action': '' if workflow.get('ok') else 'install_packs',
+                'aria': str(exc)[:200],
+                'packs': {},
+            }
+        gen_ok = bool(vs.state == 'READY' and (workflow.get('ok') or packs.get('image_ready')))
+        if packs.get('running'):
+            blocked = packs.get('aria') or (
+                'Creative packs are downloading — Generate unlocks when Z-Image finishes.'
+            )
+        elif gen_ok:
+            blocked = ''
+        else:
+            blocked = packs.get('aria') or workflow.get('detail') or (
+                'Creative packs are not installed yet. Tap Install packs — '
+                'Generate stays quiet until packs are ready.'
+            )
         send_json({
             'surface': 'muse_creative',
             'creative_queue': [asdict(j) for j in jobs
@@ -130,10 +154,11 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'recent_creative_jobs': [asdict(j) for j in jobs if j.domain in ('creative', 'media')][:15],
             'recent_output': [asdict(j) for j in jobs if j.status == 'COMPLETE' and j.domain in ('creative', 'media')][:10],
             'capabilities': {
-                'generation': 'comfy_prompt' if workflow.get('ok') else 'workflow_missing',
+                'generation': 'comfy_prompt' if gen_ok else 'packs_needed',
                 'video_studio': vs.state,
                 'voice_motion': 'readiness_dependent',
                 'image_workflow': workflow,
+                'packs': packs,
             },
             'video_studio': vs.to_dict(),
             'video_studio_readiness': vs.state,
@@ -147,6 +172,7 @@ def handle_expansion_get(path: str, send_json) -> bool:
                 'endpoint': endpoint,
                 'source': setup.get('source') or '',
             },
+            'packs': packs,
             'studio': {
                 'endpoint': endpoint,
                 'healthy': bool((disc or {}).get('healthy') or vs.state == 'READY'),
@@ -159,14 +185,11 @@ def handle_expansion_get(path: str, send_json) -> bool:
                 'music_advanced': (defaults.get('music_advanced') or {}),
                 'image_widgets': (defaults.get('image_widgets') or []),
                 'workflow': workflow,
-                'generate_enabled': bool(vs.state == 'READY' and workflow.get('ok')),
-                'generate_blocked_reason': (
-                    '' if (vs.state == 'READY' and workflow.get('ok'))
-                    else (
-                        workflow.get('detail')
-                        or 'Studio connected, but image workflow is not installed yet.'
-                    )
-                ),
+                'packs': packs,
+                'generate_enabled': gen_ok,
+                'generate_blocked_reason': blocked,
+                'soft_block': bool(packs.get('soft_block')) and not gen_ok,
+                'action': packs.get('action') or ('' if gen_ok else 'install_packs'),
                 'modalities': [
                     {
                         'id': 'image',
@@ -175,7 +198,7 @@ def handle_expansion_get(path: str, send_json) -> bool:
                                    or ((creative_settings.get('image') or {}).get('engine'))
                                    or 'z-image-turbo'),
                         'tier': ((hw.get('image') or {}).get('tier') or 'local'),
-                        'workflow_ready': bool(workflow.get('ok')),
+                        'workflow_ready': bool(workflow.get('ok') or packs.get('image_ready')),
                     },
                     {
                         'id': 'video',
@@ -184,7 +207,8 @@ def handle_expansion_get(path: str, send_json) -> bool:
                                    or ((creative_settings.get('video') or {}).get('engine'))
                                    or 'wan-2.2-5b'),
                         'tier': ((hw.get('video') or {}).get('tier') or 'local'),
-                        'workflow_ready': False,
+                        'workflow_ready': bool((packs.get('packs') or {}).get('wan', {}).get('ok')
+                                               or (packs.get('packs') or {}).get('ltx2', {}).get('ok')),
                     },
                     {
                         'id': 'music',
@@ -193,16 +217,24 @@ def handle_expansion_get(path: str, send_json) -> bool:
                                    or ((creative_settings.get('music') or {}).get('engine'))
                                    or 'ace-step-1.5'),
                         'tier': ((hw.get('music') or {}).get('tier') or 'local'),
-                        'workflow_ready': False,
+                        'workflow_ready': bool((packs.get('packs') or {}).get('ace_step', {}).get('ok')),
                     },
                 ],
             },
             'honest_note': (
                 'Expansion Video Studio — READY when ComfyUI is connected. '
-                'Generate submits real /prompt jobs only when Z-Image models are present.'
+                'Generate unlocks after creative packs (Z-Image) are installed.'
             ),
-            'note': 'Muse owns Video Studio. Generate requires a ComfyUI prompt_id — never fake RUNNING.',
+            'note': 'Muse owns Video Studio. Missing packs soft-block Generate — never fake RUNNING.',
         })
+        return True
+    if path == '/api/expansion/creative/packs':
+        from expansion.capabilities.studio_packs import packs_status
+        from expansion.capabilities.studio_setup import studio_hardware_snapshot
+        from expansion.capabilities.video_studio import probe_video_studio
+        vs = probe_video_studio()
+        ep = ((vs.discovery or {}).get('endpoint') or '')
+        send_json(packs_status(endpoint=ep or None, hw=studio_hardware_snapshot()))
         return True
     if path == '/api/expansion/video-studio/detect':
         from expansion.capabilities.comfy_sidecar import detect_local_comfy, probe_docker_engine
@@ -659,6 +691,20 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             proceed_anyway=bool((data or {}).get('proceed_anyway') or (data or {}).get('acknowledge_under_spec')),
         ))
         return True
+    if path == '/api/expansion/creative/packs/install':
+        from expansion.capabilities.studio_packs import start_pack_install
+        from expansion.capabilities.studio_setup import studio_hardware_snapshot
+        which = (data or {}).get('which') or (data or {}).get('packs')
+        if isinstance(which, str):
+            which = [which]
+        if which is not None and not isinstance(which, list):
+            which = None
+        send_json(start_pack_install(
+            force=bool((data or {}).get('force')),
+            which=which,
+            hw=studio_hardware_snapshot(),
+        ))
+        return True
     if path == '/api/expansion/creative/generate':
         from expansion.capabilities.comfy_submit import (
             ensure_creative_poller,
@@ -690,15 +736,18 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             send_json({
                 'ok': False,
                 'queued': False,
-                'error': 'creative workflow submitter missing',
+                'soft_block': True,
+                'action': 'install_packs',
+                'error': 'creative_packs_needed',
                 'detail': (
-                    f'{modality} workflow is not installed yet — ComfyUI is '
+                    f'{modality.title()} packs are not ready yet — install creative packs '
+                    f'in The Workshop. Generate stays quiet until then. ComfyUI is '
                     f'{"READY" if vs.state == "READY" else vs.state} at {endpoint}.'
                 ),
                 'modality': modality,
                 'studio_state': vs.state,
                 'endpoint': endpoint,
-            }, 501)
+            }, 409)
             return True
 
         submitted = submit_image_job(
@@ -708,17 +757,26 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             endpoint=endpoint,
         )
         if not submitted.get('ok') or not submitted.get('prompt_id'):
-            send_json({
+            status = int(submitted.get('http_status') or 409)
+            payload = {
                 'ok': False,
                 'queued': False,
-                'error': submitted.get('error') or 'creative workflow submitter missing',
-                'detail': submitted.get('detail') or '',
+                'soft_block': bool(submitted.get('soft_block', True)),
+                'action': submitted.get('action') or 'install_packs',
+                'error': submitted.get('error') or 'creative_packs_needed',
+                'detail': submitted.get('detail') or (
+                    'Creative packs are not installed yet. Tap Install packs — '
+                    'Generate stays quiet until packs are ready.'
+                ),
                 'missing': submitted.get('missing') or [],
+                'packs': submitted.get('packs') or {},
+                'needed': submitted.get('needed') or [],
                 'modality': modality,
                 'engine': engine or 'z-image-turbo',
                 'studio_state': submitted.get('studio_state') or vs.state,
                 'endpoint': submitted.get('endpoint') or endpoint,
-            }, int(submitted.get('http_status') or 501))
+            }
+            send_json(payload, status)
             return True
 
         prompt_id = str(submitted['prompt_id'])

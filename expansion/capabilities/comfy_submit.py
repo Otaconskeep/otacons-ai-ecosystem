@@ -209,16 +209,29 @@ def submit_image_job(
         }
     probe = image_workflow_status(ep)
     if not probe.get('ok'):
-        return {
-            'ok': False,
-            'queued': False,
-            'error': 'creative workflow submitter missing',
-            'detail': probe.get('detail') or 'image workflow models not installed',
+        try:
+            from expansion.capabilities.studio_packs import soft_block_payload
+            block = soft_block_payload()
+        except Exception:
+            block = {
+                'ok': False,
+                'queued': False,
+                'soft_block': True,
+                'action': 'install_packs',
+                'error': 'creative_packs_needed',
+                'detail': probe.get('detail') or (
+                    'Creative packs are not installed yet. Tap Install packs — '
+                    'Generate stays quiet until packs are ready.'
+                ),
+                'http_status': 409,
+            }
+        block.update({
             'missing': probe.get('missing') or [],
             'studio_state': vs.state,
             'endpoint': ep,
-            'http_status': 501,
-        }
+            'workflow': probe,
+        })
+        return block
     tuning = tuning if isinstance(tuning, dict) else {}
     width, height = 1024, 1024
     res = str(tuning.get('resolution') or '').lower()
@@ -281,8 +294,13 @@ def submit_image_job(
         return {
             'ok': False,
             'queued': False,
-            'error': 'ComfyUI rejected prompt',
-            'detail': err[:800],
+            'soft_block': True,
+            'error': 'comfy_prompt_not_accepted',
+            'detail': (
+                'ComfyUI did not accept that graph — usually a missing custom node '
+                'or model path. Open ComfyUI / Install packs, then try again. '
+                f'Technical: {err[:400]}'
+            ),
             'studio_state': vs.state,
             'endpoint': ep,
             'http_status': 502 if code else 503,

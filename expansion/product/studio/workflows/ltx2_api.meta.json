@@ -1,0 +1,9 @@
+{
+  "id": "ltx2_api",
+  "modality": "video",
+  "engine": "ltx-2",
+  "required_models": {
+    "unet": "ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors"
+  },
+  "notes": "LTX-2 distilled pack for high-VRAM hosts."
+}

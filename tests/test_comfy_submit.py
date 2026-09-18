@@ -29,8 +29,10 @@ class ComfySubmitTests(unittest.TestCase):
             out = cs.submit_image_job(prompt='test')
         self.assertFalse(out['ok'])
         self.assertFalse(out['queued'])
-        self.assertEqual(out['error'], 'creative workflow submitter missing')
-        self.assertEqual(out.get('http_status'), 501)
+        self.assertTrue(out.get('soft_block'))
+        self.assertEqual(out['error'], 'creative_packs_needed')
+        self.assertEqual(out.get('action'), 'install_packs')
+        self.assertEqual(out.get('http_status'), 409)
 
     def test_submit_requires_prompt_id_before_ok(self):
         with mock.patch.object(cs, 'probe_video_studio') as pvs, \

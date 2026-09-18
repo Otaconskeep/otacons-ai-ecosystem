@@ -1445,6 +1445,42 @@
     renderCreativeFloor();
   }
 
+  async function floorStudioInstallPacks() {
+    var msg = document.getElementById('fl-studio-msg');
+    var log = document.getElementById('fl-vs-log');
+    function say(t) {
+      if (msg) msg.textContent = t;
+      if (log) log.textContent = (log.textContent ? log.textContent + '\n' : '') + '[' + new Date().toLocaleTimeString() + '] ' + t;
+    }
+    say('Starting creative pack download (Z-Image first)…');
+    try {
+      if (typeof otSfx === 'function') otSfx('ok');
+      var r = await api('/api/expansion/creative/packs/install', { force: false });
+      var aria = (r.data && (r.data.aria || r.data.message || r.data.detail)) || '';
+      if (!r.ok) {
+        say(aria || ('Could not start pack install: ' + r.status));
+        return;
+      }
+      say(aria || 'Downloading creative packs… Generate unlocks when Z-Image finishes.');
+      if (window._flPacksPoll) clearInterval(window._flPacksPoll);
+      window._flPacksPoll = setInterval(async function () {
+        try {
+          var st = await apiGet('/api/expansion/creative/packs');
+          if (st && !st.running && (st.image_ready || st.ok)) {
+            clearInterval(window._flPacksPoll);
+            window._flPacksPoll = null;
+            renderCreativeFloor();
+          } else if (st && st.message) {
+            say(st.message);
+          }
+        } catch (e) { /* keep polling */ }
+      }, 4000);
+      setTimeout(function () { renderCreativeFloor(); }, 1200);
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
   async function floorStudioGenerate() {
     var msg = document.getElementById('fl-studio-msg');
     var log = document.getElementById('fl-vs-log');
@@ -1494,12 +1530,17 @@
         tuning: tuning
       });
       if (!r.ok || !(r.data && r.data.ok)) {
+        var soft = r.data && r.data.soft_block;
         var err = (r.data && (r.data.detail || r.data.error)) || r.status;
-        say('Not queued: ' + err);
+        if (soft || (r.data && r.data.action === 'install_packs')) {
+          say(err || 'Creative packs are not ready yet — tap Install packs. Generate stays quiet until then.');
+          return;
+        }
+        say('Could not queue: ' + err);
         return;
       }
       if (!(r.data.prompt_id || r.data.queued)) {
-        say('Not queued: ComfyUI did not return a prompt_id.');
+        say('ComfyUI did not return a prompt_id yet — try again in a moment.');
         return;
       }
       say((r.data.message || ('Submitted · prompt_id=' + r.data.prompt_id)));
@@ -1578,12 +1619,16 @@
     if (studio.generate_enabled == null) {
       genOk = ready && !!(studio.workflow && studio.workflow.ok);
     }
+    var packs = studio.packs || d.packs || {};
+    var packsRunning = !!packs.running;
     var genBlock = studio.generate_blocked_reason ||
       (FL_STUDIO.modality !== 'image'
-        ? 'Studio connected, but ' + FL_STUDIO.modality + ' workflow is not installed yet.'
-        : (studio.workflow && studio.workflow.detail) ||
-          'Studio connected, but image workflow is not installed yet.');
+        ? (FL_STUDIO.modality.charAt(0).toUpperCase() + FL_STUDIO.modality.slice(1) +
+          ' packs are not ready yet — install creative packs first.')
+        : (packs.aria || (studio.workflow && studio.workflow.detail) ||
+          'Creative packs are not installed yet. Tap Install packs — Generate stays quiet until packs are ready.'));
     var canGenerate = genOk && FL_STUDIO.modality === 'image';
+    var showInstallPacks = !canGenerate && ready;
 
     if (needsSetup) {
       floorShell('The Workshop', 'Muse · Video Studio',
@@ -1689,7 +1734,12 @@
       '<div class="fl-rail" style="margin-top:12px">' +
       (canGenerate
         ? '<button type="button" class="fl-vs-submit" onclick="floorStudioGenerate()">Generate</button>'
-        : '<button type="button" class="fl-vs-submit" disabled title="' + esc(genBlock) + '">Generate unavailable</button>') +
+        : (showInstallPacks
+          ? '<button type="button" class="fl-vs-submit" ' + (packsRunning ? 'disabled ' : '') +
+            'onclick="floorStudioInstallPacks()">' +
+            (packsRunning ? 'Installing packs…' : 'Install creative packs') + '</button>'
+          : '<button type="button" class="fl-vs-submit" disabled title="' + esc(genBlock) +
+            '">Generate locked</button>')) +
       '<button type="button" class="fl-vs-submit ghost" onclick="floorStudioSetModality((window.FL_STUDIO&&window.FL_STUDIO.modality)||\'image\')">Optimal defaults</button>' +
       btn('Setup / Advanced', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", true) +
       btn('Open ComfyUI', "window.open(" + JSON.stringify(endpoint || 'http://127.0.0.1:8188/') + ",'_blank','noopener')", true) +
@@ -2127,6 +2177,7 @@
     floorConfigureIntegration: floorConfigureIntegration,
     floorStudioSetModality: floorStudioSetModality,
     floorStudioGenerate: floorStudioGenerate,
+    floorStudioInstallPacks: floorStudioInstallPacks,
     floorStudioApplyChip: floorStudioApplyChip,
     floorStudioOpenOptimal: floorStudioOpenOptimal,
     floorStudioOpenFill: floorStudioOpenFill,

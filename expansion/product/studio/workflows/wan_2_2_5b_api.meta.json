@@ -1,0 +1,11 @@
+{
+  "id": "wan_2_2_5b_api",
+  "modality": "video",
+  "engine": "wan-2.2-5b",
+  "required_models": {
+    "unet": "wan2.2_ti2v_5B_fp16.safetensors",
+    "clip": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae": "wan2.2_vae.safetensors"
+  },
+  "notes": "Wan 2.2 TI2V 5B pack (weights + future submitter)."
+}

@@ -11,5 +11,8 @@ services:
       - CLI_ARGS=--listen 0.0.0.0 --port 8188
     volumes:
       - otacon-comfy-data:/root
+      # Creative packs (Z-Image / Wan·LTX-2 / ACE-Step) land here via studio_packs.
+      - otacon-comfy-models:/root/ComfyUI/models
 volumes:
   otacon-comfy-data:
+  otacon-comfy-models:

@@ -1030,8 +1030,8 @@ def _finish_components_and_ready(
         pack_bits.append(f"ACE-Step ({mus.get('tier')})")
     pack_line = ', '.join(pack_bits) if pack_bits else 'connectivity only (packs deferred)'
     packs_note = (
-        f' Profile packs selected: {pack_line}. '
-        'Model weights are not auto-downloaded yet — Muse pulls them on first use.'
+        f' Profile packs: {pack_line}. '
+        'Downloading creative weights into Comfy now (Z-Image first).'
         if pack_bits else
         ' Connectivity only for now (creative packs deferred on this profile).'
     )
@@ -1043,10 +1043,20 @@ def _finish_components_and_ready(
             f"Hardware profile {hw.get('profile_id') or 'UNKNOWN'} "
             f"({hw.get('vram_gb', 0):.0f} GB VRAM).{packs_note}"
         ),
-        message=f"Studio profile {hw.get('profile_id')} — verifying Comfy connection…",
+        message=f"Studio profile {hw.get('profile_id')} — installing creative packs…",
         layout=layout,
     )
-    # Connectivity READY does not download model packs; manifest is recorded for Muse.
+    # Kick pack download (Z-Image / Wan·LTX-2 / ACE-Step). Non-blocking.
+    pack_start: dict = {}
+    try:
+        from expansion.capabilities.studio_packs import start_pack_install, packs_status
+        pack_start = start_pack_install(hw=hw, layout=layout)
+        state['packs'] = packs_status(layout=layout, hw=hw, endpoint=endpoint)
+        state['packs_started'] = bool(pack_start.get('started') or pack_start.get('running'))
+        save_setup_state(state, layout=layout)
+    except Exception as exc:  # noqa: BLE001
+        state['packs_error'] = str(exc)[:240]
+        save_setup_state(state, layout=layout)
     _ = assets
     state = _set_phase(
         state,
@@ -1061,14 +1071,36 @@ def _finish_components_and_ready(
         state['endpoint'] = endpoint
         warn = (hw.get('warnings') or [])[:2]
         extra = (' ' + ' '.join(warn)) if warn else ''
+        packs_ready = False
+        packs_aria = ''
+        try:
+            from expansion.capabilities.studio_packs import packs_status as _ps
+            pst = _ps(layout=layout, hw=hw, endpoint=endpoint)
+            packs_ready = bool(pst.get('image_ready'))
+            packs_aria = pst.get('aria') or ''
+            state['packs'] = pst
+        except Exception:
+            packs_ready = False
+        if packs_ready:
+            ready_aria = (
+                f"Done. Video Studio is connected (profile {hw.get('profile_id')}). "
+                f"ComfyUI is healthy and Z-Image packs are ready.{extra}"
+            )
+            ready_msg = 'Video Studio ready — creative packs installed.'
+        else:
+            ready_aria = (
+                f"Done. Video Studio is connected (profile {hw.get('profile_id')}). "
+                f"ComfyUI is healthy. {packs_aria or packs_note}{extra}"
+            )
+            ready_msg = (
+                'Video Studio connected — install creative packs in The Workshop '
+                'before Generate unlocks.'
+            )
         _set_phase(
             state,
             READY,
-            aria=(
-                f"Done. Video Studio is connected (profile {hw.get('profile_id')}). "
-                f"ComfyUI is healthy.{packs_note}{extra}"
-            ),
-            message='Video Studio is ready (Comfy connected; packs on first use).',
+            aria=ready_aria,
+            message=ready_msg,
             layout=layout,
         )
         state = load_setup_state(layout)

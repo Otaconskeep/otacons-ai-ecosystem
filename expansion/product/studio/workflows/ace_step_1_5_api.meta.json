@@ -1,0 +1,9 @@
+{
+  "id": "ace_step_1_5_api",
+  "modality": "music",
+  "engine": "ace-step",
+  "required_models": {
+    "checkpoint": "ace_step_1.5_turbo_aio.safetensors"
+  },
+  "notes": "ACE-Step 1.5 AIO music pack (Keep workshop parity)."
+}
