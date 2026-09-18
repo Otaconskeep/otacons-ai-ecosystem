@@ -1332,56 +1332,116 @@ async function showGenomeSetup(){
   const gpuOk=!!(disc.gpu||(state.capabilities&&state.capabilities.voice_trainer_gpu));
   const ready=st==='ready';
   const offline=st==='offline';
-  const whySkip=gpuOk
-    ?`GPU is visible. Genome will install and open the trainer automatically when you click Setup / Start.`
-    :`Genome needs NVIDIA visible in WSL (nvidia-smi). Run Fix-Otacon-GPU.bat, reopen Ubuntu, soft-update, then Setup Genome.`;
-  appRoot().innerHTML=`<div class="home">
+  const chip=ready?'ok':(offline||gpuOk?'warn':'bad');
+  const ariaCopy=ready||offline
+    ?'Genome is on this machine. Tap Clone a voice — a popup asks for a name and YouTube link. No commands.'
+    :(gpuOk
+      ?'GPU looks good. Tap Install Genome once — I pull the trainer. When it says READY, open Clone a voice.'
+      :'I need NVIDIA visible in WSL first (nvidia-smi). Run Fix-Otacon-GPU.bat, reopen Ubuntu, then come back.');
+  appRoot().innerHTML=`<div class="home gn-shell">
   <header class="home-header"><div><p class="home-kicker">Expansion · Genome</p><h1 class="home-greeting">Voice Trainer</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
-  <section class="home-group">
-    <div class="guide-aria">
-      <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
-      <div>
-        <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--ot-cyan);font-size:10px;margin:0 0 8px">Aria // guiding</p>
-        <p style="margin:0 0 10px;line-height:1.5">Genome clones a voice from YouTube into Piper (GPU). This is the real trainer — not a static install sheet.</p>
-        <p><b>Status:</b> ${escapeHtml(st)}${gpuOk?' · GPU probe OK':''}</p>
-        <p class="muted">${escapeHtml(note)}</p>
-        <p class="muted" style="margin-top:8px;white-space:pre-wrap;font-size:11px;line-height:1.45">${escapeHtml(whySkip)}</p>
-      </div>
+
+  <div class="guide-aria">
+    <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
+    <div>
+      <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--ot-cyan);font-size:10px;margin:0 0 8px">Aria // guiding</p>
+      <p style="margin:0;line-height:1.5">${escapeHtml(ariaCopy)}</p>
     </div>
-    ${ready||offline?`
-    <div class="guide-steps" style="list-style:none;padding:0">
-      <p class="eyebrow" style="letter-spacing:.14em;text-transform:uppercase;font-size:10px;color:var(--ot-cyan)">Train a voice</p>
-      <label class="muted" style="display:block;margin:8px 0 4px;font-size:11px">Voice name</label>
-      <input id="genomeVoiceName" type="text" placeholder="e.g. mei_ling" style="width:100%;max-width:420px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:inherit;font:inherit">
-      <label class="muted" style="display:block;margin:12px 0 4px;font-size:11px">YouTube URL(s) — one per line</label>
-      <textarea id="genomeVoiceUrls" rows="3" placeholder="https://www.youtube.com/watch?v=…" style="width:100%;max-width:520px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:inherit;font:inherit"></textarea>
-      <p class="muted" id="genomeTrainStatus" style="margin-top:8px;white-space:pre-wrap"></p>
-      <div class="hud-cta-row" style="margin-top:10px">
-        <button type="button" class="hud-cta primary" id="genomeTrainBtn" onclick="otSfx('ok');startGenomeTrain()">Start training</button>
-        <button type="button" class="hud-cta" onclick="otSfx('transmit');openVoiceTrainer()">Open trainer :8765</button>
-      </div>
-    </div>`:`
-    <ol class="guide-steps">
-      <li><b>If WSL nvidia-smi fails</b> — run <code>Fix-Otacon-GPU.bat</code>, reopen Ubuntu, soft-update.</li>
-      <li><b>Install Genome</b> — one click; Docker pulls the GPU trainer image.</li>
-      <li><b>Train</b> — when ready, this page shows the YouTube → Piper form (also on :8765).</li>
-    </ol>`}
-    <p class="muted" style="margin-top:10px">Install path: <code>${escapeHtml(path)}</code></p>
-    <p class="muted" id="genomeInstallStatus" style="margin-top:8px;white-space:pre-wrap"></p>
-    <div class="hud-cta-row" style="margin-top:14px">
-      <button type="button" class="hud-cta primary" id="genomeInstallBtn" onclick="otSfx('ok');installGenome()">${st==='not_configured'||st==='unavailable'?'Install Genome':'Re-install / Start Genome'}</button>
+  </div>
+
+  <div class="gn-widgets">
+    <button type="button" class="gn-widget" onclick="genomeOpenStatus()">
+      <span class="k">Status</span><span class="v ${chip}">${escapeHtml(String(st).toUpperCase())}</span>
+    </button>
+    <button type="button" class="gn-widget" onclick="genomeOpenStatus()">
+      <span class="k">GPU</span><span class="v ${gpuOk?'ok':'bad'}">${gpuOk?'VISIBLE':'MISSING'}</span>
+    </button>
+    <button type="button" class="gn-widget" onclick="genomeOpenTrain()">
+      <span class="k">Train</span><span class="v">${ready||offline?'OPEN FORM':'INSTALL FIRST'}</span>
+    </button>
+    <button type="button" class="gn-widget" onclick="openVoiceTrainer()">
+      <span class="k">Console</span><span class="v">:8765</span>
+    </button>
+  </div>
+
+  <div class="hud-panel gn-panel">
+    <div class="hud-panel-brackets"></div>
+    <div class="hud-panel-scan"></div>
+    <p class="eyebrow" style="letter-spacing:.14em;text-transform:uppercase;font-size:10px;color:var(--ot-cyan);margin:0 0 8px">Actions</p>
+    <p class="muted" style="margin:0 0 12px;line-height:1.45">${escapeHtml(note||'Clone YouTube → Piper ONNX on GPU.')}</p>
+    <div class="hud-cta-row">
+      ${(ready||offline)?`<button type="button" class="hud-cta primary" onclick="otSfx('ok');genomeOpenTrain()">Clone a voice…</button>
+      <button type="button" class="hud-cta" onclick="otSfx('transmit');openVoiceTrainer()">Open :8765 console</button>`:''}
+      <button type="button" class="hud-cta primary" id="genomeInstallBtn" onclick="otSfx('ok');installGenome()">${st==='not_configured'||st==='unavailable'?'Install Genome':'Re-install / Start'}</button>
       <button type="button" class="hud-cta" onclick="otSfx('ok');startVoiceTrainer()">Start Genome</button>
       <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
     </div>
-  </section>
+    <p class="muted" style="margin-top:10px;font-size:11px">Install path: <code>${escapeHtml(path)}</code></p>
+    <p class="muted" id="genomeInstallStatus" style="margin-top:8px;white-space:pre-wrap"></p>
+  </div>
+
+  <div class="gn-modal" id="gnModalTrain" hidden>
+    <div class="gn-modal-card" role="dialog" aria-modal="true">
+      <p class="eyebrow" style="letter-spacing:.14em;text-transform:uppercase;font-size:10px;color:var(--ot-cyan);margin:0 0 6px">Clone a voice</p>
+      <h2 style="margin:0 0 8px;font-size:1.15rem">YouTube → Piper</h2>
+      <p class="muted" style="margin:0 0 12px;font-size:12px;line-height:1.45">Name the voice, paste links, Start training. Leave the PC on.</p>
+      <label class="muted" style="display:block;margin:8px 0 4px;font-size:10px;letter-spacing:.12em;text-transform:uppercase">Voice name</label>
+      <input id="genomeVoiceName" type="text" placeholder="e.g. mei_ling" class="gn-input">
+      <label class="muted" style="display:block;margin:12px 0 4px;font-size:10px;letter-spacing:.12em;text-transform:uppercase">YouTube URL(s)</label>
+      <textarea id="genomeVoiceUrls" rows="4" placeholder="https://www.youtube.com/watch?v=…" class="gn-input"></textarea>
+      <p class="muted" id="genomeTrainStatus" style="margin-top:8px;white-space:pre-wrap"></p>
+      <div class="hud-cta-row" style="margin-top:12px">
+        <button type="button" class="hud-cta primary" id="genomeTrainBtn" onclick="otSfx('ok');startGenomeTrain()">Start training</button>
+        <button type="button" class="hud-cta" onclick="genomeCloseModals()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="gn-modal" id="gnModalStatus" hidden>
+    <div class="gn-modal-card" role="dialog" aria-modal="true">
+      <p class="eyebrow" style="letter-spacing:.14em;text-transform:uppercase;font-size:10px;color:var(--ot-cyan);margin:0 0 6px">Status</p>
+      <h2 style="margin:0 0 8px;font-size:1.15rem">Genome probe</h2>
+      <pre id="gnStatusDetail" class="gn-pre"></pre>
+      <div class="hud-cta-row" style="margin-top:12px">
+        <button type="button" class="hud-cta" onclick="loadCapabilities().then(()=>showGenomeSetup())">Refresh</button>
+        <button type="button" class="hud-cta" onclick="genomeCloseModals()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <p class="home-foot">Otaconskeep Expansion · Genome</p>
 </div>`;
-  // Autonomous once per page visit: GPU + not installed → kick install; offline → start UI.
+  const detail=document.getElementById('gnStatusDetail');
+  if(detail){
+    detail.textContent=`status: ${st}\ngpu: ${gpuOk?'ok':'missing'}\npath: ${path}\nnote: ${note||'—'}\ndiscovery: ${JSON.stringify(disc||{},null,2)}`;
+  }
   if(gpuOk && (st==='not_configured'||st==='offline') && !window.__genomeAutoKick){
     window.__genomeAutoKick=true;
     setTimeout(()=>{ startVoiceTrainer(); }, 400);
   }
+}
+function genomeCloseModals(){
+  ['gnModalTrain','gnModalStatus'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.hidden=true;
+  });
+}
+function genomeOpenTrain(){
+  const st=capStatus('voice_trainer');
+  if(st!=='ready' && st!=='offline'){
+    otSfx('error');
+    const el=document.getElementById('genomeInstallStatus');
+    if(el) el.textContent='Install or Start Genome first — then Clone a voice.';
+    return;
+  }
+  genomeCloseModals();
+  const m=document.getElementById('gnModalTrain');
+  if(m) m.hidden=false;
+}
+function genomeOpenStatus(){
+  genomeCloseModals();
+  const m=document.getElementById('gnModalStatus');
+  if(m) m.hidden=false;
 }
 async function startGenomeTrain(){
   const el=document.getElementById('genomeTrainStatus');
