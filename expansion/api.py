@@ -85,15 +85,16 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'runtime_context': studio_runtime_context('muse'),
             'foundation': evaluate_foundation().to_dict(),
             'honest_note': (
-                'Expansion Video Studio — READY when local ComfyUI is up. '
-                'Use Detect / Start Comfy (Docker sidecar on :8188). Models/LTX land later.'
+                'Expansion Video Studio — READY when ComfyUI is connected. '
+                'Use Set Up Video Studio; OtaconsKeep provisions the sidecar automatically.'
             ),
-            'note': 'Muse owns Video Studio. Comfy is an optional sidecar — same Start UX as Genome.',
+            'note': 'Muse owns Video Studio. Set Up owns Docker/Comfy — Advanced is diagnostics only.',
         })
         return True
     if path == '/api/expansion/video-studio/detect':
         from expansion.capabilities.comfy_sidecar import detect_local_comfy, probe_docker_engine
         from expansion.capabilities.video_studio import probe_video_studio
+        from expansion.capabilities.studio_setup import setup_status
         detected = detect_local_comfy()
         report = probe_video_studio()
         docker = probe_docker_engine()
@@ -103,7 +104,12 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'configured_detail': report.detail,
             'video_studio': report.to_dict(),
             'docker': docker,
+            'setup': setup_status(),
         })
+        return True
+    if path == '/api/expansion/video-studio/setup-status':
+        from expansion.capabilities.studio_setup import setup_status
+        send_json(setup_status())
         return True
     if path == '/api/expansion/ops':
         from expansion.floors import build_ops_floor
@@ -412,8 +418,13 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             send_json({'ok': False, 'error': str(exc)}, 400)
         return True
     if path == '/api/expansion/video-studio/start':
-        from expansion.capabilities.comfy_sidecar import ensure_comfy_sidecar
-        send_json(ensure_comfy_sidecar())
+        # Back-compat: Start now means full orchestrated Setup.
+        from expansion.capabilities.studio_setup import start_studio_setup
+        send_json(start_studio_setup(force=bool((data or {}).get('force'))))
+        return True
+    if path == '/api/expansion/video-studio/setup':
+        from expansion.capabilities.studio_setup import start_studio_setup
+        send_json(start_studio_setup(force=bool((data or {}).get('force'))))
         return True
     if path == '/api/expansion/jobs/create':
         from expansion.pipeline import LivingPipeline

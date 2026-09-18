@@ -64,10 +64,12 @@ def main() -> int:
          "Aria-guided Genome install button + GPU fix path", fails)
     must("showVideoStudioSetup" in js,
          "Aria-guided Studio setup", fails)
-    must("startComfySidecar" in js and "useDetectedComfy" in js and "video-studio/detect" in js,
-         "Comfy detect + Start sidecar UX wired", fails)
-    must("error during connect" in js and "Docker Desktop" in js and "comfyInstallStatus" in js,
-         "Studio Setup explains Docker connect failures plainly", fails)
+    must("startComfySidecar" in js and "startStudioSetup" in js and "video-studio/setup" in js,
+         "Comfy Setup orchestrator one-button UX wired", fails)
+    must("Set Up Video Studio" in js and "Advanced · Diagnostics" in js,
+         "Studio Setup is one-button; CLI buried under Advanced", fails)
+    must("OTACON_COMFYUI_URL" not in js.split("Advanced")[0] if "Advanced" in js else True,
+         "normal Studio Setup copy does not tell users to set OTACON_COMFYUI_URL", fails)
     floors = (ROOT / "ui" / "floors.js").read_text(encoding="utf-8", errors="replace")
     must("readinessHud" in floors and "fl-ready-grid" in floors,
          "Command readiness HUD (not raw JSON)", fails)

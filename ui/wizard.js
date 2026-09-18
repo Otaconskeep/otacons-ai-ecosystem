@@ -1400,30 +1400,23 @@ async function showVideoStudioSetup(){
   setBodyMode('home');
   await loadCapabilities();
   otSfx('click');
-  let detect={found:false,endpoint:'',detail:'Detecting…',candidates:[],docker:null};
-  try{ detect=await apiGet('/api/expansion/video-studio/detect', 8000); }catch(_e){}
-  const detail=(state.capabilities&&state.capabilities.video_detail)||'';
+  let setup={phase:'NOT_CHECKED',aria:'',message:'',steps:[],need_setup:true,diagnostics:{},endpoint:'',source:''};
+  try{ setup=await apiGet('/api/expansion/video-studio/setup-status', 8000); }catch(_e){}
   const st=capStatus('video');
-  const ep=(detect&&detect.endpoint)||(state.capabilities&&state.capabilities.video_endpoint)||'http://127.0.0.1:8188';
-  const found=!!(detect&&detect.found);
-  const docker=(detect&&detect.docker)||{};
-  const dockerOk=!!docker.ok;
-  const dockerLine=dockerOk
-    ?(docker.detail||'Docker engine ready')
-    :(docker.detail||docker.status||'Docker not checked');
-  const whyDocker=!dockerOk
-    ?`Start / Install Comfy needs Docker Desktop running. The error “unable to get image yanwk/comfyui-boot:cpu — error during connect” means the engine was not connected — not a bad image. Start Docker Desktop on Windows, wait until it is healthy, then try again. Or skip Docker and run ComfyUI portable on :8188.`
-    :`Docker is ready. First Start pulls yanwk/comfyui-boot:cpu (can take several minutes). Models/LTX come later — READY only needs Comfy answering on :8188.`;
-  const foundBlock=found
-    ? `<div style="margin:12px 0;padding:12px;border:1px solid rgba(46,230,214,.35)">
-        <p style="margin:0 0 8px"><b>Found ComfyUI</b> at <code>${escapeHtml(detect.endpoint)}</code></p>
-        <p class="muted" style="margin:0 0 10px">${escapeHtml(detect.detail||'')}</p>
-        <button type="button" class="hud-cta primary" onclick="otSfx('ok');useDetectedComfy('${escapeHtml(detect.endpoint)}')">Use this → READY</button>
-      </div>`
-    : `<div style="margin:12px 0;padding:12px;border:1px solid rgba(245,165,36,.35)">
-        <p style="margin:0 0 8px"><b>No Comfy on :8188 / :8199 yet</b></p>
-        <p class="muted" style="margin:0">${escapeHtml((detect&&detect.detail)||'Not answering yet.')}</p>
-      </div>`;
+  const ready=st==='ready'||setup.phase==='READY'||setup.ok;
+  const aria=setup.aria||(ready
+    ?'Done. Video Studio is connected and ready.'
+    :"Video Studio isn't running yet. I can set it up for you — the first start may take a few minutes while I download what it needs.");
+  const steps=Array.isArray(setup.steps)?setup.steps:[];
+  const stepHtml=steps.length
+    ?`<ul class="guide-steps" id="studioSetupSteps" style="list-style:none;padding-left:0">${steps.map(s=>
+      `<li style="margin:6px 0">${s.done?'✓':'○'} ${escapeHtml(s.label||s.id||'')}</li>`
+    ).join('')}</ul>`
+    :'';
+  const diag=setup.diagnostics||{};
+  const disc=diag.discovery||{};
+  const ep=setup.endpoint||(disc.endpoint)||(state.capabilities&&state.capabilities.video_endpoint)||'';
+  const src=setup.source||disc.source||'';
   appRoot().innerHTML=`<div class="home">
   <header class="home-header"><div><p class="home-kicker">Expansion · Muse</p><h1 class="home-greeting">Video Studio</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
@@ -1432,38 +1425,112 @@ async function showVideoStudioSetup(){
       <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
       <div>
         <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--ot-cyan);font-size:10px;margin:0 0 8px">Aria // guiding</p>
-        <p style="margin:0 0 10px;line-height:1.5">Studio is Expansion premium. I look for Comfy on this PC first. If it is not up, Start Comfy uses Docker on port 8188 — same idea as Genome. Piper Codec still works without Studio.</p>
-        <p><b>Status:</b> ${escapeHtml(st)} · ${escapeHtml(detail||'—')}</p>
-        <p><b>Docker:</b> ${dockerOk?'OK':'needs attention'} — ${escapeHtml(dockerLine)}</p>
-        <p class="muted" style="margin-top:8px;white-space:pre-wrap;font-size:11px;line-height:1.45">${escapeHtml(whyDocker)}</p>
+        <p id="studioAriaCopy" style="margin:0 0 10px;line-height:1.5">${escapeHtml(aria)}</p>
+        <p><b>Status:</b> <span id="studioPhaseLabel">${escapeHtml(ready?'READY':(setup.phase||st||'…'))}</span></p>
+        <p class="muted" id="studioSetupMessage" style="margin-top:6px">${escapeHtml(setup.message||setup.user_action||'')}</p>
       </div>
     </div>
-    ${foundBlock}
-    <ol class="guide-steps">
-      <li><b>Start Docker Desktop</b> on Windows — wait until it says Running (whale steady). Without this, Start Comfy fails with “error during connect”.</li>
-      <li><b>Start / Install Comfy</b> — pulls the sidecar image once. Stay on this page; status updates below.</li>
-      <li><b>Or skip Docker</b> — install <a href="https://github.com/comfyanonymous/ComfyUI" target="_blank" rel="noopener">ComfyUI portable</a>, run it on :8188, then Detect / Use this.</li>
-    </ol>
-    <p class="muted" id="comfyInstallStatus" style="margin-top:10px;white-space:pre-wrap"></p>
+    ${stepHtml}
+    <p class="muted" id="comfyInstallStatus" style="margin-top:10px;white-space:pre-wrap">${escapeHtml(setup.error||'')}</p>
     <div class="hud-cta-row" style="margin-top:14px">
-      <button type="button" class="hud-cta primary" id="comfyStartBtn" onclick="otSfx('ok');startComfySidecar()">${dockerOk?'Start / Install Comfy':'Start Comfy (after Docker)'}</button>
-      <button type="button" class="hud-cta" onclick="otSfx('click');showVideoStudioSetup()">Detect again</button>
-      <button type="button" class="hud-cta" onclick="otSfx('click');showExpansionSurface('creative')">Open Muse room</button>
+      ${ready
+        ?`<button type="button" class="hud-cta primary" onclick="otSfx('ok');showExpansionSurface('creative')">Open Video Studio</button>`
+        :`<button type="button" class="hud-cta primary" id="comfyStartBtn" onclick="otSfx('ok');startStudioSetup()">${setup.running?'Working…':'Set Up Video Studio'}</button>`}
+      <button type="button" class="hud-cta" onclick="otSfx('click');showVideoStudioSetup()">Refresh</button>
       <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
     </div>
-    <details style="margin-top:16px">
-      <summary style="cursor:pointer;color:var(--ot-muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase">Advanced — paste URL</summary>
-      <label style="display:block;margin:12px 0 6px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ot-muted)">ComfyUI URL</label>
-      <input id="comfyUrl" value="${escapeHtml(ep)}" style="width:100%;max-width:520px;padding:10px;background:#020508;border:1px solid rgba(46,230,214,.35);color:var(--ot-text);font:inherit">
-      <div class="hud-cta-row" style="margin-top:10px">
-        <button type="button" class="hud-cta" onclick="otSfx('ok');saveComfyUrl()">Save &amp; probe</button>
+    <details style="margin-top:18px">
+      <summary style="cursor:pointer;color:var(--ot-muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase">Advanced · Diagnostics</summary>
+      <div style="margin-top:12px;font-size:12px;line-height:1.5" class="muted">
+        <p style="margin:0 0 6px"><b>ComfyUI</b> · <code>${escapeHtml(ep||'—')}</code></p>
+        <p style="margin:0 0 6px"><b>Source</b> · ${escapeHtml(src||'—')}</p>
+        <p style="margin:0 0 10px"><b>Docker</b> · ${escapeHtml(((diag.docker||{}).detail)||((diag.docker||{}).status)||'—')}</p>
+        <details>
+          <summary style="cursor:pointer">Troubleshooting · Manual ComfyUI setup</summary>
+          <ol class="guide-steps" style="margin-top:10px">
+            <li>Only if automatic Setup cannot finish.</li>
+            <li>Install Docker Desktop (WSL2) or run ComfyUI yourself on port 8188.</li>
+            <li>Paste an endpoint below to override detection.</li>
+          </ol>
+          <label style="display:block;margin:12px 0 6px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ot-muted)">Endpoint override</label>
+          <input id="comfyUrl" value="${escapeHtml(ep||'http://127.0.0.1:8188')}" style="width:100%;max-width:520px;padding:10px;background:#020508;border:1px solid rgba(46,230,214,.35);color:var(--ot-text);font:inherit">
+          <div class="hud-cta-row" style="margin-top:10px">
+            <button type="button" class="hud-cta" onclick="otSfx('ok');saveComfyUrl()">Save override</button>
+          </div>
+          <pre id="studioDiagRaw" style="margin-top:12px;max-height:180px;overflow:auto;font-size:10px;white-space:pre-wrap">${escapeHtml(JSON.stringify(diag,null,2))}</pre>
+        </details>
       </div>
-      <p class="muted" style="margin-top:8px;font-size:11px">Keep-style GPU Comfy on :8199 is auto-detected if already running.</p>
     </details>
   </section>
   <p class="home-foot">Otaconskeep Expansion · Studio</p>
 </div>`;
+  if(setup.running) startStudioSetupPoll();
 }
+function renderStudioSetupProgress(setup){
+  if(!setup) return;
+  const ariaEl=document.getElementById('studioAriaCopy');
+  const msgEl=document.getElementById('studioSetupMessage');
+  const phaseEl=document.getElementById('studioPhaseLabel');
+  const errEl=document.getElementById('comfyInstallStatus');
+  const stepsEl=document.getElementById('studioSetupSteps');
+  if(ariaEl&&setup.aria) ariaEl.textContent=setup.aria;
+  if(msgEl) msgEl.textContent=setup.message||setup.user_action||'';
+  if(phaseEl) phaseEl.textContent=setup.phase||'…';
+  if(errEl) errEl.textContent=setup.error||'';
+  if(stepsEl&&Array.isArray(setup.steps)){
+    stepsEl.innerHTML=setup.steps.map(s=>
+      `<li style="margin:6px 0">${s.done?'✓':'○'} ${escapeHtml(s.label||s.id||'')}</li>`
+    ).join('');
+  }
+  const btn=document.getElementById('comfyStartBtn');
+  if(btn) btn.disabled=!!setup.running;
+}
+function startStudioSetupPoll(){
+  if(window.__studioPoll) clearInterval(window.__studioPoll);
+  window.__studioPoll=setInterval(async()=>{
+    try{
+      const s=await apiGet('/api/expansion/video-studio/setup-status', 6000);
+      renderStudioSetupProgress(s);
+      if(s.phase==='READY'||s.ok){
+        clearInterval(window.__studioPoll);
+        window.__studioPoll=null;
+        otSfx('ok');
+        await loadCapabilities();
+        showVideoStudioSetup();
+      }else if(!s.running&&(s.phase==='FAILED'||s.phase==='DOCKER_MISSING'||s.phase==='DEGRADED')){
+        clearInterval(window.__studioPoll);
+        window.__studioPoll=null;
+        otSfx('error');
+        const btn=document.getElementById('comfyStartBtn');
+        if(btn){ btn.disabled=false; btn.textContent='Set Up Video Studio'; }
+      }
+    }catch(_e){}
+  },2500);
+}
+async function startStudioSetup(){
+  const el=document.getElementById('comfyInstallStatus');
+  const btn=document.getElementById('comfyStartBtn');
+  if(btn){ btn.disabled=true; btn.textContent='Working…'; }
+  if(el) el.textContent='';
+  try{
+    const r=await api('/api/expansion/video-studio/setup',{}, 20000);
+    const s=r&&r.data||{};
+    renderStudioSetupProgress(s);
+    if(s.phase==='READY'||s.ok||s.action==='already_ready'){
+      otSfx('ok');
+      await loadCapabilities();
+      showVideoStudioSetup();
+      return;
+    }
+    startStudioSetupPoll();
+  }catch(e){
+    otSfx('error');
+    if(el) el.textContent=String(e&&e.message||e);
+    if(btn){ btn.disabled=false; btn.textContent='Set Up Video Studio'; }
+  }
+}
+/** @deprecated use startStudioSetup — kept for floor buttons / older tips */
+async function startComfySidecar(){ return startStudioSetup(); }
 async function useDetectedComfy(endpoint){
   const el=document.getElementById('comfyUrl');
   if(el) el.value=endpoint;
@@ -1473,36 +1540,6 @@ async function useDetectedComfy(endpoint){
     document.body.appendChild(hidden);
   }
   await saveComfyUrl();
-}
-async function startComfySidecar(){
-  const el=document.getElementById('comfyInstallStatus');
-  const btn=document.getElementById('comfyStartBtn');
-  if(btn) btn.disabled=true;
-  if(el) el.textContent='Checking Docker, then starting Comfy (first image pull can take several minutes)…';
-  try{
-    const r=await api('/api/expansion/video-studio/start',{}, 320000);
-    await loadCapabilities();
-    if(r&&r.ok&&r.data&&r.data.ok){
-      otSfx('ok');
-      if(el) el.textContent='Comfy '+(r.data.action||'ready')+': '+(r.data.endpoint||'')+' · '+((r.data.state)||'');
-      if(String(r.data.state||'').toUpperCase()==='READY') showExpansionSurface('creative');
-      else showVideoStudioSetup();
-    }else{
-      otSfx('error');
-      const d=r&&r.data||{};
-      const msg=[d.hint,d.error,d.action].filter(Boolean).join('\n\n')||'Start failed';
-      if(el){ el.textContent=msg; if(btn) btn.disabled=false; }
-      else{
-        alert(msg);
-        showVideoStudioSetup();
-      }
-    }
-  }catch(e){
-    otSfx('error');
-    const msg='Start failed: '+String(e&&e.message||e);
-    if(el){ el.textContent=msg; if(btn) btn.disabled=false; }
-    else{ alert(msg); showVideoStudioSetup(); }
-  }
 }
 async function saveComfyUrl(){
   const el=document.getElementById('comfyUrl');
@@ -1515,10 +1552,7 @@ async function saveComfyUrl(){
       const st=(r.data&&r.data.state)||capStatus('video');
       otSfx('ok');
       if(String(st).toUpperCase()==='READY'||st==='ready') showExpansionSurface('creative');
-      else{
-        alert('Saved. Video Studio state: '+st);
-        showVideoStudioSetup();
-      }
+      else showVideoStudioSetup();
     }else{
       alert((r&&r.data&&r.data.error)||'Save failed');
     }

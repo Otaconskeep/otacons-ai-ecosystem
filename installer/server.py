@@ -930,6 +930,7 @@ class Handler(BaseHTTPRequestHandler):
             '/api/expansion/voice-trainer/install',
             '/api/expansion/video-studio/config',
             '/api/expansion/video-studio/start',
+            '/api/expansion/video-studio/setup',
             '/api/expansion/pages/register',
             '/api/expansion/rex/transition',
             '/api/expansion/rex/queue',

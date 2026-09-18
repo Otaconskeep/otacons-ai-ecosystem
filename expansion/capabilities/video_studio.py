@@ -110,11 +110,7 @@ def probe_video_studio(layout: Optional[StateLayout] = None) -> CapabilityReport
     if not endpoint:
         return CapabilityReport(
             CAPABILITY_ID, OWNER_AGENT, CapabilityState.NOT_CONFIGURED.value,
-            detail=(
-                'Expansion Video Studio (premium) — set OTACON_COMFYUI_URL or '
-                'preferences/video_studio.json endpoint to a reachable ComfyUI. '
-                'core.video contracts alone are not a Studio.'
-            ),
+            detail='Video Studio is not connected yet. Use Set Up Video Studio to finish.',
             config_keys_present=keys, discovery=disc,
         )
 

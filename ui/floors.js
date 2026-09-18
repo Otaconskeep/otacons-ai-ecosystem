@@ -1059,13 +1059,10 @@
         pill(state || 'NOT_CONFIGURED', 'warn') +
         '<p class="fl-note">' + esc(d.honest_note || '') + '</p>' +
         '<p class="muted">' + esc(vs.detail || vs.note || vs.message || d.note ||
-          'Set a ComfyUI URL to go READY.') + '</p>' +
-        '<label>ComfyUI URL</label>' +
-        '<input id="fl-comfy-url" value="http://127.0.0.1:8188" style="width:100%;max-width:420px;padding:.4rem;margin:.4rem 0">' +
+          'Set up Video Studio to go READY.') + '</p>' +
         '<div class="fl-rail">' +
-        btn('Detect Comfy', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", false) +
-        btn('Start Comfy', "typeof startComfySidecar==='function'&&startComfySidecar()", false) +
-        btn('Open setup', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", true) +
+        btn('Set Up Video Studio', "typeof startStudioSetup==='function'?startStudioSetup():(typeof showVideoStudioSetup==='function'&&showVideoStudioSetup())", true) +
+        btn('Open setup', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", false) +
         '</div></div>';
     } else {
       studio = '<div class="fl-panel"><h3 class="fl-h">Video Studio</h3>' +
