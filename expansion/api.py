@@ -20,6 +20,15 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'discovery': report.discovery,
         })
         return True
+    if path == '/api/expansion/voice-trainer/train-status':
+        from expansion.capabilities.voice_trainer import genome_train_status, probe_voice_trainer
+        report = probe_voice_trainer()
+        send_json({
+            'train': genome_train_status(),
+            'state': report.state,
+            'discovery': report.discovery,
+        })
+        return True
     if path == '/api/expansion/command':
         from expansion.floors import build_command_floor
         from expansion.runtime import ExpansionRuntime
@@ -381,8 +390,8 @@ def handle_expansion_get(path: str, send_json) -> bool:
 
 def handle_expansion_post(path: str, data: dict, send_json) -> bool:
     if path == '/api/expansion/voice-trainer/start':
-        from expansion.capabilities.voice_trainer import ensure_voice_trainer_ui, probe_voice_trainer
-        result = ensure_voice_trainer_ui()
+        from expansion.capabilities.voice_trainer import ensure_genome, probe_voice_trainer
+        result = ensure_genome(auto_install=True)
         report = probe_voice_trainer()
         send_json({
             **result,
@@ -399,6 +408,22 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             **result,
             'state': report.state,
             'detail': report.detail,
+            'discovery': report.discovery,
+        })
+        return True
+    if path == '/api/expansion/voice-trainer/train':
+        from expansion.capabilities.voice_trainer import start_genome_train, probe_voice_trainer
+        name = str((data or {}).get('name') or '').strip()
+        urls = (data or {}).get('urls') or []
+        if isinstance(urls, str):
+            urls = [u.strip() for u in urls.splitlines() if u.strip()]
+        else:
+            urls = [str(u).strip() for u in urls if str(u).strip()]
+        result = start_genome_train(name=name, urls=urls)
+        report = probe_voice_trainer()
+        send_json({
+            **result,
+            'state': report.state,
             'discovery': report.discovery,
         })
         return True

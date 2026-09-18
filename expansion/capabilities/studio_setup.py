@@ -52,6 +52,10 @@ _ACTIVE_STATES = frozenset({
 _LOCK = threading.Lock()
 _WORKER: threading.Thread | None = None
 
+# Stuck INSTALLING_COMFY with no docker provision → retry/fail.
+_INSTALL_STALE_SEC = 30.0
+_INSTALL_MAX_DISPATCH = 2
+
 # Progress checklist keys shown in the UI (human, ordered).
 _CHECKLIST_ORDER = (
     ('docker', 'Docker ready'),
@@ -62,6 +66,23 @@ _CHECKLIST_ORDER = (
     ('config', 'Configuration saved'),
     ('components', 'Required components verified'),
 )
+
+_INSTALL_IDLE = 'idle'
+_INSTALL_REQUESTED = 'requested'
+_INSTALL_STARTED = 'started'
+_INSTALL_COMPLETED = 'completed'
+_INSTALL_FAILED = 'failed'
+
+
+def _default_install_action() -> dict[str, Any]:
+    return {
+        'status': _INSTALL_IDLE,
+        'error': '',
+        'requested_at': 0.0,
+        'started_at': 0.0,
+        'completed_at': 0.0,
+        'dispatch_attempts': 0,
+    }
 
 
 def _setup_path(layout: Optional[StateLayout] = None) -> Path:
@@ -86,7 +107,12 @@ def _default_state() -> dict[str, Any]:
         'checklist_labels': {k: label for k, label in _CHECKLIST_ORDER},
         'updated_at': 0.0,
         'attempt': 0,
+        # True when ensure_comfy_sidecar / docker compose up is actually invoked.
         'docker_launch_tried': False,
+        # True when Docker Desktop launch was attempted (WSL path).
+        'desktop_launch_tried': False,
+        'install_action': _default_install_action(),
+        'installing_since': 0.0,
         'managed': True,
     }
 
@@ -104,6 +130,15 @@ def load_setup_state(layout: Optional[StateLayout] = None) -> dict[str, Any]:
             for k, v in data.items():
                 if k not in base:
                     base[k] = v
+            ia = data.get('install_action')
+            if isinstance(ia, dict):
+                merged = _default_install_action()
+                merged.update({k: ia[k] for k in merged if k in ia})
+                base['install_action'] = merged
+            # Back-compat: older tips used docker_launch_tried for Desktop.
+            if 'desktop_launch_tried' not in data and data.get('docker_launch_tried'):
+                # Ambiguous — do not invent Desktop history; leave False.
+                pass
     except (json.JSONDecodeError, OSError):
         pass
     return base
@@ -274,10 +309,161 @@ def _prefer_endpoint(layout: Optional[StateLayout] = None) -> dict[str, Any]:
     }
 
 
+def _worker_alive() -> bool:
+    return _WORKER is not None and _WORKER.is_alive()
+
+
+def _mark_install_action(
+    state: dict[str, Any],
+    status: str,
+    *,
+    error: str = '',
+    layout: Optional[StateLayout] = None,
+) -> dict[str, Any]:
+    ia = dict(state.get('install_action') or _default_install_action())
+    now = time.time()
+    ia['status'] = status
+    if status == _INSTALL_REQUESTED:
+        ia['requested_at'] = now
+        ia['error'] = ''
+        ia['dispatch_attempts'] = int(ia.get('dispatch_attempts') or 0) + 1
+    elif status == _INSTALL_STARTED:
+        ia['started_at'] = now
+        ia['error'] = ''
+    elif status == _INSTALL_COMPLETED:
+        ia['completed_at'] = now
+        ia['error'] = ''
+    elif status == _INSTALL_FAILED:
+        ia['completed_at'] = now
+        if error:
+            ia['error'] = error[:2000]
+    state['install_action'] = ia
+    return save_setup_state(state, layout=layout)
+
+
+def _transition_to_installing_comfy(
+    state: dict[str, Any],
+    layout: StateLayout,
+    *,
+    aria: str,
+    message: str,
+) -> dict[str, Any]:
+    """Atomic enter INSTALLING_COMFY: request → accept → expose phase.
+
+    Never leave phase=INSTALLING_COMFY without install_action started and
+    docker_launch_tried=True (caller must invoke provision immediately after).
+    """
+    state = _mark_install_action(state, _INSTALL_REQUESTED, layout=layout)
+    state = load_setup_state(layout)
+    # Accept dispatch in-process (same worker that will call ensure_comfy).
+    state['docker_launch_tried'] = True
+    state['installing_since'] = time.time()
+    state = _mark_install_action(state, _INSTALL_STARTED, layout=layout)
+    state = load_setup_state(layout)
+    return _set_phase(
+        state,
+        INSTALLING_COMFY,
+        aria=aria,
+        message=message,
+        layout=layout,
+    )
+
+
+def _fail_install_did_not_start(
+    state: dict[str, Any],
+    layout: StateLayout,
+    *,
+    detail: str = '',
+) -> dict[str, Any]:
+    err = 'ComfyUI installation did not start'
+    if detail:
+        err = f'{err}: {detail}'
+    state = _mark_install_action(state, _INSTALL_FAILED, error=err, layout=layout)
+    state = load_setup_state(layout)
+    state['running'] = False
+    return _set_phase(
+        state,
+        FAILED,
+        aria=(
+            "I couldn't start installing ComfyUI. "
+            "Open Diagnostics for the technical detail, then click Set Up again."
+        ),
+        message=err,
+        error=err,
+        technical=detail or err,
+        user_action='Click Set Up Video Studio again after Docker is Running.',
+        layout=layout,
+    )
+
+
+def _heal_stale_installing(layout: StateLayout, state: dict[str, Any]) -> dict[str, Any]:
+    """Watchdog: INSTALLING_COMFY without a real docker launch must not stick."""
+    if state.get('phase') != INSTALLING_COMFY:
+        return state
+    if state.get('docker_launch_tried'):
+        return state
+    if _worker_alive():
+        return state
+
+    ia = state.get('install_action') or {}
+    anchor = float(
+        ia.get('requested_at')
+        or state.get('installing_since')
+        or state.get('updated_at')
+        or 0.0
+    )
+    age = time.time() - anchor if anchor else _INSTALL_STALE_SEC + 1.0
+    if age < _INSTALL_STALE_SEC:
+        return state
+
+    attempts = int(ia.get('dispatch_attempts') or 0)
+    # Bound retries via start_studio_setup; fail hard after max.
+    if attempts >= _INSTALL_MAX_DISPATCH:
+        return _fail_install_did_not_start(
+            state,
+            layout,
+            detail=f'stale {age:.0f}s without docker_launch_tried after {attempts} dispatch attempts',
+        )
+
+    # Re-dispatch (start_studio_setup preserves/increments dispatch_attempts).
+    try:
+        start_studio_setup(layout=layout, force=False, background=True)
+    except Exception as exc:  # noqa: BLE001
+        return _fail_install_did_not_start(state, layout, detail=repr(exc))
+    return load_setup_state(layout)
+
+
 def setup_status(layout: Optional[StateLayout] = None) -> dict[str, Any]:
     """Snapshot for UI poll — merges live probe when already READY."""
     layout = layout or resolve_layout()
     state = load_setup_state(layout)
+
+    # Heal persisted running=true with dead worker (Cristo stuck INSTALLING_COMFY).
+    if state.get('running') and not _worker_alive() and state.get('phase') in _ACTIVE_STATES:
+        if state.get('phase') == INSTALLING_COMFY and not state.get('docker_launch_tried'):
+            state = _heal_stale_installing(layout, state)
+        else:
+            # Worker died mid-flight with a real attempt — surface failure rather than spin.
+            age = time.time() - float(state.get('updated_at') or 0.0)
+            if age > max(_INSTALL_STALE_SEC * 4, 120.0) and state.get('phase') != READY:
+                state['running'] = False
+                if not state.get('error'):
+                    state['error'] = 'Setup worker stopped unexpectedly'
+                state = _set_phase(
+                    state,
+                    FAILED,
+                    aria=(
+                        "Video Studio setup stopped unexpectedly. "
+                        "Click Set Up Video Studio to try again."
+                    ),
+                    message=state.get('error') or 'Setup interrupted',
+                    error=state.get('error') or 'Setup worker stopped unexpectedly',
+                    layout=layout,
+                )
+            else:
+                state['running'] = False
+                state = save_setup_state(state, layout=layout)
+
     live = probe_video_studio(layout)
     docker = probe_docker_engine(timeout=4.0)
     found = _prefer_endpoint(layout)
@@ -309,6 +495,8 @@ def setup_status(layout: Optional[StateLayout] = None) -> dict[str, Any]:
         'compose': str(compose_file()),
         'ports': list(DEFAULT_PORTS),
         'desktop_installed': docker_desktop_installed(),
+        'install_action': state.get('install_action') or _default_install_action(),
+        'worker_alive': _worker_alive(),
     }
     return {
         **state,
@@ -339,14 +527,21 @@ def start_studio_setup(
             return {**st, 'action': 'already_ready'}
 
         # In-process dedupe: prefer live worker over persisted flags (avoids races).
-        if _WORKER is not None and _WORKER.is_alive():
+        if _worker_alive():
             return {**setup_status(layout), 'action': 'already_running'}
 
         state['attempt'] = int(state.get('attempt') or 0) + 1
         state['running'] = True
         state['error'] = ''
         state['technical'] = ''
+        # Reset provision flags for a fresh attempt (Desktop flag cleared too).
+        # Preserve dispatch_attempts so the INSTALLING_COMFY watchdog can bound retries.
+        prior_dispatch = int((state.get('install_action') or {}).get('dispatch_attempts') or 0)
         state['docker_launch_tried'] = False
+        state['desktop_launch_tried'] = False
+        state['installing_since'] = 0.0
+        state['install_action'] = _default_install_action()
+        state['install_action']['dispatch_attempts'] = prior_dispatch
         state = _set_phase(
             state,
             CHECKING,
@@ -363,6 +558,8 @@ def start_studio_setup(
                 _orchestrate(layout)
             except Exception as exc:  # noqa: BLE001
                 st = load_setup_state(layout)
+                _mark_install_action(st, _INSTALL_FAILED, error=str(exc), layout=layout)
+                st = load_setup_state(layout)
                 _set_phase(
                     st,
                     FAILED,
@@ -376,6 +573,13 @@ def start_studio_setup(
         if background:
             _WORKER = threading.Thread(target=_run, daemon=True, name='studio-setup')
             _WORKER.start()
+            # Verify worker accepted before callers treat setup as in-flight.
+            if not _worker_alive():
+                st = load_setup_state(layout)
+                st = _fail_install_did_not_start(
+                    st, layout, detail='background worker thread failed to start',
+                )
+                return {**setup_status(layout), 'action': 'dispatch_failed'}
             return {**setup_status(layout), 'action': 'started'}
 
         _run()
@@ -412,9 +616,10 @@ def _wait_docker_ready(
             )
             return False, docker
 
-        if not launched and not state.get('docker_launch_tried'):
+        if not launched and not state.get('desktop_launch_tried'):
             launch = try_start_docker_desktop()
-            state['docker_launch_tried'] = True
+            state['desktop_launch_tried'] = True
+            # Keep docker_launch_tried for Comfy provision only — do not set here.
             launched = bool(launch.get('ok'))
             state = _set_phase(
                 state,
@@ -524,20 +729,41 @@ def _orchestrate(layout: StateLayout) -> None:
             checklist_key='comfy_install',
             layout=layout,
         )
+        # Still an actionable docker launch — mark before ensure.
+        state = _mark_install_action(state, _INSTALL_REQUESTED, layout=layout)
+        state = load_setup_state(layout)
+        state['docker_launch_tried'] = True
+        state = _mark_install_action(state, _INSTALL_STARTED, layout=layout)
+        state = load_setup_state(layout)
     else:
-        state = _set_phase(
+        state = _transition_to_installing_comfy(
             state,
-            INSTALLING_COMFY,
+            layout,
             aria=(
-                "I'm setting up Video Studio now. The first launch takes a little longer "
-                "because I'm downloading the Studio components."
+                "Docker is ready. I'm setting up ComfyUI now — "
+                "pulling the image and creating the otacon-comfyui container."
             ),
             message='Installing ComfyUI…',
-            layout=layout,
         )
 
-    # Idempotent compose up (also starts stopped managed container)
-    result = ensure_comfy_sidecar(wait_sec=90.0, layout=layout)
+    # Immediate provision — INSTALLING_COMFY is never display-only.
+    try:
+        result = ensure_comfy_sidecar(wait_sec=90.0, layout=layout)
+    except Exception as exc:  # noqa: BLE001
+        state = load_setup_state(layout)
+        _mark_install_action(state, _INSTALL_FAILED, error=str(exc), layout=layout)
+        state = load_setup_state(layout)
+        _set_phase(
+            state,
+            FAILED,
+            aria="I couldn't start ComfyUI. Open Diagnostics for the Docker error.",
+            message='ComfyUI provision failed.',
+            error=str(exc),
+            technical=repr(exc),
+            layout=layout,
+        )
+        return
+
     state = load_setup_state(layout)
     if not result.get('ok'):
         action = result.get('action') or 'failed'
@@ -545,12 +771,18 @@ def _orchestrate(layout: StateLayout) -> None:
         tech = result.get('error') or ''
         # Daemon dropped mid-flight — re-enter wait rather than hard fail when Desktop exists
         if action in ('daemon_down', 'docker_daemon_down', 'missing', 'daemon_timeout'):
-            state['docker_launch_tried'] = False
+            state['desktop_launch_tried'] = False
             ok2, _ = _wait_docker_ready(state, layout, timeout_sec=120.0)
             if ok2:
+                state = load_setup_state(layout)
+                state['docker_launch_tried'] = True
+                state = save_setup_state(state, layout=layout)
                 result = ensure_comfy_sidecar(wait_sec=90.0, layout=layout)
                 state = load_setup_state(layout)
         if not result.get('ok'):
+            err = hint if hint else (result.get('error') or 'ComfyUI install failed')
+            _mark_install_action(state, _INSTALL_FAILED, error=err, layout=layout)
+            state = load_setup_state(layout)
             _set_phase(
                 state,
                 FAILED,
@@ -565,6 +797,9 @@ def _orchestrate(layout: StateLayout) -> None:
                 layout=layout,
             )
             return
+
+    _mark_install_action(state, _INSTALL_COMPLETED, layout=layout)
+    state = load_setup_state(layout)
 
     endpoint = (result.get('endpoint') or DEFAULT_ENDPOINT).rstrip('/')
     state = _set_phase(
@@ -589,13 +824,13 @@ def _orchestrate(layout: StateLayout) -> None:
         if not ok:
             _set_phase(
                 state,
-                DEGRADED,
+                FAILED,
                 aria=(
-                    "Studio's service started but ComfyUI isn't answering yet. "
-                    "I'll keep this page ready — click Set Up again in a minute."
+                    "Studio's container started but ComfyUI never became healthy "
+                    "(startup timeout). Check docker logs otacon-comfyui, then Set Up again."
                 ),
-                message='ComfyUI is starting slowly.',
-                error=detail,
+                message='ComfyUI startup timeout.',
+                error=f'endpoint never healthy: {detail}',
                 technical=detail,
                 layout=layout,
             )

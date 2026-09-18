@@ -62,6 +62,8 @@ def main() -> int:
          "Codec noise strip + TX/RX meters", fails)
     must("showGenomeSetup" in js and "installGenome" in js and "voice-trainer/install" in js and "Fix-Otacon-GPU" in js,
          "Aria-guided Genome install button + GPU fix path", fails)
+    must("startGenomeTrain" in js and "voice-trainer/train" in js,
+         "Genome real train form (YouTube → Piper) wired", fails)
     must("showVideoStudioSetup" in js,
          "Aria-guided Studio setup", fails)
     must("startComfySidecar" in js and "startStudioSetup" in js and "video-studio/setup" in js,

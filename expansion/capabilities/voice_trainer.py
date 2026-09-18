@@ -1,21 +1,28 @@
 """Genome Voice Trainer — Expansion premium capability.
 
 Genome is part of the Expansion premium product. Status is honest:
-  ready         — UI listening on :8765
+  ready         — trainer UI listening on :8765
   offline       — installed (dir/image) but not listening
   unavailable   — no usable NVIDIA GPU
   not_configured — not installed yet
+
+The :8765 UI is an actionable trainer (YouTube → Piper), not a static
+"Voice Trainer ready" instruction page.
 """
 from __future__ import annotations
 
 import os
-import shutil
 import socket
 import subprocess
+import threading
 from pathlib import Path
-from typing import Optional
 
 from expansion.capabilities import CapabilityReport, CapabilityState
+from expansion.capabilities.genome_ui import (
+    ensure_genome_ui,
+    start_train_job,
+    train_state,
+)
 
 CAPABILITY_ID = 'voice_trainer'
 OWNER_AGENT = 'aria'
@@ -76,6 +83,8 @@ def _docker_image_present() -> bool:
         return r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
 def probe_voice_trainer() -> CapabilityReport:
     home = _vt_home()
     installed = home.is_dir() and any(home.iterdir())
@@ -91,20 +100,20 @@ def probe_voice_trainer() -> CapabilityReport:
         'docker_image': image,
         'premium': True,
         'product': 'expansion',
+        'train': train_state(),
     }
     keys = [k for k, v in (('path', installed), ('docker_image', image), ('listening', live), ('gpu', gpu)) if v]
 
     if live:
         return CapabilityReport(
             CAPABILITY_ID, OWNER_AGENT, CapabilityState.READY.value,
-            detail='Genome Voice Trainer UI listening (Expansion premium).',
+            detail='Genome Voice Trainer listening — open to train a voice (YouTube → Piper).',
             config_keys_present=keys, discovery=disc,
         )
     if installed or image:
-        # Installed but UI down — Start is valid even if nvidia-smi is flaky in WSL.
         return CapabilityReport(
             CAPABILITY_ID, OWNER_AGENT, CapabilityState.DEGRADED.value,
-            detail='Genome installed but UI not listening on :8765 — Start Genome (WSL GPU optional for UI).',
+            detail='Genome installed but trainer UI not on :8765 — Start Genome.',
             config_keys_present=keys, discovery=disc,
         )
     if not gpu:
@@ -125,34 +134,8 @@ def probe_voice_trainer() -> CapabilityReport:
 
 
 def ensure_voice_trainer_ui(port: int = DEFAULT_PORT) -> dict:
-    """Best-effort start of the Genome status UI if installed and not listening."""
-    home = _vt_home()
-    ui = home / 'ui'
-    if _port_listening(port):
-        return {'ok': True, 'action': 'already_listening', 'url': f'http://127.0.0.1:{port}/'}
-    if not ui.is_dir():
-        return {'ok': False, 'action': 'missing_ui', 'path': str(home)}
-    log = Path('/tmp/otacon-vt-ui.log')
-    try:
-        proc = subprocess.Popen(
-            ['python3', '-m', 'http.server', str(port), '--bind', '127.0.0.1'],
-            cwd=str(ui),
-            stdout=open(log, 'ab'),
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    except OSError as exc:
-        return {'ok': False, 'action': 'start_failed', 'error': str(exc)}
-    import time
-    time.sleep(0.8)
-    live = _port_listening(port)
-    return {
-        'ok': live,
-        'action': 'started' if live else 'start_pending',
-        'pid': proc.pid,
-        'url': f'http://127.0.0.1:{port}/' if live else '',
-        'log': str(log),
-    }
+    """Start the actionable Genome trainer UI (form + /api/train), not a static page."""
+    return ensure_genome_ui(port=port)
 
 
 _INSTALL_MARKER = Path('/tmp/otacon-genome-install.status')
@@ -179,6 +162,47 @@ def genome_install_status() -> dict:
         'marker': marker,
         'log': str(_INSTALL_LOG) if _INSTALL_LOG.is_file() else '',
         'gpu': _gpu_usable(),
+        'train': train_state(),
+    }
+
+
+def start_genome_train(*, name: str, urls: list[str]) -> dict:
+    """Public train entry — Expansion API and Genome UI both use this."""
+    return start_train_job(name=name, urls=list(urls or []))
+
+
+def genome_train_status() -> dict:
+    return train_state()
+
+
+def ensure_genome(*, auto_install: bool = True) -> dict:
+    """Autonomous path: install if needed (GPU), then start trainer UI."""
+    report = probe_voice_trainer()
+    home = _vt_home()
+    installed = home.is_dir() and any(home.iterdir())
+    if report.state == CapabilityState.READY.value:
+        return {
+            'ok': True,
+            'action': 'ready',
+            'url': (report.discovery or {}).get('url'),
+            'state': report.state,
+        }
+    if not installed and auto_install and _gpu_usable():
+        inst = install_voice_trainer()
+        if not inst.get('ok') and inst.get('action') not in (
+            'installing', 'already_installed', 'installed',
+        ):
+            return {**inst, 'state': probe_voice_trainer().state}
+        if inst.get('action') == 'installing':
+            return {**inst, 'state': 'INSTALLING'}
+    if installed or _docker_image_present():
+        ui = ensure_voice_trainer_ui()
+        return {**ui, 'state': probe_voice_trainer().state}
+    return {
+        'ok': False,
+        'action': 'not_ready',
+        'state': report.state,
+        'detail': report.detail,
     }
 
 
@@ -186,7 +210,7 @@ def install_voice_trainer(*, wait_sec: float = 0.0) -> dict:
     """Install Genome Voice Trainer (same script Expansion uses when GPU is visible).
 
     Runs in the background by default so the UI does not hang on docker pulls.
-    Poll via genome_install_status() / capabilities until path exists.
+    After success, starts the actionable trainer UI automatically.
     """
     home = _vt_home()
     if home.is_dir() and any(home.iterdir()):
@@ -207,7 +231,6 @@ def install_voice_trainer(*, wait_sec: float = 0.0) -> dict:
                 'Run Fix-Otacon-GPU.bat, reopen Ubuntu, soft-update Expansion, then Install Genome again.'
             ),
         }
-    # Already installing?
     if _INSTALL_MARKER.is_file():
         try:
             st = _INSTALL_MARKER.read_text(encoding='utf-8', errors='replace').strip()
@@ -219,7 +242,7 @@ def install_voice_trainer(*, wait_sec: float = 0.0) -> dict:
                 'action': 'installing',
                 'path': str(home),
                 'log': str(_INSTALL_LOG),
-                'hint': 'Genome install already in progress — wait, then Start Genome.',
+                'hint': 'Genome install already in progress — wait; trainer UI opens when done.',
             }
 
     env = dict(os.environ)
@@ -261,7 +284,6 @@ def install_voice_trainer(*, wait_sec: float = 0.0) -> dict:
         except OSError:
             pass
 
-    import threading
     threading.Thread(target=_watch, daemon=True, name='genome-install').start()
 
     if wait_sec and wait_sec > 0:
@@ -284,7 +306,7 @@ def install_voice_trainer(*, wait_sec: float = 0.0) -> dict:
         'path': str(home),
         'log': str(_INSTALL_LOG),
         'hint': (
-            'Genome install started in the background (docker pull can take several minutes). '
-            'Stay on this page — Status flips when ~/otacon-voice-trainer appears, then click Start Genome.'
+            'Genome install started (docker image build can take several minutes). '
+            'Stay on this page — the trainer UI opens on :8765 when ready.'
         ),
     }

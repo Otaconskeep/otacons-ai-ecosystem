@@ -928,6 +928,7 @@ class Handler(BaseHTTPRequestHandler):
             '/api/expansion/jobs/create',
             '/api/expansion/voice-trainer/start',
             '/api/expansion/voice-trainer/install',
+            '/api/expansion/voice-trainer/train',
             '/api/expansion/video-studio/config',
             '/api/expansion/video-studio/start',
             '/api/expansion/video-studio/setup',

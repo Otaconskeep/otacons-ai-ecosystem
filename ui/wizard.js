@@ -1301,7 +1301,11 @@ async function startVoiceTrainer(){
     await loadCapabilities();
     if(r&&r.ok&&(r.data&&r.data.ok)){
       if(capStatus('voice_trainer')==='ready') openVoiceTrainer();
-      else alert('Genome start requested — wait a second and open Voice Trainer again.');
+      else if(r.data.action==='installing'){
+        showGenomeSetup();
+      }else{
+        alert('Genome start requested — wait a second and open Voice Trainer again.');
+      }
     }else{
       showGenomeSetup();
     }
@@ -1322,9 +1326,11 @@ async function showGenomeSetup(){
   const path=(state.capabilities&&state.capabilities.voice_trainer_path)||'~/otacon-voice-trainer';
   const disc=(state.capabilities&&state.capabilities.voice_trainer_discovery)||{};
   const gpuOk=!!(disc.gpu||(state.capabilities&&state.capabilities.voice_trainer_gpu));
+  const ready=st==='ready';
+  const offline=st==='offline';
   const whySkip=gpuOk
-    ?`GPU is visible now, but Genome was skipped at install time. Older Setup used a bare nvidia-smi check that missed WSL's /usr/lib/wsl/lib path (EXP_GENOME_STATE=no_gpu) even when Home SYSTEMS showed a card. Soft-update fixed that gate — this PC still needs the one-time install below.`
-    :`Expansion only auto-installs Genome when nvidia-smi works during Setup. Fix WSL GPU first (Fix-Otacon-GPU.bat), soft-update, then Install Genome.`;
+    ?`GPU is visible. Genome will install and open the trainer automatically when you click Setup / Start.`
+    :`Genome needs NVIDIA visible in WSL (nvidia-smi). Run Fix-Otacon-GPU.bat, reopen Ubuntu, soft-update, then Setup Genome.`;
   appRoot().innerHTML=`<div class="home">
   <header class="home-header"><div><p class="home-kicker">Expansion · Genome</p><h1 class="home-greeting">Voice Trainer</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
@@ -1333,28 +1339,77 @@ async function showGenomeSetup(){
       <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
       <div>
         <p class="sub" style="letter-spacing:.14em;text-transform:uppercase;color:var(--ot-cyan);font-size:10px;margin:0 0 8px">Aria // guiding</p>
-        <p style="margin:0 0 10px;line-height:1.5">You already have Expansion. Genome is the voice lab — GPU in WSL, then one install. Piper TTS for Codec still works without Genome.</p>
+        <p style="margin:0 0 10px;line-height:1.5">Genome clones a voice from YouTube into Piper (GPU). This is the real trainer — not a static install sheet.</p>
         <p><b>Status:</b> ${escapeHtml(st)}${gpuOk?' · GPU probe OK':''}</p>
         <p class="muted">${escapeHtml(note)}</p>
         <p class="muted" style="margin-top:8px;white-space:pre-wrap;font-size:11px;line-height:1.45">${escapeHtml(whySkip)}</p>
       </div>
     </div>
+    ${ready||offline?`
+    <div class="guide-steps" style="list-style:none;padding:0">
+      <p class="eyebrow" style="letter-spacing:.14em;text-transform:uppercase;font-size:10px;color:var(--ot-cyan)">Train a voice</p>
+      <label class="muted" style="display:block;margin:8px 0 4px;font-size:11px">Voice name</label>
+      <input id="genomeVoiceName" type="text" placeholder="e.g. mei_ling" style="width:100%;max-width:420px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:inherit;font:inherit">
+      <label class="muted" style="display:block;margin:12px 0 4px;font-size:11px">YouTube URL(s) — one per line</label>
+      <textarea id="genomeVoiceUrls" rows="3" placeholder="https://www.youtube.com/watch?v=…" style="width:100%;max-width:520px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:inherit;font:inherit"></textarea>
+      <p class="muted" id="genomeTrainStatus" style="margin-top:8px;white-space:pre-wrap"></p>
+      <div class="hud-cta-row" style="margin-top:10px">
+        <button type="button" class="hud-cta primary" id="genomeTrainBtn" onclick="otSfx('ok');startGenomeTrain()">Start training</button>
+        <button type="button" class="hud-cta" onclick="otSfx('transmit');openVoiceTrainer()">Open trainer :8765</button>
+      </div>
+    </div>`:`
     <ol class="guide-steps">
       <li><b>If WSL nvidia-smi fails</b> — run <code>Fix-Otacon-GPU.bat</code>, reopen Ubuntu, soft-update.</li>
-      <li><b>Install Genome</b> — click <b>Install Genome</b> below (same script Expansion uses). Docker pull can take several minutes.</li>
-      <li><b>Start the UI</b> — when status leaves <code>not_configured</code>, click Start Genome so <code>http://127.0.0.1:8765/</code> answers.</li>
-    </ol>
+      <li><b>Install Genome</b> — one click; Docker pulls the GPU trainer image.</li>
+      <li><b>Train</b> — when ready, this page shows the YouTube → Piper form (also on :8765).</li>
+    </ol>`}
     <p class="muted" style="margin-top:10px">Install path: <code>${escapeHtml(path)}</code></p>
     <p class="muted" id="genomeInstallStatus" style="margin-top:8px;white-space:pre-wrap"></p>
     <div class="hud-cta-row" style="margin-top:14px">
-      <button type="button" class="hud-cta primary" id="genomeInstallBtn" onclick="otSfx('ok');installGenome()">${st==='not_configured'||st==='unavailable'?'Install Genome':'Re-install Genome'}</button>
+      <button type="button" class="hud-cta primary" id="genomeInstallBtn" onclick="otSfx('ok');installGenome()">${st==='not_configured'||st==='unavailable'?'Install Genome':'Re-install / Start Genome'}</button>
       <button type="button" class="hud-cta" onclick="otSfx('ok');startVoiceTrainer()">Start Genome</button>
-      <button type="button" class="hud-cta" onclick="otSfx('transmit');openVoiceTrainer()">Open :8765</button>
       <button type="button" class="hud-cta" onclick="showHome()">Back to deck</button>
     </div>
   </section>
   <p class="home-foot">Otaconskeep Expansion · Genome</p>
 </div>`;
+  // Autonomous once per page visit: GPU + not installed → kick install; offline → start UI.
+  if(gpuOk && (st==='not_configured'||st==='offline') && !window.__genomeAutoKick){
+    window.__genomeAutoKick=true;
+    setTimeout(()=>{ startVoiceTrainer(); }, 400);
+  }
+}
+async function startGenomeTrain(){
+  const el=document.getElementById('genomeTrainStatus');
+  const btn=document.getElementById('genomeTrainBtn');
+  const name=(document.getElementById('genomeVoiceName')||{}).value||'';
+  const raw=(document.getElementById('genomeVoiceUrls')||{}).value||'';
+  const urls=String(raw).split(/\n/).map(s=>s.trim()).filter(Boolean);
+  if(btn) btn.disabled=true;
+  if(el) el.textContent='Starting GPU training job…';
+  try{
+    const r=await api('/api/expansion/voice-trainer/train',{name,urls});
+    if(el) el.textContent=(r.data&&(r.data.hint||r.data.error||r.data.action))||JSON.stringify(r.data||{});
+    if(!(r.ok&&r.data&&r.data.ok)){ if(btn) btn.disabled=false; otSfx('error'); return; }
+    otSfx('ok');
+    if(window.__genomeTrainPoll) clearInterval(window.__genomeTrainPoll);
+    window.__genomeTrainPoll=setInterval(async()=>{
+      try{
+        const s=await apiGet('/api/expansion/voice-trainer/train-status');
+        const t=(s.train)||{};
+        if(el) el.textContent='Job: '+(t.status||'?')+(t.name?(' · '+t.name):'')+(t.error?('\n'+t.error):'');
+        if(t.status==='completed'||t.status==='failed'||t.status==='idle'){
+          clearInterval(window.__genomeTrainPoll);
+          if(btn) btn.disabled=false;
+          if(t.status==='failed') otSfx('error');
+        }
+      }catch(_e){}
+    },4000);
+  }catch(err){
+    if(el) el.textContent=String(err&&err.message||err);
+    otSfx('error');
+    if(btn) btn.disabled=false;
+  }
 }
 async function installGenome(){
   const el=document.getElementById('genomeInstallStatus');
@@ -1375,8 +1430,11 @@ async function installGenome(){
           if(s.installed||st==='ready'||st==='offline'||(s.marker&&String(s.marker).startsWith('ok'))){
             clearInterval(window.__genomePoll);
             otSfx('ok');
-            if(el) el.textContent='Genome files present — click Start Genome.';
+            if(el) el.textContent='Genome ready — opening trainer…';
             if(btn) btn.disabled=false;
+            try{ await api('/api/expansion/voice-trainer/start',{}); }catch(_e){}
+            await loadCapabilities();
+            showGenomeSetup();
           }
           if(s.marker&&String(s.marker).startsWith('fail')){
             clearInterval(window.__genomePoll);

@@ -74,8 +74,140 @@ class StudioSetupOrchestratorTests(unittest.TestCase):
             st = ss.load_setup_state(self.layout)
             self.assertEqual(st['phase'], ss.READY)
             self.assertTrue(st['ok'])
+            self.assertTrue(st.get('docker_launch_tried'), 'Case A: provision must set docker_launch_tried')
+            self.assertEqual((st.get('install_action') or {}).get('status'), ss._INSTALL_COMPLETED)
             ensure.assert_called()
             save.assert_called()
+
+    def test_CaseB_healthy_managed_container_reused(self):
+        with mock.patch.object(ss, 'probe_video_studio', side_effect=[
+            self._not_ready(), self._ready(), self._ready(),
+        ]), \
+             mock.patch.object(ss, '_prefer_endpoint', return_value={
+                 'found': True, 'endpoint': 'http://127.0.0.1:8188', 'source': 'managed', 'detail': 'ok',
+             }), \
+             mock.patch.object(ss, 'ensure_comfy_sidecar') as ensure, \
+             mock.patch.object(ss, 'save_studio_endpoint') as save, \
+             mock.patch.object(ss, 'required_studio_assets', return_value=[]), \
+             mock.patch.object(ss, 'probe_docker_engine', return_value={'ok': True}):
+            ss.start_studio_setup(layout=self.layout, background=False)
+            st = ss.load_setup_state(self.layout)
+            self.assertEqual(st['phase'], ss.READY)
+            self.assertEqual(st.get('source'), 'managed')
+            ensure.assert_not_called()
+            save.assert_called_once()
+
+    def test_CaseC_healthy_external_endpoint_reused(self):
+        with mock.patch.object(ss, 'probe_video_studio', side_effect=[
+            self._not_ready(),
+            self._ready('http://127.0.0.1:8199'),
+            self._ready('http://127.0.0.1:8199'),
+        ]), \
+             mock.patch.object(ss, '_prefer_endpoint', return_value={
+                 'found': True, 'endpoint': 'http://127.0.0.1:8199', 'source': 'detected', 'detail': 'ok',
+             }), \
+             mock.patch.object(ss, 'ensure_comfy_sidecar') as ensure, \
+             mock.patch.object(ss, 'save_studio_endpoint') as save, \
+             mock.patch.object(ss, 'required_studio_assets', return_value=[]), \
+             mock.patch.object(ss, 'probe_docker_engine', return_value={'ok': True}):
+            ss.start_studio_setup(layout=self.layout, background=False)
+            st = ss.load_setup_state(self.layout)
+            self.assertEqual(st['phase'], ss.READY)
+            self.assertEqual(st.get('endpoint'), 'http://127.0.0.1:8199')
+            ensure.assert_not_called()
+            save.assert_called_once_with('http://127.0.0.1:8199', layout=self.layout)
+
+    def test_CaseD_dispatch_failure_not_infinite_installing(self):
+        with mock.patch.object(ss, 'probe_video_studio', return_value=self._not_ready()), \
+             mock.patch.object(ss, '_prefer_endpoint', return_value={'found': False}), \
+             mock.patch.object(ss, '_wait_docker_ready', return_value=(True, {'ok': True})), \
+             mock.patch.object(ss, '_managed_container_status', return_value={'exists': False, 'running': False}), \
+             mock.patch.object(ss, 'ensure_comfy_sidecar', side_effect=RuntimeError('compose up refused')), \
+             mock.patch.object(ss, 'probe_docker_engine', return_value={'ok': True}):
+            ss.start_studio_setup(layout=self.layout, background=False)
+            st = ss.load_setup_state(self.layout)
+            self.assertEqual(st['phase'], ss.FAILED)
+            self.assertTrue(st.get('docker_launch_tried'))
+            self.assertEqual((st.get('install_action') or {}).get('status'), ss._INSTALL_FAILED)
+            self.assertIn('compose up refused', (st.get('error') or '') + (st.get('technical') or ''))
+
+    def test_CaseE_endpoint_never_healthy_timeout(self):
+        clock = {'v': 1_000_000.0}
+
+        def tick():
+            return clock['v']
+
+        def bump(_sec):
+            clock['v'] += 100.0
+
+        with mock.patch.object(ss, 'probe_video_studio', return_value=self._not_ready()), \
+             mock.patch.object(ss, '_prefer_endpoint', return_value={'found': False}), \
+             mock.patch.object(ss, '_wait_docker_ready', return_value=(True, {'ok': True})), \
+             mock.patch.object(ss, '_managed_container_status', return_value={'exists': False, 'running': False}), \
+             mock.patch.object(ss, 'ensure_comfy_sidecar', return_value={
+                 'ok': True, 'endpoint': 'http://127.0.0.1:8188',
+             }), \
+             mock.patch.object(ss, 'comfy_endpoint_healthy', return_value=(False, 'connection refused')), \
+             mock.patch.object(ss, 'save_studio_endpoint'), \
+             mock.patch.object(ss.time, 'time', side_effect=tick), \
+             mock.patch.object(ss.time, 'sleep', side_effect=bump), \
+             mock.patch.object(ss, 'probe_docker_engine', return_value={'ok': True}):
+            ss.start_studio_setup(layout=self.layout, background=False)
+            st = ss.load_setup_state(self.layout)
+            self.assertEqual(st['phase'], ss.FAILED)
+            blob = (st.get('message') or '') + (st.get('error') or '') + (st.get('aria') or '')
+            self.assertTrue('timeout' in blob.lower() or 'healthy' in blob.lower())
+
+    def test_watchdog_stale_installing_without_docker_launch(self):
+        ss.save_setup_state({
+            **ss._default_state(),
+            'phase': ss.INSTALLING_COMFY,
+            'running': True,
+            'docker_launch_tried': False,
+            'updated_at': time.time() - 120,
+            'installing_since': time.time() - 120,
+            'install_action': {
+                **ss._default_install_action(),
+                'status': ss._INSTALL_REQUESTED,
+                'requested_at': time.time() - 120,
+                'dispatch_attempts': ss._INSTALL_MAX_DISPATCH,
+            },
+        }, layout=self.layout)
+        with mock.patch.object(ss, 'probe_video_studio', return_value=self._not_ready()), \
+             mock.patch.object(ss, 'probe_docker_engine', return_value={'ok': True}), \
+             mock.patch.object(ss, '_prefer_endpoint', return_value={'found': False}), \
+             mock.patch.object(ss, '_managed_container_status', return_value={}), \
+             mock.patch.object(ss, 'docker_desktop_installed', return_value=True):
+            st = ss.setup_status(layout=self.layout)
+            self.assertEqual(st['phase'], ss.FAILED)
+            self.assertIn('did not start', (st.get('error') or '').lower())
+
+    def test_installing_comfy_sets_docker_launch_tried_before_ensure(self):
+        order = []
+
+        def ensure(**_k):
+            st = ss.load_setup_state(self.layout)
+            order.append(('ensure', st.get('phase'), st.get('docker_launch_tried'),
+                          (st.get('install_action') or {}).get('status')))
+            return {'ok': True, 'endpoint': 'http://127.0.0.1:8188'}
+
+        with mock.patch.object(ss, 'probe_video_studio', side_effect=[
+            self._not_ready(), self._ready(), self._ready(),
+        ]), \
+             mock.patch.object(ss, '_prefer_endpoint', return_value={'found': False}), \
+             mock.patch.object(ss, '_wait_docker_ready', return_value=(True, {'ok': True})), \
+             mock.patch.object(ss, '_managed_container_status', return_value={'exists': False, 'running': False}), \
+             mock.patch.object(ss, 'ensure_comfy_sidecar', side_effect=ensure), \
+             mock.patch.object(ss, 'comfy_endpoint_healthy', return_value=(True, 'ok')), \
+             mock.patch.object(ss, 'save_studio_endpoint'), \
+             mock.patch.object(ss, 'required_studio_assets', return_value=[]), \
+             mock.patch.object(ss, 'probe_docker_engine', return_value={'ok': True}):
+            ss.start_studio_setup(layout=self.layout, background=False)
+        self.assertEqual(len(order), 1)
+        _ev, phase, tried, ia = order[0]
+        self.assertEqual(phase, ss.INSTALLING_COMFY)
+        self.assertTrue(tried)
+        self.assertEqual(ia, ss._INSTALL_STARTED)
 
     def test_B_docker_stopped_launches_then_continues(self):
         calls = {'n': 0}
