@@ -136,6 +136,24 @@ def handle_expansion_get(path: str, send_json) -> bool:
         from expansion.capabilities.discord_n8n import probe_all_optional
         send_json({'capabilities': probe_all_optional()})
         return True
+    if path == '/api/expansion/integrations':
+        from expansion.capabilities.integrations_setup import integrations_status
+        send_json(integrations_status())
+        return True
+    if path == '/api/expansion/discord/invite':
+        from expansion.capabilities.discord_n8n import discord_invite_url, probe_discord
+        inv = discord_invite_url()
+        report = probe_discord()
+        send_json({**inv, 'state': report.state, 'discovery': report.discovery})
+        return True
+    if path == '/api/expansion/home-assistant/entities':
+        from expansion.capabilities.home_assistant import verify_home_assistant, load_ha_config
+        cfg = load_ha_config()
+        if not cfg.get('url') or not cfg.get('token_configured'):
+            send_json({'ok': False, 'error': 'HA not configured', 'config': cfg}, 400)
+            return True
+        send_json(verify_home_assistant())
+        return True
     if path == '/api/expansion/rooms':
         from expansion.rooms import RoomRegistry
         rooms = RoomRegistry().seed_defaults()
@@ -453,10 +471,27 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
         report = probe_discord()
         send_json({**result, 'detail': report.detail, 'discovery': report.discovery})
         return True
+    if path == '/api/expansion/discord/setup':
+        from expansion.capabilities.integrations_setup import configure_integration
+        send_json(configure_integration(
+            'discord',
+            token=str((data or {}).get('token') or (data or {}).get('bot_token') or ''),
+            guild_id=str((data or {}).get('guild_id') or ''),
+        ))
+        return True
+    if path == '/api/expansion/discord/start':
+        from expansion.capabilities.discord_n8n import start_discord_bot
+        send_json(start_discord_bot())
+        return True
     if path == '/api/expansion/home-assistant/config':
         from expansion.capabilities.home_assistant import save_ha_config, probe_home_assistant
+        from expansion.capabilities.integrations_setup import configure_integration
         url = str((data or {}).get('url') or '').strip()
         token = str((data or {}).get('token') or '').strip()
+        verify = bool((data or {}).get('verify', True))
+        if verify and url and token:
+            send_json(configure_integration('home_assistant', url=url, token=token))
+            return True
         try:
             cfg = save_ha_config(url, token=token)
         except ValueError as exc:
@@ -464,6 +499,39 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             return True
         report = probe_home_assistant()
         send_json({'ok': True, 'config': cfg, 'state': report.state, 'detail': report.detail})
+        return True
+    if path == '/api/expansion/home-assistant/verify':
+        from expansion.capabilities.home_assistant import verify_home_assistant
+        send_json(verify_home_assistant())
+        return True
+    if path == '/api/expansion/n8n/setup':
+        from expansion.capabilities.integrations_setup import configure_integration
+        send_json(configure_integration('n8n'))
+        return True
+    if path == '/api/expansion/n8n/config':
+        from expansion.capabilities.discord_n8n import save_n8n_config, probe_n8n
+        url = str((data or {}).get('url') or '').strip()
+        key = str((data or {}).get('api_key') or '').strip()
+        if not url:
+            send_json({'ok': False, 'error': 'url required'}, 400)
+            return True
+        try:
+            result = save_n8n_config(url=url, api_key=key)
+        except ValueError as exc:
+            send_json({'ok': False, 'error': str(exc)}, 400)
+            return True
+        report = probe_n8n()
+        send_json({**result, 'ok': True, 'detail': report.detail, 'discovery': report.discovery})
+        return True
+    if path == '/api/expansion/integrations/configure':
+        from expansion.capabilities.integrations_setup import configure_integration
+        which = str((data or {}).get('component') or (data or {}).get('which') or '').strip()
+        send_json(configure_integration(
+            which,
+            token=str((data or {}).get('token') or (data or {}).get('bot_token') or ''),
+            url=str((data or {}).get('url') or ''),
+            guild_id=str((data or {}).get('guild_id') or ''),
+        ))
         return True
     if path == '/api/expansion/video-studio/config':
         from expansion.capabilities.comfy_sidecar import save_studio_endpoint

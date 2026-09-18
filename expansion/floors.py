@@ -334,7 +334,7 @@ def build_ops_floor(layout: Optional[StateLayout] = None) -> dict:
     emo = EmotionStore(layout).get_or_create('sentry')
     tools = ToolGateway(layout).recent(limit=40)
     remediation = [t for t in tools if t.get('agent_id') == 'sentry' or 'security' in (t.get('capability') or '')]
-    return {
+    out = {
         'surface': 'sentry_ops',
         'active_incidents': [asdict(j) for j in security if j.status in ('RUNNING', 'WAITING', 'BLOCKED', 'FAILED')][:20],
         'resolved_incidents': [asdict(j) for j in security if j.status == 'COMPLETE'][:15],
@@ -363,8 +363,17 @@ def build_ops_floor(layout: Optional[StateLayout] = None) -> dict:
         ],
         'home_assistant': probe_home_assistant().to_dict(),
         'alerts': [asdict(j) for j in security if j.status == 'FAILED'][:20],
-        'note': 'Home Assistant remains optional. HA UNAVAILABLE is not a product failure.',
+        'note': (
+            'Discord / HA / n8n are optional. Otacon can install them — '
+            'credentials only when required. NEEDS_CREDENTIAL is not a product failure.'
+        ),
     }
+    try:
+        from expansion.capabilities.integrations_setup import integrations_status
+        out['integrations'] = integrations_status(layout)
+    except Exception:
+        pass
+    return out
 
 
 def build_emotion_roster(layout: Optional[StateLayout] = None) -> dict:

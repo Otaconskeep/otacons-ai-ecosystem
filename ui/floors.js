@@ -1091,6 +1091,83 @@
   }
 
   /* —— Ops —— */
+  async function floorConfigureIntegration(which) {
+    var msg = document.getElementById('fl-int-msg');
+    function say(t) { if (msg) msg.textContent = t; }
+    try {
+      if (which === 'discord') {
+        say('[OTACON] I\'ll set up the bot service for you…');
+        var prep = await api('/api/expansion/discord/setup', {});
+        var tokenEl = document.getElementById('fl-discord-token');
+        var token = tokenEl ? String(tokenEl.value || '').trim() : '';
+        if (token) {
+          say('[OTACON] Storing token securely…');
+          prep = await api('/api/expansion/discord/setup', { token: token });
+          if (tokenEl) tokenEl.value = '';
+        }
+        var inv = (prep.data && (prep.data.invite_url || (prep.data.invite && prep.data.invite.invite_url))) || '';
+        if (!inv && prep.data && prep.data.discovery) inv = prep.data.discovery.invite_url || '';
+        if (inv) {
+          say('[OTACON] Authorize the bot in your Discord server…');
+          try { window.open(inv, '_blank', 'noopener'); } catch (e) {}
+        }
+        say('[OTACON] Discord: ' + ((prep.data && prep.data.state) || (prep.ok ? 'ok' : 'check token')));
+      } else if (which === 'home_assistant' || which === 'ha') {
+        var urlEl = document.getElementById('fl-ha-url');
+        var tokEl = document.getElementById('fl-ha-token');
+        var url = urlEl ? String(urlEl.value || '').trim() : '';
+        var tok = tokEl ? String(tokEl.value || '').trim() : '';
+        if (!url || !tok) { say('[OTACON] I need your HA URL and long-lived access token.'); return; }
+        say('[OTACON] Verifying Home Assistant…');
+        var ha = await api('/api/expansion/home-assistant/config', { url: url, token: tok, verify: true });
+        if (tokEl) tokEl.value = '';
+        var n = (ha.data && ha.data.verify && ha.data.verify.entity_count) || 0;
+        say('[OTACON] HA: ' + ((ha.data && ha.data.state) || '') + (n ? (' · ' + n + ' entities') : ''));
+      } else if (which === 'n8n') {
+        say('[OTACON] Deploying local n8n…');
+        var n8 = await api('/api/expansion/n8n/setup', {});
+        say('[OTACON] n8n: ' + ((n8.data && n8.data.state) || (n8.ok ? 'ok' : 'failed')) +
+          (n8.data && n8.data.deploy && n8.data.deploy.endpoint ? (' · ' + n8.data.deploy.endpoint) : ''));
+      }
+      setTimeout(function () { renderOpsFloor(); }, 500);
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
+  function integrationCard(id, v, extra) {
+    v = v || {};
+    var st = v.state || 'unknown';
+    var disc = v.discovery || {};
+    var action = disc.user_action || '';
+    var needs = /NEEDS_CREDENTIAL|NEEDS_AUTHORIZATION|NOT_INSTALLED|LIMITED/i.test(st);
+    var body = '<div class="fl-card" id="fl-int-' + esc(id) + '"><b>' + esc(id.replace(/_/g, ' ')) + '</b> ' +
+      pill(st) +
+      '<p class="muted">' + esc(v.detail || v.note || v.message || '') + '</p>';
+    if (id === 'discord' && needs) {
+      body += '<p class="fl-note">[OTACON] I can handle this. Configure now?</p>' +
+        '<label>Bot token<input id="fl-discord-token" type="password" autocomplete="off" placeholder="paste token"></label>' +
+        '<div class="fl-rail" style="margin-top:8px">' +
+        btn('Configure Discord', "floorConfigureIntegration('discord')", false) +
+        (disc.invite_url
+          ? btn('Open authorize', "window.open(" + JSON.stringify(disc.invite_url) + ",'_blank','noopener')", true)
+          : '') + '</div>';
+    } else if (id === 'home_assistant' && needs) {
+      body += '<p class="fl-note">[OTACON] I found Home Assistant support, but it isn\'t connected.</p>' +
+        '<label>HA URL<input id="fl-ha-url" placeholder="http://homeassistant.local:8123" value="' +
+        esc(disc.url || 'http://homeassistant.local:8123') + '"></label>' +
+        '<label>Long-lived token<input id="fl-ha-token" type="password" autocomplete="off"></label>' +
+        '<div class="fl-rail" style="margin-top:8px">' +
+        btn('Connect HA', "floorConfigureIntegration('ha')", false) + '</div>';
+    } else if (id === 'n8n' && needs) {
+      body += '<p class="fl-note">[OTACON] I can deploy local n8n with Docker — no credential required for the base service.</p>' +
+        '<div class="fl-rail" style="margin-top:8px">' +
+        btn('Install n8n', "floorConfigureIntegration('n8n')", false) + '</div>';
+    }
+    if (extra) body += extra;
+    return body + '</div>';
+  }
+
   async function renderOpsFloor() {
     var d;
     try { d = await apiGet('/api/expansion/ops'); }
@@ -1099,8 +1176,26 @@
     var health = d.health_observations || {};
     var emo = health.emotion || {};
     var services = d.service_readiness || { home_assistant: ha };
+    var integ = d.integrations || {};
+    var recommended = (integ.recommended || []).filter(function (x) {
+      return x && (x.id === 'discord' || x.id === 'home_assistant' || x.id === 'n8n');
+    });
+    var checklist = recommended.length
+      ? '<div class="fl-panel"><h3 class="fl-h">Recommended integrations</h3>' +
+        '<p class="fl-note">' + esc(integ.aria || 'Otacon installs what it can; credentials only when required.') + '</p>' +
+        '<div class="fl-grid">' + recommended.map(function (it) {
+          return '<div class="fl-card"><b>' + esc(it.label || it.id) + '</b> ' +
+            pill(it.state || '') +
+            '<p class="muted">' + esc(it.detail || '') + '</p>' +
+            (it.needs_credential || it.user_action === 'credential' || it.user_action === 'authorization' || it.user_action === 'install'
+              ? '<div class="fl-rail">' + btn('Configure now', "floorConfigureIntegration('" +
+                (it.id === 'home_assistant' ? 'ha' : it.id) + "')", false) + '</div>'
+              : '') + '</div>';
+        }).join('') + '</div></div>'
+      : '';
     floorShell('Sentry Operations', 'Security / monitoring',
       '<p class="fl-note">' + esc(d.note || 'Home Assistant remains optional.') + '</p>' +
+      checklist +
       panel('Active incidents', listCards(d.active_incidents || [], jobCard, 'No active incidents.')) +
       panel('Resolved incidents', listCards(d.resolved_incidents || [], jobCard, 'No resolved incidents.')) +
       panel('Health observations',
@@ -1121,12 +1216,8 @@
         metric((d.monitoring_state && d.monitoring_state.sentry_open_jobs) || 0, 'open') +
         metric((d.monitoring_state && d.monitoring_state.failed) || 0, 'failed') + '</div>') +
       panel('Service readiness', '<div class="fl-grid">' + Object.keys(services).map(function (k) {
-        var v = services[k] || {};
-        return '<div class="fl-card"><b>' + esc(k) + '</b> ' +
-          pill(v.state || v.status || 'unknown') +
-          '<p class="muted">' + esc(v.note || v.message || '') + '</p></div>';
-      }).join('') + '</div><p class="muted">HA: ' +
-        esc(ha.status || ha.state || 'unknown') + ' — optional</p>') +
+        return integrationCard(k, services[k] || {});
+      }).join('') + '</div><div id="fl-int-msg" class="muted" style="margin-top:8px"></div>') +
       panel('Evidence', listCards(d.evidence || [], function (e) {
         return '<div class="fl-card"><b>' + esc(e.job_id) + '</b>' +
           '<p class="muted">' + esc((e.evidence_ids || []).join(', ') || '—') +
@@ -1340,6 +1431,7 @@
     floorOpenJournal: floorOpenJournal,
     floorRelDrill: floorRelDrill,
     floorRegisterPage: floorRegisterPage,
+    floorConfigureIntegration: floorConfigureIntegration,
     renderDossiersFloor: renderDossiersFloor,
     renderJournalFloor: renderJournalFloor,
     renderDiaryFloor: renderDiaryFloor,
