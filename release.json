@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "11e0f0b17c0c567e18a15dc4eca03a0bbea060f1",
+  "commit": "474498238d5776fed06263e934458d279dbdcf0c",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
