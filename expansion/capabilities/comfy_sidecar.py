@@ -89,22 +89,31 @@ def save_studio_endpoint(endpoint: str, layout: Optional[StateLayout] = None) ->
 
 
 def _docker_compose_cmd(compose: Path) -> list[str] | None:
-    if not shutil.which('docker'):
+    try:
+        from core.platform import _resolve_docker, docker_env
+        docker = _resolve_docker()
+        env = docker_env()
+    except Exception:
+        docker = shutil.which('docker')
+        env = None
+    if not docker:
         return None
     # Prefer `docker compose` plugin
     try:
         r = subprocess.run(
-            ['docker', 'compose', 'version'],
+            [docker, 'compose', 'version'],
             capture_output=True,
             timeout=8,
             check=False,
+            env=env,
         )
         if r.returncode == 0:
-            return ['docker', 'compose', '-f', str(compose)]
+            return [docker, 'compose', '-f', str(compose)]
     except (OSError, subprocess.TimeoutExpired):
         pass
-    if shutil.which('docker-compose'):
-        return ['docker-compose', '-f', str(compose)]
+    compose_bin = shutil.which('docker-compose')
+    if compose_bin:
+        return [compose_bin, '-f', str(compose)]
     return None
 
 
@@ -141,10 +150,17 @@ def ensure_comfy_sidecar(
             'action': 'docker_missing',
             'error': 'Docker / docker compose not available',
             'hint': (
-                'Install Docker Desktop (Windows/WSL2) or Docker Engine, then click Start Comfy again. '
+                'Start Docker Desktop (Windows) so the engine is up, then click Start Comfy again. '
+                'WSL systemd needs Docker on PATH — run Fix-Otacon-GPU.bat or restart after Desktop starts. '
                 'Or install ComfyUI portable and use Detect / paste http://127.0.0.1:8188'
             ),
         }
+
+    try:
+        from core.platform import docker_env
+        run_env = docker_env()
+    except Exception:
+        run_env = None
 
     try:
         up = subprocess.run(
@@ -154,6 +170,7 @@ def ensure_comfy_sidecar(
             timeout=300,
             check=False,
             cwd=str(compose.parent),
+            env=run_env,
         )
     except subprocess.TimeoutExpired:
         return {'ok': False, 'action': 'start_timeout', 'error': 'docker compose up timed out'}
@@ -161,11 +178,19 @@ def ensure_comfy_sidecar(
         return {'ok': False, 'action': 'start_failed', 'error': str(exc)}
 
     if up.returncode != 0:
+        err = (up.stderr or up.stdout or 'compose failed')[:800]
+        hint = 'Check docker logs: docker logs otacon-comfyui'
+        low = err.lower()
+        if 'pipe' in low or 'dockerdesktop' in low or 'cannot connect' in low or 'is the docker daemon running' in low:
+            hint = (
+                'Docker CLI found but the engine is not running. '
+                'Start Docker Desktop on Windows, wait until it is healthy, then Start Comfy again.'
+            )
         return {
             'ok': False,
             'action': 'compose_failed',
-            'error': (up.stderr or up.stdout or 'compose failed')[:800],
-            'hint': 'Check docker logs: docker logs otacon-comfyui',
+            'error': err,
+            'hint': hint,
         }
 
     deadline = time.time() + max(5.0, wait_sec)

@@ -50,10 +50,15 @@ def main() -> int:
          "Codec OPERATOR port + instrument rack sidebar", fails)
     must("codecPortraitUrl" in js and "bindCodecVideoFallback" in js,
          "per-agent Codec portrait fallback (not Aria-only)", fails)
+    must("agentAsset" in js and "roster-art-2" in js,
+         "roster asset cache-bust query", fails)
     must("showGenomeSetup" in js and "showVideoStudioSetup" in js and "Fix-Otacon-GPU" in js,
          "Aria-guided Genome/Studio setup with GPU fix path", fails)
     must("startComfySidecar" in js and "useDetectedComfy" in js and "video-studio/detect" in js,
          "Comfy detect + Start sidecar UX wired", fails)
+    floors = (ROOT / "ui" / "floors.js").read_text(encoding="utf-8", errors="replace")
+    must("readinessHud" in floors and "fl-ready-grid" in floors,
+         "Command readiness HUD (not raw JSON)", fails)
     must("five-agent Lite roster" not in js,
          "no Lite-roster copy on Expansion home", fails)
     must("Keep-only" not in js and "KEEP ONLY" not in js,

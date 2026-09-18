@@ -186,6 +186,14 @@ if [ -f "$UNIT" ]; then
   # Wipe every SKIP line, then pin 0 (never leave this ambiguous).
   sed -i '/OTACON_SKIP_NVIDIA_SMI=/d' "$UNIT"
   sed -i "/\[Service\]/a Environment=OTACON_SKIP_NVIDIA_SMI=0" "$UNIT"
+  # systemd PATH often omits /usr/lib/wsl/lib + Docker Desktop CLI — Genome/Comfy false-negatives.
+  WANT_PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wsl/lib:/snap/bin:/mnt/c/Program Files/Docker/Docker/resources/bin:/mnt/c/ProgramData/DockerDesktop/version-bin'
+  sed -i '/^Environment=PATH=/d' "$UNIT"
+  sed -i '/^Environment="PATH=/d' "$UNIT"
+  # Quote PATH so "Program Files" survives systemd parsing.
+  sed -i "/\[Service\]/a Environment=\"PATH=${WANT_PATH}\"" "$UNIT"
+  sed -i '/^Environment=LD_LIBRARY_PATH=/d' "$UNIT"
+  sed -i "/\[Service\]/a Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib" "$UNIT"
   if grep -q "OTACON_HOST=" "$UNIT"; then
     sed -i "s|^Environment=OTACON_HOST=.*|Environment=OTACON_HOST=${WANT_HOST}|" "$UNIT"
   else
@@ -195,6 +203,7 @@ if [ -f "$UNIT" ]; then
   sed -i "/\[Service\]/a Environment=OTACON_LAN_MODE=${PRESERVE_LAN}" "$UNIT"
   systemctl daemon-reload 2>/dev/null || true
   echo "unit_skip_line=$(grep OTACON_SKIP_NVIDIA_SMI= "$UNIT" || echo missing)"
+  echo "unit_path=$(grep '^Environment=PATH=' "$UNIT" || echo missing)"
   echo "unit_lan=$(grep OTACON_LAN_MODE= "$UNIT" || echo missing)"
 fi
 

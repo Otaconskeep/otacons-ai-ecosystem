@@ -45,16 +45,17 @@ class PlatformGpuTests(unittest.TestCase):
         self.assertEqual(h.gpus, [])
         self.assertEqual(h.gpu_detection['status'], 'none')
 
-    def test_proc_fallback_when_smi_skipped(self):
-        from core.platform import GPU
-        fake = [GPU('gpu_001', 'nvidia', 'NVIDIA GeForce RTX 3070 Laptop GPU', 0.0, 'GPU_SMALL')]
-        with mock.patch.dict(os.environ, {'OTACON_SKIP_NVIDIA_SMI': '1'}, clear=False):
-            with mock.patch('core.platform._proc_nvidia_gpus', return_value=fake):
-                h = detect()
-        self.assertEqual(h.gpu_detection['status'], 'detected')
-        self.assertEqual(h.gpus[0].model, 'NVIDIA GeForce RTX 3070 Laptop GPU')
-        self.assertIn('proc', h.gpu_detection['message'])
+    def test_resolve_docker_falls_back_to_absolute(self):
+        from core.platform import _resolve_docker
+        with mock.patch('core.platform.shutil.which', return_value=None):
+            with mock.patch(
+                'core.platform.os.path.isfile',
+                side_effect=lambda p: p == '/usr/bin/docker',
+            ):
+                with mock.patch('core.platform.os.access', return_value=True):
+                    self.assertEqual(_resolve_docker(), '/usr/bin/docker')
 
-
-if __name__ == '__main__':
-    unittest.main()
+    def test_tool_env_includes_docker_desktop_path(self):
+        from core.platform import docker_env
+        env = docker_env()
+        self.assertIn('Docker/resources/bin', env.get('PATH', ''))

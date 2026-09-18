@@ -19,6 +19,16 @@ _NVIDIA_SMI_CANDIDATES = (
   '/usr/local/bin/nvidia-smi',
 )
 _WSL_LIB = '/usr/lib/wsl/lib'
+# Docker Desktop on Windows exposes the CLI into WSL under /mnt/c/... — systemd
+# PATH often misses that, so Genome/Comfy probes falsely report docker_missing.
+_DOCKER_CANDIDATES = (
+  '/usr/bin/docker',
+  '/usr/local/bin/docker',
+  '/snap/bin/docker',
+  '/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe',
+  '/mnt/c/Program Files/Docker/Docker/resources/bin/docker',
+  '/mnt/c/ProgramData/DockerDesktop/version-bin/docker.exe',
+)
 
 
 def capability(v):
@@ -35,11 +45,26 @@ def _resolve_nvidia_smi() -> str | None:
   return None
 
 
-def _nvidia_smi_env() -> dict:
-  """Minimal env so nvidia-smi works under systemd / stripped PATH (esp. WSL2)."""
+def _resolve_docker() -> str | None:
+  found = shutil.which('docker')
+  if found and os.path.isfile(found):
+    return found
+  for p in _DOCKER_CANDIDATES:
+    if os.path.isfile(p) and os.access(p, os.X_OK):
+      return p
+  return None
+
+
+def _tool_env() -> dict:
+  """PATH/LD so nvidia-smi + docker work under systemd / stripped WSL env."""
   env = dict(os.environ)
   path_parts = env.get('PATH', '').split(':') if env.get('PATH') else []
-  extras = ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin', _WSL_LIB]
+  extras = [
+    '/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin',
+    _WSL_LIB, '/snap/bin',
+    '/mnt/c/Program Files/Docker/Docker/resources/bin',
+    '/mnt/c/ProgramData/DockerDesktop/version-bin',
+  ]
   for p in extras:
     if p and p not in path_parts:
       path_parts.append(p)
@@ -51,6 +76,14 @@ def _nvidia_smi_env() -> dict:
     env['LD_LIBRARY_PATH'] = ':'.join(x for x in ld_parts if x)
   return env
 
+
+def _nvidia_smi_env() -> dict:
+  """Minimal env so nvidia-smi works under systemd / stripped PATH (esp. WSL2)."""
+  return _tool_env()
+
+
+def docker_env() -> dict:
+  return _tool_env()
 
 def _nvidia_smi_query(smi: str, timeout_s: float = 5.0) -> str:
   """Run nvidia-smi without blocking the HTTP thread forever.

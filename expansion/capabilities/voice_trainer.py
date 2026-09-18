@@ -38,35 +38,44 @@ def _port_listening(port: int = DEFAULT_PORT, host: str = '127.0.0.1') -> bool:
 
 
 def _gpu_usable() -> bool:
-    if not shutil.which('nvidia-smi'):
+    from core.platform import _nvidia_smi_env, _resolve_nvidia_smi
+    smi = _resolve_nvidia_smi()
+    if not smi:
         return False
     try:
         r = subprocess.run(
-            ['nvidia-smi'],
+            [smi],
             capture_output=True,
             timeout=8,
             check=False,
+            env=_nvidia_smi_env(),
         )
         return r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def _docker_bin() -> str | None:
+    from core.platform import _resolve_docker
+    return _resolve_docker()
 
 
 def _docker_image_present() -> bool:
-    if not shutil.which('docker'):
+    docker = _docker_bin()
+    if not docker:
         return False
+    from core.platform import docker_env
     try:
         r = subprocess.run(
-            ['docker', 'image', 'inspect', 'piper-voice-trainer:gpu'],
+            [docker, 'image', 'inspect', 'piper-voice-trainer:gpu'],
             capture_output=True,
             timeout=8,
             check=False,
+            env=docker_env(),
         )
         return r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
-
-
 def probe_voice_trainer() -> CapabilityReport:
     home = _vt_home()
     installed = home.is_dir() and any(home.iterdir())

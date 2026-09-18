@@ -1112,8 +1112,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(b)))
         suf = p.suffix.lower()
         if suf in ('.mp4', '.webp', '.png', '.jpg', '.jpeg'):
-            # Static agent media never changes at runtime; safe to cache hard.
-            self.send_header('Cache-Control', 'public, max-age=604800, immutable')
+            # Bustable via ?v= on URLs; avoid immutable week-long cache of stub art.
+            self.send_header('Cache-Control', 'public, max-age=300, must-revalidate')
         elif suf in ('.html', '.js', '.css', '') or p.name in ('index.html',):
             # UI shell changes often during Lite iteration — never let the browser
             # keep a stale Command Center / Codec after git pull + restart.

@@ -24,14 +24,17 @@ function currentPortraitId(){
   if(aid==='agent_001') return 'aria';
   return aid||'aria';
 }
+function agentAsset(id, file){
+  return `/assets/${id}/${file}?v=roster-art-2`;
+}
 function codecVideoFor(mode){
   const id=currentPortraitId();
   const m=mode||'idle';
-  return `/assets/${id}/${id}-${m}.mp4`;
+  return agentAsset(id, `${id}-${m}.mp4`);
 }
 function codecPortraitUrl(id){
   const aid=id||currentPortraitId();
-  return `/assets/${aid}/${aid}.webp`;
+  return agentAsset(aid, `${aid}.webp`);
 }
 function bindCodecVideoFallback(v){
   if(!v||v.dataset.boundPortraitFallback) return;
@@ -46,7 +49,7 @@ function bindCodecVideoFallback(v){
       img.className='codec-still';
       img.alt=currentAgentName()||id;
       img.src=codecPortraitUrl(id);
-      img.onerror=()=>{ img.src='/assets/aria/aria.webp'; };
+      img.onerror=()=>{ img.src=agentAsset('aria','aria.webp'); };
       v.style.display='none';
       port.insertBefore(img, v);
     }
@@ -69,7 +72,7 @@ async function loadExpansion(){
       state.roster=state.expansion.agents.map(a=>({
         id:a.id||a.agent_id, display_name:a.display_name, role:a.role,
         voice_id:a.voice_id, room:a.room||a.room_route, room_title:a.room_title,
-        avatar:a.avatar||`/assets/${a.id||a.agent_id}/${a.id||a.agent_id}.webp`
+        avatar:a.avatar||agentAsset(a.id||a.agent_id, `${a.id||a.agent_id}.webp`)
       }));
       if(!state.roster.find(a=>a.id===state.agentId) || state.agentId==='agent_001'){
         state.agentId=state.roster[0].id;
@@ -582,9 +585,9 @@ async function showHome(){
   const agentStrip=(state.roster||[]).map(a=>{
     const id=a.id||a.agent_id;
     const room=a.room_title||a.room||agentRoomKind(a);
-    const img=`/assets/${id}/${id}.webp`;
+    const img=agentAsset(id, `${id}.webp`);
     return `<button type="button" class="hud-agent" onclick="openAgentRoom('${escapeHtml(id)}')">
-      <img src="${img}" alt="" onerror="this.style.opacity=.25">
+      <img src="${img}" alt="" loading="eager" decoding="async" onerror="this.onerror=null;this.src='${agentAsset('aria','aria.webp')}'">
       <div><div class="n">${escapeHtml(a.display_name||id)}</div><div class="r">${escapeHtml(String(room))}</div></div>
       <span class="mood" title="mood"></span>
     </button>`;
@@ -660,7 +663,7 @@ async function showHome(){
     </aside>
     <main class="hud-center">
       <div class="hud-hero">
-        <img src="/assets/aria/aria.webp" alt="Aria">
+        <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
         <div>
           <p class="sub">Aria // Command</p>
           <p class="line">${escapeHtml(ariaLine)}</p>
@@ -1024,7 +1027,7 @@ async function showChat(){
   }).join('');
   const agentName=currentAgentName();
   const portraitAgent=currentPortraitId();
-  const idleSrc=`/assets/${portraitAgent}/${portraitAgent}-idle.mp4`;
+  const idleSrc=agentAsset(portraitAgent, `${portraitAgent}-idle.mp4`);
   const agentRoom=(roster.find(a=>(a.id||a.agent_id)===aid)||{});
   const roomLabel=agentRoom.room_title||agentRoom.room||'Agent room';
 

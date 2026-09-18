@@ -24,6 +24,39 @@
     _relByEdge: {}
   };
 
+
+  var ASSET_V = 'roster-art-2';
+  function agentAsset(id, file) {
+    return '/assets/' + id + '/' + file + '?v=' + ASSET_V;
+  }
+  function readinessHud(obj) {
+    var o = obj || {};
+    var keys = Object.keys(o);
+    if (!keys.length) return empty('No readiness signals yet.');
+    return '<div class="fl-ready-grid">' + keys.map(function (k) {
+      var v = o[k];
+      var state = '';
+      var detail = '';
+      if (v && typeof v === 'object') {
+        state = String(v.state || v.status || v.ready || v.ok || '').toLowerCase();
+        detail = String(v.detail || v.message || v.reason || v.note || '');
+        if (!detail) {
+          try { detail = JSON.stringify(v).slice(0, 140); } catch (e) { detail = ''; }
+        }
+      } else {
+        state = String(v == null ? '' : v).toLowerCase();
+        detail = String(v == null ? '—' : v);
+      }
+      var cls = 'warn';
+      if (/ready|ok|true|live|online|pass|1/.test(state)) cls = 'ok';
+      else if (/fail|error|down|false|unavailable|missing|0/.test(state)) cls = 'bad';
+      else if (/limited|degraded|offline|pending|setup|not_configured/.test(state)) cls = 'warn';
+      var label = state ? state.toUpperCase() : 'SIGNAL';
+      return '<div class="fl-ready ' + cls + '"><div class="fl-ready-top"><b></b><span>' + esc(k.replace(/_/g, ' ')) +
+        '</span><em>' + esc(label) + '</em></div><p>' + esc(detail || '—') + '</p></div>';
+    }).join('') + '</div>';
+  }
+
   function esc(s) { return escapeHtml(s == null ? '' : s); }
   function fmtTs(t) {
     if (t == null || t === '') return '—';
@@ -727,7 +760,7 @@
       var recovery = (detail && detail.recovery_behavior) || '';
       var id = a.agent_id;
       blocks.push('<section class="fl-panel"><div style="display:flex;gap:12px;align-items:center;margin-bottom:.75rem">' +
-        '<img src="/assets/' + esc(id) + '/' + esc(id) + '.webp" alt="" width="56" height="56" style="object-fit:cover;border:1px solid rgba(46,230,214,.35);background:#020508" onerror="this.style.opacity=.2">' +
+        '<img src="' + agentAsset(esc(id), esc(id) + '.webp') + '" alt="" width="56" height="56" class="fl-avatar" onerror="this.onerror=null;this.src=agentAsset(\'aria\',\'aria.webp\')">' +
         '<div><h3 class="fl-h" style="margin:0">' + esc(a.display_name || id) + '</h3>' +
         '<p class="muted" style="margin:4px 0 0">affect board</p></div></div>' +
         '<div class="fl-grid"><div><h4 class="fl-h">primary</h4>' +
@@ -816,12 +849,15 @@
     }
     var wl = d.workload || {};
     var roster = listCards(d.roster || [], function (a) {
-      return '<div class="fl-card"><b>' + esc(a.display_name || a.agent_id) + '</b> · ' + esc(a.role || '') +
+      var aid = a.agent_id || a.id || '';
+      return '<div class="fl-card fl-agent-card"><img class="fl-avatar" src="' + agentAsset(esc(aid), esc(aid) + '.webp') +
+        '" alt="" onerror="this.onerror=null;this.src=agentAsset(\'aria\',\'aria.webp\')">' +
+        '<div><b>' + esc(a.display_name || aid) + '</b> · ' + esc(a.role || '') +
         '<p class="muted">open jobs: ' +
-        esc(String(a.open_jobs != null ? a.open_jobs : wl[a.agent_id] || 0)) + '</p>' +
+        esc(String(a.open_jobs != null ? a.open_jobs : wl[aid] || 0)) + '</p>' +
         '<p class="muted">emotion: ' + esc(Object.keys(a.emotion_highlights || {}).map(function (k) {
           return k + '=' + a.emotion_highlights[k];
-        }).join(', ') || '—') + '</p></div>';
+        }).join(', ') || '—') + '</p></div></div>';
     }, 'Roster empty.');
     var ready = d.readiness || {};
     var shifts = listCards(d.relationship_shifts || d.emotion_shifts || [], function (s) {
@@ -841,7 +877,7 @@
           '</b> · ' + esc(x.status || '') + ' · ' + esc(x.domain || '') +
           '<p>' + esc(x.request || '') + '</p>' + jobLink(x.job_id) + '</div>';
       }, 'No delegations.')) +
-      panel('Readiness', kvPre(ready, 800)) +
+      panel('Readiness', readinessHud(ready)) +
       panel('Alerts', listCards(d.major_alerts || [], jobCard, 'No major alerts.')) +
       panel('Relationship / emotion shifts', shifts) +
       panel('Pending decisions', listCards(d.pending_decisions || [], jobCard, 'None pending.')) +
@@ -1270,7 +1306,7 @@
         return '<div class="fl-card"><b>' + esc(c.claim || '') + '</b> ' +
           (c.claim_id ? btn('WHY', oc('floorLearningWhy', c.claim_id), true) : '') + '</div>';
       }, 'No shared learning highlights.')) +
-      panel('Readiness', kvPre(ready, 900)) +
+      panel('Readiness', readinessHud(ready)) +
       panel('Floor navigation', floorNavTiles('dashboard')));
   }
 

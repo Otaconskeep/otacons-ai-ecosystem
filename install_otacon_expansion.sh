@@ -329,6 +329,17 @@ rm -f "$BOOT_PY"
 
 # Restart Core service so /api/expansion/status sees the new roster (root only).
 if [[ "$(id -u)" == "0" ]] && command_exists systemctl; then
+  UNIT=/etc/systemd/system/otacon.service
+  if [[ -f "$UNIT" ]]; then
+    log "Ensuring otacon.service PATH includes WSL nvidia-smi + Docker Desktop CLI"
+    WANT_PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wsl/lib:/snap/bin:/mnt/c/Program Files/Docker/Docker/resources/bin:/mnt/c/ProgramData/DockerDesktop/version-bin'
+    sed -i '/^Environment=PATH=/d' "$UNIT"
+    sed -i '/^Environment="PATH=/d' "$UNIT"
+    sed -i "/\[Service\]/a Environment=\"PATH=${WANT_PATH}\"" "$UNIT"
+    sed -i '/^Environment=LD_LIBRARY_PATH=/d' "$UNIT"
+    sed -i "/\[Service\]/a Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib" "$UNIT"
+    systemctl daemon-reload 2>/dev/null || true
+  fi
   log "Restarting otacon.service so Expansion APIs reload"
   systemctl restart otacon.service 2>/dev/null || systemctl start otacon.service 2>/dev/null || true
   # Brand endpoint often answers before Expansion status finishes loading — wait for active + settle.
