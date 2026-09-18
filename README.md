@@ -67,10 +67,11 @@ possible, runs self-tests, builds a native `.deb` when enabled, and registers
 Skip pieces if you want a lighter install:
 
 ```bash
-OTACON_INSTALL_DEFAULT_MODEL=0 OTACON_INSTALL_VOICE_TRAINER=0 curl -fsSL \
-  https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh \
+  | OTACON_INSTALL_DEFAULT_MODEL=0 OTACON_INSTALL_VOICE_TRAINER=0 bash
 ```
 
+Env vars must sit on `bash` (right of the pipe), not on `curl` — otherwise the installer never sees them.
 Override the chat model tag with `OTACON_LLM_MODEL=qwen2.5:7b` if needed.
 
 **Both paths are completely safe to run more than once.** If anything

@@ -18,6 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from tests.http_server_isolation import (  # noqa: E402
+    force_local_bind,
+    restore_server_bind,
+)
 from core.memory import MemoryStore
 from installer import server as server_mod
 
@@ -97,7 +101,11 @@ class ThreadedChatHttpTests(unittest.TestCase):
         cls._prev_memory = server_mod.MEMORY
         cls._prev_config = server_mod.CONFIG_ROOT
         cls._prev_env = os.environ.get('OTACON_USE_TEST_LLM')
+        # LAN-auth suites may have left BIND_MODE=lan on the module — force local
+        # so concurrent chat posts are not fake-401'd during installer self-check.
+        cls._bind_snap = force_local_bind(server_mod)
         os.environ['OTACON_USE_TEST_LLM'] = '1'
+        os.environ.pop('OTACON_LAN_MODE', None)
         server_mod.CONFIG_ROOT = root
         server_mod.MEMORY = MemoryStore(root / 'runtime' / 'memory.sqlite')
         cls.httpd = ThreadingHTTPServer(('127.0.0.1', 0), server_mod.Handler)
@@ -126,6 +134,7 @@ class ThreadedChatHttpTests(unittest.TestCase):
         cls.httpd.server_close()
         server_mod.MEMORY = cls._prev_memory
         server_mod.CONFIG_ROOT = cls._prev_config
+        restore_server_bind(server_mod, cls._bind_snap)
         if cls._prev_env is None:
             os.environ.pop('OTACON_USE_TEST_LLM', None)
         else:

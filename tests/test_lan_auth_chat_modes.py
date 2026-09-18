@@ -19,6 +19,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from tests.http_server_isolation import (  # noqa: E402
+    restore_security_paths,
+    restore_server_bind,
+    snapshot_security_paths,
+    snapshot_server_bind,
+)
+
 
 class ChatAuthModeTests(unittest.TestCase):
     def setUp(self):
@@ -32,8 +39,16 @@ class ChatAuthModeTests(unittest.TestCase):
         self._cfg = Path(self._tmpdir.name) / 'otacon'
         self._cfg.mkdir(parents=True)
         self._token_path = self._cfg / 'lan_token'
+        import installer.security as sec
+        import installer.server as srv
+        self._sec = sec
+        self._srv = srv
+        self._bind_snap = snapshot_server_bind(srv)
+        self._sec_snap = snapshot_security_paths(sec)
 
     def tearDown(self):
+        restore_server_bind(self._srv, self._bind_snap)
+        restore_security_paths(self._sec, self._sec_snap)
         for k in list(os.environ):
             if k.startswith('OTACON_'):
                 del os.environ[k]
@@ -48,8 +63,8 @@ class ChatAuthModeTests(unittest.TestCase):
             os.environ['OTACON_LAN_MODE'] = '0'
             os.environ['OTACON_HOST'] = '127.0.0.1'
 
-        import installer.security as sec
-        import installer.server as srv
+        sec = self._sec
+        srv = self._srv
 
         # Point token file at temp config
         sec.CONFIG_ROOT = self._cfg

@@ -2199,7 +2199,7 @@ if [[ "$INSTALL_VOICE_TRAINER" == "1" ]]; then
     VOICE_TRAINER_SKIP_REASON="needs root apt/docker (run via privileged phase or: wsl -u root)"
     warn "Voice Trainer SKIPPED in user phase — ${VOICE_TRAINER_SKIP_REASON}."
     warn "  OtaconsKeep Setup installs it during the root bootstrap when a GPU is present."
-    warn "  Manual: wsl.exe -u root -- bash -lc 'OTACON_VT_DIR=$HOME/otacon-voice-trainer OTACON_VT_SKIP_UI=1 curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash'"
+    warn "  Manual: wsl.exe -u root -- bash -lc 'OTACON_VT_DIR=$HOME/otacon-voice-trainer OTACON_VT_SKIP_UI=1 bash -c \"curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash\"'"
     VOICE_TRAINER_OK=0
   else
     log "Voice Trainer: installing Genome GPU Piper (included with Otacon)"
