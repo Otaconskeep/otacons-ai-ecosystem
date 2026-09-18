@@ -89,7 +89,11 @@ def comfy_endpoint_healthy(endpoint: str, timeout: float = 3.0) -> tuple[bool, s
     return False, last
 
 
-def probe_video_studio(layout: Optional[StateLayout] = None) -> CapabilityReport:
+def probe_video_studio(
+    layout: Optional[StateLayout] = None,
+    *,
+    clear_stale: bool = True,
+) -> CapabilityReport:
     layout = layout or resolve_layout()
     disc = _discover_endpoint(layout)
     blob = json.dumps(disc)
@@ -124,9 +128,41 @@ def probe_video_studio(layout: Optional[StateLayout] = None) -> CapabilityReport
             detail=f'ComfyUI endpoint healthy ({health_detail}).',
             config_keys_present=keys, discovery=disc,
         )
+
+    # Stale :8188 after a failed Set Up must not stick as LIMITED ("configured but
+    # unhealthy"). Clear prefs/topology and return NOT_CONFIGURED so Deck shows SETUP.
+    # Env-only overrides (OTACON_COMFYUI_URL) are left alone but still report SETUP.
+    # clear_stale=False when save_studio_endpoint probes mid-write (avoid wipe race).
+    if clear_stale:
+        env_url = (os.environ.get('OTACON_COMFYUI_URL') or os.environ.get('COMFYUI_URL') or '').strip()
+        try:
+            topo_url = (load_topology().comfyui_url or '').strip()
+        except Exception:
+            topo_url = ''
+        from_prefs = bool(disc.get('config_path')) or bool(topo_url)
+        if from_prefs or not env_url:
+            try:
+                from expansion.capabilities.comfy_sidecar import clear_studio_endpoint
+                clear_studio_endpoint(layout)
+                disc['stale_cleared'] = True
+            except Exception:
+                disc['stale_cleared'] = False
+        disc['endpoint'] = ''
+        keys = [k for k in keys if k != 'endpoint']
+        return CapabilityReport(
+            CAPABILITY_ID, OWNER_AGENT, CapabilityState.NOT_CONFIGURED.value,
+            detail=(
+                'Video Studio is not connected yet (previous Comfy endpoint was stale '
+                f'or unhealthy: {health_detail}). Use Set Up Video Studio to finish.'
+            ),
+            config_keys_present=keys, discovery=disc,
+        )
     return CapabilityReport(
-        CAPABILITY_ID, OWNER_AGENT, CapabilityState.LIMITED.value,
-        detail=f'Endpoint configured but not healthy: {health_detail}',
+        CAPABILITY_ID, OWNER_AGENT, CapabilityState.NOT_CONFIGURED.value,
+        detail=(
+            f'Comfy endpoint not healthy yet ({health_detail}). '
+            'Use Set Up Video Studio if this persists.'
+        ),
         config_keys_present=keys, discovery=disc,
     )
 

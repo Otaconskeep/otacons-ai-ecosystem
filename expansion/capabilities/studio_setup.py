@@ -16,9 +16,11 @@ from typing import Any, Optional
 from expansion.capabilities.comfy_sidecar import (
     DEFAULT_ENDPOINT,
     DEFAULT_PORTS,
+    clear_studio_endpoint,
     compose_file,
     detect_local_comfy,
     ensure_comfy_sidecar,
+    heal_docker_hub_auth,
     probe_docker_engine,
     save_studio_endpoint,
 )
@@ -541,6 +543,23 @@ def setup_status(layout: Optional[StateLayout] = None) -> dict[str, Any]:
     }
 
 
+def _clear_stale_studio_endpoint(layout: StateLayout) -> None:
+    """After FAIL, drop prefs so caps show SETUP instead of sticky LIMITED."""
+    try:
+        clear_studio_endpoint(layout)
+    except Exception:
+        pass
+
+
+def _kick_genome_install() -> None:
+    """Genome is Expansion premium — Set Up Studio should not leave it not_configured on GPU hosts."""
+    try:
+        from expansion.capabilities.voice_trainer import ensure_genome
+        ensure_genome(auto_install=True)
+    except Exception:
+        pass
+
+
 def start_studio_setup(
     *,
     layout: Optional[StateLayout] = None,
@@ -592,11 +611,16 @@ def start_studio_setup(
 
         def _run():
             try:
+                # Parallel: Genome install on GPU hosts (does not block Comfy).
+                threading.Thread(
+                    target=_kick_genome_install, daemon=True, name='genome-with-studio',
+                ).start()
                 _orchestrate(layout, proceed_anyway=bool(proceed_anyway or state.get('proceed_anyway')))
             except Exception as exc:  # noqa: BLE001
                 st = load_setup_state(layout)
                 _mark_install_action(st, _INSTALL_FAILED, error=str(exc), layout=layout)
                 st = load_setup_state(layout)
+                _clear_stale_studio_endpoint(layout)
                 _set_phase(
                     st,
                     FAILED,
@@ -850,6 +874,7 @@ def _orchestrate(layout: StateLayout, *, proceed_anyway: bool = False) -> None:
 
     # Immediate provision — INSTALLING_COMFY is never display-only.
     try:
+        heal_docker_hub_auth()
         result = ensure_comfy_sidecar(wait_sec=90.0, layout=layout)
     except Exception as exc:  # noqa: BLE001
         state = load_setup_state(layout)
@@ -864,6 +889,7 @@ def _orchestrate(layout: StateLayout, *, proceed_anyway: bool = False) -> None:
             technical=repr(exc),
             layout=layout,
         )
+        _clear_stale_studio_endpoint(layout)
         return
 
     state = load_setup_state(layout)
@@ -898,6 +924,7 @@ def _orchestrate(layout: StateLayout, *, proceed_anyway: bool = False) -> None:
                 user_action='Open Diagnostics for details, or try Set Up again after Docker is Running.',
                 layout=layout,
             )
+            _clear_stale_studio_endpoint(layout)
             return
 
     _mark_install_action(state, _INSTALL_COMPLETED, layout=layout)
@@ -937,8 +964,9 @@ def _orchestrate(layout: StateLayout, *, proceed_anyway: bool = False) -> None:
                 layout=layout,
             )
             state = load_setup_state(layout)
-            state['endpoint'] = endpoint
+            state['endpoint'] = ''
             save_setup_state(state, layout=layout)
+            _clear_stale_studio_endpoint(layout)
             return
 
     state = load_setup_state(layout)
@@ -1001,18 +1029,24 @@ def _finish_components_and_ready(
     if mus.get('enabled') and mus.get('tier') != 'deferred':
         pack_bits.append(f"ACE-Step ({mus.get('tier')})")
     pack_line = ', '.join(pack_bits) if pack_bits else 'connectivity only (packs deferred)'
+    packs_note = (
+        f' Profile packs selected: {pack_line}. '
+        'Model weights are not auto-downloaded yet — Muse pulls them on first use.'
+        if pack_bits else
+        ' Connectivity only for now (creative packs deferred on this profile).'
+    )
 
     state = _set_phase(
         state,
         INSTALLING_MODELS,
         aria=(
             f"Hardware profile {hw.get('profile_id') or 'UNKNOWN'} "
-            f"({hw.get('vram_gb', 0):.0f} GB VRAM). Selected: {pack_line}."
+            f"({hw.get('vram_gb', 0):.0f} GB VRAM).{packs_note}"
         ),
-        message=f"Studio profile {hw.get('profile_id')} — verifying components…",
+        message=f"Studio profile {hw.get('profile_id')} — verifying Comfy connection…",
         layout=layout,
     )
-    # Connectivity READY does not block on model downloads; packs are recorded for Muse.
+    # Connectivity READY does not download model packs; manifest is recorded for Muse.
     _ = assets
     state = _set_phase(
         state,
@@ -1022,7 +1056,7 @@ def _finish_components_and_ready(
         checklist_key='components',
         layout=layout,
     )
-    report = probe_video_studio(layout)
+    report = probe_video_studio(layout, clear_stale=False)
     if report.state == 'READY':
         state['endpoint'] = endpoint
         warn = (hw.get('warnings') or [])[:2]
@@ -1032,9 +1066,9 @@ def _finish_components_and_ready(
             READY,
             aria=(
                 f"Done. Video Studio is connected (profile {hw.get('profile_id')}). "
-                f"{pack_line}.{extra}"
+                f"ComfyUI is healthy.{packs_note}{extra}"
             ),
-            message='Video Studio is ready.',
+            message='Video Studio is ready (Comfy connected; packs on first use).',
             layout=layout,
         )
         state = load_setup_state(layout)
@@ -1062,7 +1096,7 @@ def _finish_components_and_ready(
         return
     _set_phase(
         state,
-        DEGRADED if report.state == 'LIMITED' else FAILED,
+        FAILED if report.state != 'READY' else DEGRADED,
         aria=(
             "Video Studio is almost ready, but the connection check didn't pass yet. "
             "Click Set Up again in a moment."
@@ -1072,3 +1106,4 @@ def _finish_components_and_ready(
         technical=json.dumps(report.discovery or {})[:1500],
         layout=layout,
     )
+    _clear_stale_studio_endpoint(layout)

@@ -211,17 +211,28 @@ log "Synchronizing the public repository"
 run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" fetch --prune origin
 CURRENT_BRANCH="$(run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" branch --show-current || true)"
 # Match Core installer: diverged trees (ahead/behind) must not die on exit 128.
-# Friends' local edits / older tips need a recovery path to origin/main.
+# Prefer release.json.commit from origin/main (strict pin); else origin/main tip.
 if [[ "$CURRENT_BRANCH" == "main" || -z "$CURRENT_BRANCH" ]]; then
   if ! run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" pull --ff-only; then
     BACKUP_REF="backup/pre-expansion-$(date +%Y%m%d-%H%M%S)"
     warn "Fast-forward pull failed (local tip diverged from origin/main)."
-    warn "Saving local tip as ${BACKUP_REF}, then hard-resetting to origin/main so Expansion can install."
+    warn "Saving local tip as ${BACKUP_REF}, then resetting to release pin / origin/main."
     run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" branch "$BACKUP_REF" HEAD || true
-    run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" reset --hard origin/main
-    ok "Local tip preserved as ${BACKUP_REF}; working tree now matches origin/main."
   fi
-  run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" reset --hard origin/main
+  RELEASE_PIN="$(
+    run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" show origin/main:release.json 2>/dev/null \
+      | python3 -c 'import sys,json; print((json.load(sys.stdin).get("commit") or "").strip())' 2>/dev/null \
+      || true
+  )"
+  SYNC_TARGET="origin/main"
+  if [[ -n "${RELEASE_PIN:-}" ]] && run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" cat-file -e "${RELEASE_PIN}^{commit}" 2>/dev/null; then
+    SYNC_TARGET="$RELEASE_PIN"
+    log "Expansion sync → release.json.commit=$RELEASE_PIN"
+  else
+    warn "No usable release.json.commit — Expansion sync → origin/main"
+  fi
+  run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" reset --hard "$SYNC_TARGET"
+  ok "Working tree matches ${SYNC_TARGET}."
 else
   warn "Repository is on branch '${CURRENT_BRANCH:-detached}'. Fetched origin only; leaving your branch untouched."
 fi

@@ -1286,15 +1286,26 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
   run_watched 300 "git fetch" -- git -C "$INSTALL_DIR" fetch --prune origin
   CURRENT_BRANCH="$(git -C "$INSTALL_DIR" branch --show-current || true)"
 
-  # Always hard-sync public installs to origin/main so GPU/Codec fixes land.
-  # ff-only alone left friends stuck on stale trees after local edits/patches.
+  # Always hard-sync public installs so GPU/Codec/Genome fixes land.
+  # Prefer release.json.commit from origin/main when present (strict pin); else tip.
+  # ff-only alone left friends stuck on diverged trees (exit 128) with no Repair path.
   if [[ "$CURRENT_BRANCH" == "main" || -z "$CURRENT_BRANCH" ]]; then
     if ! run_watched 300 "git pull ff-only" -- git -C "$INSTALL_DIR" pull --ff-only; then
-      warn "Fast-forward pull failed — hard-resetting to origin/main so fixes apply."
-      run_watched 300 "git reset hard" -- git -C "$INSTALL_DIR" reset --hard origin/main
+      warn "Fast-forward pull failed — recovering to release pin / origin/main."
     fi
-    # Guarantee tip matches GitHub even when ff-only "succeeded" on an old remote.
-    run_watched 120 "git reset hard tip" -- git -C "$INSTALL_DIR" reset --hard origin/main
+    RELEASE_PIN="$(
+      git -C "$INSTALL_DIR" show origin/main:release.json 2>/dev/null \
+        | python3 -c 'import sys,json; print((json.load(sys.stdin).get("commit") or "").strip())' 2>/dev/null \
+        || true
+    )"
+    SYNC_TARGET="origin/main"
+    if [[ -n "${RELEASE_PIN:-}" ]] && git -C "$INSTALL_DIR" cat-file -e "${RELEASE_PIN}^{commit}" 2>/dev/null; then
+      SYNC_TARGET="$RELEASE_PIN"
+      log "Syncing to release.json.commit=$RELEASE_PIN"
+    else
+      warn "No usable release.json.commit — syncing to origin/main tip"
+    fi
+    run_watched 120 "git reset hard pin" -- git -C "$INSTALL_DIR" reset --hard "$SYNC_TARGET"
   else
     warn "Repository is on branch '${CURRENT_BRANCH:-detached}'."
     warn "Leaving local branch selection untouched; fetched origin only."
@@ -2239,6 +2250,19 @@ else
   warn "Voice Trainer skipped (OTACON_INSTALL_VOICE_TRAINER=0)."
   warn "  Standalone later: curl -fsSL $VOICE_TRAINER_INSTALLER_URL | bash"
   VOICE_TRAINER_OK=0
+fi
+
+# Privileged install uses OTACON_VT_SKIP_UI=1 — start Genome UI now that Core Python exists.
+if [[ "$VOICE_TRAINER_OK" == "1" ]] && [[ -x "${VENV_DIR}/bin/python" ]] && [[ -d "${HOME}/otacon-voice-trainer" ]]; then
+  log "Starting Genome Voice Trainer UI on :8765"
+  if PYTHONPATH="$INSTALL_DIR${PYTHONPATH:+:$PYTHONPATH}" "${VENV_DIR}/bin/python" -c \
+    "from expansion.capabilities.voice_trainer import ensure_voice_trainer_ui; import json; print(json.dumps(ensure_voice_trainer_ui()))" \
+    >/tmp/otacon-genome-ui.json 2>/tmp/otacon-genome-ui.err; then
+    ok "Genome UI ensure ran (see http://127.0.0.1:8765/)"
+  else
+    warn "Genome UI ensure failed — Expansion Set Up / Start Genome will repair :8765"
+    warn "  $(head -c 200 /tmp/otacon-genome-ui.err 2>/dev/null || true)"
+  fi
 fi
 
 # Install otacon CLI helper (doctor)

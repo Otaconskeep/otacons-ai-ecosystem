@@ -11,6 +11,7 @@ core.hardware_profile and surfaced via studio_setup.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -94,13 +95,94 @@ def save_studio_endpoint(endpoint: str, layout: Optional[StateLayout] = None) ->
         save_topology(topo)
     except Exception:
         pass
-    report = probe_video_studio(layout)
+    report = probe_video_studio(layout, clear_stale=False)
     return {
         'ok': True,
         'endpoint': endpoint,
         'state': report.state,
         'detail': report.detail,
         'video_studio': report.to_dict(),
+    }
+
+
+def clear_studio_endpoint(layout: Optional[StateLayout] = None) -> dict:
+    """Drop stale Comfy prefs so caps show honest SETUP (NOT_CONFIGURED), not LIMITED.
+
+    Does not unset OTACON_COMFYUI_URL / COMFYUI_URL in the process environment —
+    those are operator overrides. Clears video_studio.json + topology.comfyui_url.
+    """
+    layout = layout or resolve_layout()
+    cfg_path = layout.user_preferences / 'video_studio.json'
+    removed = False
+    if cfg_path.is_file():
+        try:
+            cfg_path.unlink()
+            removed = True
+        except OSError:
+            pass
+    topo_cleared = False
+    try:
+        from expansion.topology import load_topology, save_topology
+        topo = load_topology()
+        if (topo.comfyui_url or '').strip():
+            topo.comfyui_url = ''
+            save_topology(topo)
+            topo_cleared = True
+    except Exception:
+        pass
+    return {
+        'ok': True,
+        'removed_prefs': removed,
+        'cleared_topology': topo_cleared,
+    }
+
+
+def heal_docker_hub_auth() -> dict:
+    """Neutralize empty/broken Docker Hub auth that blocks *public* pulls.
+
+    Friends hit ``pull access denied`` when Docker Desktop left a broken
+    ``credsStore`` / empty ``auths`` entry — logout/heal, then retry pulls.
+    """
+    cfg = Path.home() / '.docker' / 'config.json'
+    if not cfg.is_file():
+        return {'ok': True, 'action': 'no_config'}
+    try:
+        import json
+        data = json.loads(cfg.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return {'ok': False, 'action': 'unreadable'}
+    changed = False
+    auths = data.get('auths') if isinstance(data.get('auths'), dict) else {}
+    for host in ('https://index.docker.io/v1/', 'https://registry-1.docker.io/v2/', 'docker.io'):
+        entry = auths.get(host)
+        if isinstance(entry, dict) and not (entry.get('auth') or entry.get('identitytoken')):
+            auths.pop(host, None)
+            changed = True
+    data['auths'] = auths
+    # credsStore that returns empty for anonymous Hub pulls → remove and rely on anonymous.
+    store = (data.get('credsStore') or data.get('credStore') or '').strip()
+    if store and not auths:
+        # Keep desktop helper when real logins exist; only strip when auths emptied.
+        data.pop('credsStore', None)
+        data.pop('credStore', None)
+        changed = True
+        store_removed = store
+    else:
+        store_removed = ''
+    if not changed:
+        return {'ok': True, 'action': 'unchanged'}
+    bak = cfg.with_suffix('.json.otacon-bak')
+    try:
+        if not bak.is_file():
+            bak.write_bytes(cfg.read_bytes())
+        cfg.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+    except OSError as exc:
+        return {'ok': False, 'action': 'write_failed', 'error': str(exc)}
+    return {
+        'ok': True,
+        'action': 'healed',
+        'removed_creds_store': store_removed,
+        'backup': str(bak),
     }
 
 
@@ -323,6 +405,10 @@ def ensure_comfy_sidecar(
         docker = None
 
     # Generation-aware GPU image (RTX 20/30/40/50). Bare :cu124 does not exist on Hub.
+    try:
+        heal_docker_hub_auth()
+    except Exception:
+        pass
     gpu_images: list[str] = []
     if 'gpu' in compose.name:
         try:
