@@ -355,3 +355,9 @@ a:hover{color:var(--mf-accent-bright)}
 }
 @media (max-width:700px){.codec-port.port-bleed{height:240px}}
 
+
+/* Codec humanization strip */
+.codec-human{display:flex;flex-direction:column;gap:6px;max-width:52rem}
+.codec-human-bio{margin:0;font-size:.82rem;line-height:1.45;color:var(--ot-text,#e8eef2);opacity:.92}
+.codec-human-truth{margin:0;font-size:.75rem;font-style:italic;line-height:1.4;color:var(--ot-lilac,#979fec)}
+.codec-taste .mood-chip{border-style:dashed;opacity:.9}

@@ -220,14 +220,15 @@
     return '';
   }
 
-  function floorShell(title, kicker, bodyHtml, extraMeta) {
+  function floorShell(title, kicker, bodyHtml, extraMeta, theme) {
     ensureFloorStyles();
     setBodyMode('home');
+    var themeCls = theme ? (' fl-theme-' + String(theme)) : '';
     var meta = (extraMeta || '') +
       btn('Home', 'showHome()', true) +
       btn('Codec', "typeof showChat==='function'&&showChat()", false);
     appRoot().innerHTML =
-      '<div class="home fl">' +
+      '<div class="home fl' + themeCls + '">' +
       '<header class="fl-mast"><div><p class="kicker">' + esc(kicker || 'Keep Expansion') +
       '</p><h1>' + esc(title) + '</h1></div><div class="meta">' + meta + '</div></header>' +
       '<div class="fl-body">' + foundationShellBanner() + (bodyHtml || '') + '</div>' +
@@ -235,6 +236,117 @@
       '<div style="display:flex;justify-content:space-between;gap:.5rem;align-items:center;margin-bottom:.5rem">' +
       '<h3 id="fl-drawer-title">WHY</h3>' + btn('Close', 'closeFloorDrawer()', true) +
       '</div><div id="fl-drawer-body"></div></div></div></div>';
+    if (theme === 'intel') setTimeout(function () { startPsalmRain('fl-matrix-rain'); }, 30);
+    if (theme === 'studio' || theme === 'ops' || theme === 'emotion' || theme === 'genome') {
+      try { if (typeof otSfx === 'function') otSfx('transmit'); } catch (_e) {}
+    }
+  }
+
+  /* Psalms fragments (KJV public domain) for Intel matrix rain */
+  var PSALM_RAIN = [
+    'The Lord is my shepherd I shall not want',
+    'He maketh me to lie down in green pastures',
+    'He leadeth me beside the still waters',
+    'He restoreth my soul',
+    'Yea though I walk through the valley of the shadow of death',
+    'I will fear no evil for thou art with me',
+    'Thy rod and thy staff they comfort me',
+    'Thou preparest a table before me',
+    'My cup runneth over',
+    'Surely goodness and mercy shall follow me',
+    'I will lift up mine eyes unto the hills',
+    'From whence cometh my help',
+    'My help cometh from the Lord',
+    'The Lord is thy keeper',
+    'The Lord shall preserve thee from all evil',
+    'Create in me a clean heart O God',
+    'Renew a right spirit within me',
+    'Cast me not away from thy presence',
+    'Restore unto me the joy of thy salvation',
+    'Bless the Lord O my soul',
+    'Who forgiveth all thine iniquities',
+    'Who healeth all thy diseases',
+    'Who redeemeth thy life from destruction',
+    'The heavens declare the glory of God',
+    'Day unto day uttereth speech',
+    'Night unto night sheweth knowledge',
+    'The law of the Lord is perfect',
+    'The testimony of the Lord is sure',
+    'More to be desired are they than gold',
+    'Let the words of my mouth be acceptable',
+    'God is our refuge and strength',
+    'A very present help in trouble',
+    'Be still and know that I am God',
+    'O give thanks unto the Lord for he is good',
+    'For his mercy endureth for ever',
+    'Thy word is a lamp unto my feet',
+    'And a light unto my path',
+    'Search me O God and know my heart',
+    'Try me and know my thoughts',
+    'Lead me in the way everlasting'
+  ];
+
+  function startPsalmRain(canvasParentId) {
+    var wrap = document.getElementById(canvasParentId);
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    var canvas = document.createElement('canvas');
+    wrap.appendChild(canvas);
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    var w = 0, h = 0, cols = [], font = 13;
+    function resize() {
+      w = canvas.width = Math.max(wrap.clientWidth || 800, 320);
+      h = canvas.height = Math.max(wrap.clientHeight || 480, 320);
+      var n = Math.floor(w / font);
+      cols = [];
+      for (var i = 0; i < n; i++) {
+        cols.push({
+          y: Math.random() * h,
+          speed: 0.6 + Math.random() * 1.8,
+          text: PSALM_RAIN[i % PSALM_RAIN.length],
+          offset: Math.floor(Math.random() * 40)
+        });
+      }
+    }
+    resize();
+    if (window.__psalmRainRaf) cancelAnimationFrame(window.__psalmRainRaf);
+    function tick() {
+      ctx.fillStyle = 'rgba(2,6,10,0.12)';
+      ctx.fillRect(0, 0, w, h);
+      ctx.font = font + 'px "Courier New", monospace';
+      for (var i = 0; i < cols.length; i++) {
+        var c = cols[i];
+        var ch = c.text[(Math.floor(c.y / font) + c.offset) % c.text.length] || '·';
+        var x = i * font;
+        ctx.fillStyle = i % 7 === 0 ? 'rgba(255,120,140,0.85)' : 'rgba(46,230,214,0.55)';
+        ctx.fillText(ch, x, c.y);
+        c.y += c.speed * font * 0.35;
+        if (c.y > h + 40) {
+          c.y = -Math.random() * 80;
+          c.text = PSALM_RAIN[Math.floor(Math.random() * PSALM_RAIN.length)];
+        }
+      }
+      window.__psalmRainRaf = requestAnimationFrame(tick);
+    }
+    tick();
+    window.addEventListener('resize', function () {
+      if (document.getElementById(canvasParentId)) resize();
+    }, { once: false });
+  }
+
+  function cineHero(eyebrow, title, copy) {
+    return '<div class="fl-cine-hero"><p class="eyebrow">' + esc(eyebrow) + '</p><h2>' +
+      esc(title) + '</h2><p>' + esc(copy) + '</p></div>';
+  }
+
+  function cineWidgets(items) {
+    return '<div class="fl-cine-widgets">' + (items || []).map(function (it) {
+      return '<button type="button" class="fl-cine-w" ' +
+        (it.onclick ? ('onclick="' + it.onclick + '"') : '') +
+        '><span class="k">' + esc(it.k) + '</span><span class="v ' + esc(it.cls || '') + '">' +
+        esc(it.v) + '</span></button>';
+    }).join('') + '</div>';
   }
 
   function showFloorDrawer(title, html) {
@@ -900,58 +1012,57 @@
   async function renderEmotionsFloor() {
     var d;
     try { d = await apiGet('/api/expansion/emotion'); }
-    catch (e) { floorShell('Emotions', 'Affective state', empty('Failed: ' + e)); return; }
+    catch (e) { floorShell('Emotions', 'Affective state', empty('Failed: ' + e), '', 'emotion'); return; }
     var agents = d.agents || [];
     var blocks = [];
+    var palette = ['#ff8fb8', '#7dc8ff', '#f2d596', '#b8db94', '#979fec'];
     for (var i = 0; i < agents.length; i++) {
       var a = agents[i];
       var detail = null;
       try { detail = await apiGet('/api/expansion/emotion/' + encodeURIComponent(a.agent_id)); }
       catch (e) { detail = null; }
       var primary = a.primary || (detail && detail.primary) || topDims(a.dimensions, 5);
-      var secondary = a.secondary || (detail && detail.secondary) || topDims(a.dimensions, 10).slice(5);
-      var base = a.baseline || a.product_baseline || {};
       var cur = a.dimensions || {};
-      var prov = a.provenance_tail || (detail && detail.provenance) || [];
+      var id = a.agent_id;
+      var rings = (primary || []).slice(0, 5).map(function (kv, idx) {
+        var pct = Math.max(4, Math.min(100, Math.round(Number(kv[1]) * 100)));
+        return '<div class="fl-emo-orbit" style="--pct:' + pct + '%;--c:' + palette[idx % palette.length] +
+          '"><span>' + esc(kv[0]) + '<br>' + pct + '%</span></div>';
+      }).join('');
       var stress = (detail && detail.stress_behavior) || '';
       var recovery = (detail && detail.recovery_behavior) || '';
-      var id = a.agent_id;
-      blocks.push('<section class="fl-panel"><div style="display:flex;gap:12px;align-items:center;margin-bottom:.75rem">' +
-        '<img src="' + agentAsset(esc(id), esc(id) + '.webp') + '" alt="" width="56" height="56" class="fl-avatar" onerror="this.onerror=null;this.src=agentAsset(\'aria\',\'aria.webp\')">' +
-        '<div><h3 class="fl-h" style="margin:0">' + esc(a.display_name || id) + '</h3>' +
-        '<p class="muted" style="margin:4px 0 0">affect board</p></div></div>' +
-        '<div class="fl-grid"><div><h4 class="fl-h">primary</h4>' +
-        ((primary || []).map(function (kv) {
-          return bar(kv[0], kv[1], { onclick: oc('floorEmotionWhy', id, kv[0]) });
-        }).join('') || empty('—')) +
-        '</div><div><h4 class="fl-h">secondary</h4>' +
-        ((secondary || []).map(function (kv) {
-          return bar(kv[0], kv[1], { onclick: oc('floorEmotionWhy', id, kv[0]) });
-        }).join('') || empty('—')) +
-        '</div></div><h4 class="fl-h">baseline vs current</h4><div class="fl-grid">' +
-        Object.keys(cur).slice(0, 12).map(function (k) {
-          return '<div class="fl-card"><b>' + esc(k) + '</b><p class="muted">base ' +
-            esc(String(base[k] != null ? base[k] : '—')) + '</p>' +
-            bar('now', cur[k], { onclick: oc('floorEmotionWhy', id, k) }) + '</div>';
+      blocks.push(
+        '<article class="fl-emo-card">' +
+        '<div class="fl-emo-head"><img class="fl-emo-avatar" src="' + agentAsset(esc(id), esc(id) + '.webp') +
+        '" alt="" onerror="this.onerror=null;this.src=agentAsset(\'aria\',\'aria.webp\')">' +
+        '<div><h3 style="margin:0;letter-spacing:.06em">' + esc(a.display_name || id) + '</h3>' +
+        '<p class="muted" style="margin:4px 0 0">live affect · baseline delta · provenance</p></div></div>' +
+        '<div class="fl-emo-rings">' + (rings || empty('—')) + '</div>' +
+        '<div class="fl-grid" style="position:relative;z-index:1">' +
+        Object.keys(cur).slice(0, 8).map(function (k) {
+          return bar(k, cur[k], { onclick: oc('floorEmotionWhy', id, k) });
         }).join('') + '</div>' +
         (stress || recovery
-          ? '<p class="muted">stress: ' + esc(stress || '—') + '<br>recovery: ' + esc(recovery || '—') + '</p>'
+          ? '<p class="muted" style="position:relative;z-index:1">stress: ' + esc(stress || '—') +
+            '<br>recovery: ' + esc(recovery || '—') + '</p>'
           : '') +
-        '<h4 class="fl-h">provenance tail</h4>' +
-        listCards(prov.slice(-8), function (p) {
-          if (typeof p === 'string') return '<div class="fl-card muted">' + esc(p) + '</div>';
-          return '<div class="fl-card"><span class="muted">' + esc(p.dim || p.dimension || '') +
-            ' · ' + esc(p.source || p.kind || '') + ' · ' + fmtTs(p.ts || p.timestamp) +
-            '</span><p>' + esc(p.note || p.detail || p.event_id || JSON.stringify(p).slice(0, 160)) +
-            '</p></div>';
-        }, 'No provenance events yet.') + '</section>');
+        '</article>'
+      );
     }
-    floorShell('Emotional State', 'Runtime EmotionStore',
-      '<p class="fl-note">' + esc(d.rule || 'Baselines from product + live decay/recovery.') + '</p>' +
-      (blocks.join('') || empty('No agent emotion state loaded.')));
+    var body =
+      cineHero('Affective continuum', 'Emotion Lab',
+        'Each agent is a living signal — rings pulse with primary affect. Tap any bar for WHY provenance.') +
+      cineWidgets([
+        { k: 'Roster', v: String(agents.length), cls: 'ok' },
+        { k: 'Mode', v: 'LIVE DECAY', cls: 'warn' },
+        { k: 'Board', v: 'MULTI-AGENT', cls: 'ok' },
+        { k: 'Signal', v: 'CODEC LINK', cls: 'ok' }
+      ]) +
+      '<div class="fl-symbol-row"><span class="fl-symbol">♥</span><span class="fl-symbol">◎</span><span class="fl-symbol">◇</span><span class="fl-symbol">⚡</span></div>' +
+      '<div class="fl-emo-board">' + (blocks.join('') || empty('No agent emotion state loaded.')) + '</div>';
+    floorShell('Emotional State', 'Runtime EmotionStore', body, '', 'emotion');
   }
 
-  /* —— War Room —— */
   async function renderWarRoomFloor() {
     var d;
     try { d = await apiGet('/api/expansion/war-room'); }
@@ -978,8 +1089,8 @@
         '<p class="muted">evidence: ' + esc((j.evidence || []).join(', ') || '—') +
         (j.error ? ' · err ' + esc(j.error) : '') + '</p>' + jobLink(j.job_id) + '</div>';
     }, 'No decision trace yet.');
-    floorShell('War Room', 'Jobs / decisions — not infra telemetry',
-      '<div class="fl-panel"><p class="fl-note">Foundation War Room shell — job/decision boards, not the full Keep ops deck.</p></div>' +
+    floorShell('War Room', 'Vector · tactical board',
+      cineHero('Tactical theater', 'War Room', 'Job boards, verification, and hard blocks — military sci-fi command glass.') +
       '<p class="fl-note">' + esc(d.note || '') + ' ' +
       esc(d.peer_review_note || rex.peer_review_note || '') + '</p>' + strip +
       '<div class="fl-rail" style="margin:.5rem 0">' +
@@ -992,10 +1103,10 @@
         jobCard, 'No rework.')) +
       panel('Incidents', listCards(d.incidents || [], jobCard, 'No incidents.')) +
       panel('Recovery', listCards((d.recovery && d.recovery.retrying) || [], jobCard, 'No recovery queue.')) +
-      panel('Decision / evidence trace', trace));
+      panel('Decision / evidence trace', trace),
+      '', 'ops');
   }
 
-  /* —— Aria Command —— */
   async function renderCommandFloor() {
     var d;
     try { d = await apiGet('/api/expansion/command'); }
@@ -1047,13 +1158,12 @@
       }, 'No blockers.')));
   }
 
-  /* —— Intel —— */
   async function renderIntelFloor() {
     var d;
     try { d = await apiGet('/api/expansion/intel'); }
-    catch (e) { floorShell('Intel', 'Ledger continuity', empty('Failed: ' + e)); return; }
+    catch (e) { floorShell('Intel', 'Ledger continuity', empty('Failed: ' + e), '', 'intel'); return; }
     if (d && d.enabled === false) {
-      floorShell('Intel', 'Ledger continuity', empty('Expansion not enabled.'));
+      floorShell('Intel', 'Ledger continuity', empty('Expansion not enabled.'), '', 'intel');
       return;
     }
     var q = (FL.intelQ || '').toLowerCase();
@@ -1072,139 +1182,126 @@
     var shared = ((d.learned_claims || {}).shared || []).filter(function (c) {
       return match([c.claim, c.claim_id]);
     });
-    var priv = Object.keys((d.learned_claims || {}).private_by_agent || {});
-    var livingKeys = Object.keys(d.living_dossiers || {});
     var relEv = (d.relationship_evidence || []).filter(function (x) {
       return match([x.source, x.target, x.label, x.narrative]);
     }).slice(0, 24);
+    var livingKeys = Object.keys(d.living_dossiers || {});
 
-    var privHtml = priv.map(function (aid) {
-      var rows = ((d.learned_claims.private_by_agent[aid]) || []).filter(function (c) {
-        return match([c.claim, aid]);
-      });
-      return panel('Private · ' + aid, listCards(rows, function (c) {
-        return '<div class="fl-card"><b>' + esc(c.claim) + '</b> ' +
-          btn('WHY', oc('floorLearningWhy', c.claim_id), true) + '</div>';
-      }, 'None.'));
-    }).join('');
-
-    var livingHtml = livingKeys.map(function (aid) {
-      var rows = (d.living_dossiers[aid] || []).filter(function (o) {
-        return match([aid, o.category, o.value, o.observation_id]);
-      });
-      return '<div class="fl-card"><b>' + esc(aid) + '</b>' + listCards(rows, function (o) {
-        return '<div style="margin-top:.4rem"><span class="muted">' + esc(o.category) + '</span> ' +
-          esc(o.value || '') + ' ' +
-          btn('WHY', oc('floorLivingWhy', aid, o.observation_id), true) + '</div>';
-      }, 'No observations.') + '</div>';
-    }).join('') || empty('No living dossiers.');
-
-    floorShell('Intel / Continuity', 'Ledger',
-      '<p class="fl-note">' + esc(d.note || '') + ' ' + esc(d.continuity_search_hint || '') + '</p>' +
-      '<div class="fl-filters"><input id="fl-intel-q" placeholder="search filter" value="' +
+    var body =
+      '<div class="fl-intel-shell">' +
+      '<div class="fl-matrix-rain" id="fl-matrix-rain" aria-hidden="true"></div>' +
+      '<div class="fl-intel-fore">' +
+      cineHero('Central Agency · Continuity', 'Classified Intel Deck',
+        'Ledger continuity under Psalms rain. Memories, claims, and relationship evidence — agency-grade, not a spreadsheet.') +
+      '<span class="fl-intel-stamp">TOP SECRET</span><span class="fl-intel-stamp">NEED-TO-KNOW</span>' +
+      cineWidgets([
+        { k: 'Memories', v: String(mems.length), cls: mems.length ? 'ok' : 'warn' },
+        { k: 'Events', v: String(events.length), cls: 'ok' },
+        { k: 'Claims', v: String(shared.length), cls: shared.length ? 'ok' : 'warn' },
+        { k: 'Living', v: String(livingKeys.length), cls: 'ok' }
+      ]) +
+      '<div class="fl-filters"><input id="fl-intel-q" placeholder="search continuity…" value="' +
       esc(FL.intelQ) +
       '" onkeydown="if(event.key===\'Enter\'){FL.intelQ=this.value;renderIntelFloor()}">' +
       btn('Filter', "FL.intelQ=document.getElementById('fl-intel-q').value;renderIntelFloor()", true) +
       '</div>' +
-      panel('Important memories', listCards(mems, function (m) {
-        return '<div class="fl-card"><b>' + esc(m.agent_id) + '</b> · imp ' + esc(String(m.importance)) +
-          '<p>' + esc(m.content || '') + '</p><p class="muted">' + esc(m.memory_id || '') + '</p></div>';
-      }, 'No high-importance memories.')) +
-      panel('Recent events', listCards(events, function (e) {
-        return '<div class="fl-card"><b>' + esc(e.event_type) + '</b> · ' + esc(e.actor) +
+      '<div class="fl-panel fl-intel-panel"><h3 class="fl-h">Important memories</h3>' +
+      (mems.map(function (m) {
+        return '<div class="fl-intel-card"><b>' + esc(m.agent_id) + '</b> · imp ' + esc(String(m.importance)) +
+          '<div>' + esc(m.content || '') + '</div><div class="muted">' + esc(m.memory_id || '') + '</div></div>';
+      }).join('') || empty('No high-importance memories.')) + '</div>' +
+      '<div class="fl-panel fl-intel-panel"><h3 class="fl-h">Recent events</h3>' +
+      (events.slice(0, 24).map(function (e) {
+        return '<div class="fl-intel-card"><b>' + esc(e.event_type) + '</b> · ' + esc(e.actor) +
           ' → ' + esc(e.subject || '') +
-          '<p class="muted">' + esc(e.event_id) + ' · ' + fmtTs(e.timestamp) + '</p></div>';
-      }, 'No events.')) +
-      panel('Journal timeline', listCards(journal.slice(0, 40), function (e) {
-        return '<div class="fl-card"><b>JOURNAL</b> ' + esc(e.summary || '') +
-          '<p class="muted">' + esc(e.agent_id) + ' · ' + esc(e.event_type) + ' · ' +
-          fmtTs(e.timestamp) + '</p></div>';
-      }, 'Journal empty.')) +
-      panel('Learned claims (shared)', listCards(shared, function (c) {
-        return '<div class="fl-card"><b>' + esc(c.claim) + '</b>' +
-          '<p class="muted">conf ' + esc(String(c.confidence)) + '</p>' +
+          '<div class="muted">' + esc(e.event_id) + ' · ' + fmtTs(e.timestamp) + '</div></div>';
+      }).join('') || empty('No events.')) + '</div>' +
+      '<div class="fl-panel fl-intel-panel"><h3 class="fl-h">Learned claims</h3>' +
+      (shared.map(function (c) {
+        return '<div class="fl-intel-card"><b>' + esc(c.claim) + '</b>' +
+          '<div class="muted">conf ' + esc(String(c.confidence)) + '</div>' +
           btn('WHY', oc('floorLearningWhy', c.claim_id), true) + '</div>';
-      }, 'No shared claims.')) +
-      privHtml +
-      panel('Living dossiers', livingHtml) +
-      panel('Relationship evidence', listCards(relEv, function (x) {
-        return '<div class="fl-card"><b>' + esc(x.source) + ' → ' + esc(x.target) + '</b> · ' +
-          esc(x.label || '') + '<p class="muted">' + esc(x.narrative || '') + '</p>' +
+      }).join('') || empty('No shared claims.')) + '</div>' +
+      '<div class="fl-panel fl-intel-panel"><h3 class="fl-h">Relationship evidence</h3>' +
+      (relEv.map(function (x) {
+        return '<div class="fl-intel-card"><b>' + esc(x.source) + ' → ' + esc(x.target) + '</b> · ' +
+          esc(x.label || '') + '<div class="muted">' + esc(x.narrative || '') + '</div>' +
           btn('WHY', oc('floorRelWhy', x.source, x.target), true) + '</div>';
-      }, 'No relationship evidence rows.')));
+      }).join('') || empty('No relationship evidence.')) + '</div>' +
+      '<div class="fl-panel fl-intel-panel"><h3 class="fl-h">Journal timeline</h3>' +
+      (journal.slice(0, 30).map(function (e) {
+        return '<div class="fl-intel-card"><b>JOURNAL</b> ' + esc(e.summary || '') +
+          '<div class="muted">' + esc(e.agent_id) + ' · ' + fmtTs(e.timestamp) + '</div></div>';
+      }).join('') || empty('Journal empty.')) + '</div>' +
+      '</div></div>';
+    floorShell('Intel / Continuity', 'Ledger · Secret Agency', body, '', 'intel');
   }
 
-  /* —— Reports —— */
   async function renderReportsFloor() {
     var d;
     try { d = await apiGet('/api/expansion/reports'); }
-    catch (e) { floorShell('Agent Reports', 'Full depth', empty('Failed: ' + e)); return; }
+    catch (e) { floorShell('Agent Reports', 'Full depth', empty('Failed: ' + e), '', 'reports'); return; }
     if (d && d.enabled === false) {
-      floorShell('Agent Reports', 'Full depth', empty('Expansion not enabled.'));
+      floorShell('Agent Reports', 'Full depth', empty('Expansion not enabled.'), '', 'reports');
       return;
     }
-    var body = (d.reports || []).map(function (r) {
+    var pages = (d.reports || []).map(function (r) {
       var emo = r.emotion || {};
       var m = r.metrics || {};
       var learn = r.learning || {};
       var claims = [].concat(learn.private || [], learn.shared_keep || []);
-      var caps = r.capabilities || {};
-      var emoBars = Object.keys(emo).map(function (k) { return [k, emo[k]]; })
-        .sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8)
-        .map(function (kv) {
-          return bar(kv[0], kv[1], { onclick: oc('floorEmotionWhy', r.agent_id, kv[0]) });
-        }).join('') || empty('—');
-      var diary = r.latest_diary
-        ? '<article class="fl-diary-entry">' + esc(r.latest_diary.text || '') +
-          (r.latest_diary.diary_id
-            ? btn('WHY', oc('floorDiaryWhy', r.agent_id, r.latest_diary.diary_id), true) : '') +
-          '</article>'
-        : empty('No diary yet.');
-      return '<section class="fl-panel"><h3 class="fl-h">' + esc(r.display_name || r.agent_id) +
-        ' — ' + esc(r.role || '') + ' · ' + esc(r.archetype || '') + '</h3>' +
-        '<p class="muted">runtime ' + esc(r.runtime_status || '—') + ' · success ' +
-        (m.success_rate != null ? esc(String(Math.round(m.success_rate * 100)) + '%') : 'n/a') +
-        ' · done ' + esc(String(m.completed || 0)) + ' · failed ' + esc(String(m.failed || 0)) + '</p>' +
-        '<div class="fl-strip">' + metric((r.active_jobs || []).length, 'active jobs') +
-        metric(m.completed || 0, 'completed') + metric(m.failed || 0, 'failed') + '</div>' +
-        '<h4 class="fl-h">emotion</h4><div class="fl-grid">' + emoBars + '</div>' +
-        '<div class="fl-rail">' + ['jealousy', 'stress', 'concern', 'confidence'].map(function (dim) {
-          return btn(dim + ' WHY', oc('floorEmotionWhy', r.agent_id, dim), true);
-        }).join('') + '</div>' +
-        '<h4 class="fl-h">relationships</h4>' +
-        listCards(r.relationship_highlights || [], function (h) {
-          return '<div class="fl-card"><b>→ ' + esc(h.target) + '</b> · ' + esc(h.label || '') +
-            '<p class="muted">' + esc(h.narrative || '') + '</p>' +
-            btn('Rel WHY', oc('floorRelWhy', r.agent_id, h.target), true) + '</div>';
-        }, 'None.') +
-        '<h4 class="fl-h">journal</h4>' +
-        listCards(r.recent_journal || [], function (j) {
-          return '<div class="fl-card">' + esc(j.summary || '') +
-            '<p class="muted">' + fmtTs(j.timestamp) + '</p></div>';
-        }, 'No recent journal.') +
-        '<h4 class="fl-h">diary</h4>' + diary +
-        '<h4 class="fl-h">living</h4>' +
-        listCards(r.living_observations || [], function (o) {
-          return '<div class="fl-card"><b>' + esc(o.category || '') + '</b> ' + esc(o.value || '') +
-            (o.observation_id
-              ? ' ' + btn('WHY', oc('floorLivingWhy', r.agent_id, o.observation_id), true) : '') +
-            '</div>';
-        }, 'None.') +
-        '<h4 class="fl-h">learning</h4>' +
-        listCards(claims, function (c) {
-          return '<div class="fl-card"><b>' + esc(c.claim) + '</b> ' +
-            btn('WHY', oc('floorLearningWhy', c.claim_id), true) + '</div>';
-        }, 'No claims yet.') +
-        '<h4 class="fl-h">capabilities</h4><div class="fl-card"><p class="muted">voice ' +
-        esc(caps.voice || '—') + ' · room ' + esc(caps.room || '—') + '</p>' +
-        '<p>strengths: ' + esc((caps.strengths || []).join(', ') || '—') + '</p>' +
-        '<p>weaknesses: ' + esc((caps.weaknesses || []).join(', ') || '—') + '</p></div></section>';
+      var lines = [];
+      lines.push('CLASSIFICATION: KEEP INTERNAL');
+      lines.push('SUBJECT: ' + (r.display_name || r.agent_id) + ' — ' + (r.role || ''));
+      lines.push('ARCHETYPE: ' + (r.archetype || '—'));
+      lines.push('RUNTIME: ' + (r.runtime_status || '—'));
+      lines.push('SUCCESS: ' + (m.success_rate != null ? (Math.round(m.success_rate * 100) + '%') : 'n/a') +
+        ' · DONE ' + (m.completed || 0) + ' · FAILED ' + (m.failed || 0));
+      lines.push('');
+      lines.push('EMOTION SNAPSHOT');
+      Object.keys(emo).map(function (k) { return [k, emo[k]]; })
+        .sort(function (a, b) { return b[1] - a[1]; }).slice(0, 6)
+        .forEach(function (kv) {
+          lines.push('  · ' + kv[0] + ': ' + (Math.round(Number(kv[1]) * 1000) / 1000));
+        });
+      lines.push('');
+      lines.push('RELATIONSHIP HIGHLIGHTS');
+      (r.relationship_highlights || []).slice(0, 5).forEach(function (h) {
+        lines.push('  · → ' + (h.target || '') + ' · ' + (h.label || '') +
+          (h.narrative ? (' — ' + h.narrative) : ''));
+      });
+      if (!(r.relationship_highlights || []).length) lines.push('  · (none on file)');
+      lines.push('');
+      lines.push('LATEST DIARY');
+      lines.push(r.latest_diary && r.latest_diary.text
+        ? String(r.latest_diary.text).slice(0, 600)
+        : '  · (no diary yet)');
+      lines.push('');
+      lines.push('LEARNED CLAIMS');
+      claims.slice(0, 6).forEach(function (c) { lines.push('  · ' + (c.claim || '')); });
+      if (!claims.length) lines.push('  · (none)');
+      var text = lines.join('\n');
+      return '<article class="fl-rpt-page">' +
+        '<h3 class="fl-rpt-title">' + esc(r.display_name || r.agent_id) + '</h3>' +
+        '<p class="fl-rpt-meta">FIELD REPORT · ' + esc(r.agent_id) + ' · ' + esc(r.role || '') + '</p>' +
+        '<div class="fl-rpt-section">Typewritten record</div>' +
+        '<pre class="fl-rpt-body fl-rpt-type">' + esc(text) + '</pre>' +
+        '<div class="fl-rail" style="margin-top:10px">' +
+        btn('jealousy WHY', oc('floorEmotionWhy', r.agent_id, 'jealousy'), true) +
+        btn('stress WHY', oc('floorEmotionWhy', r.agent_id, 'stress'), true) +
+        (r.latest_diary && r.latest_diary.diary_id
+          ? btn('Diary WHY', oc('floorDiaryWhy', r.agent_id, r.latest_diary.diary_id), true) : '') +
+        '</div></article>';
     }).join('') || empty('No reports.');
-    floorShell('Agent Reports', 'Full provenance depth', body);
+    var body =
+      '<div class="fl-rpt-desk">' +
+      '<p style="margin:0 0 1rem;letter-spacing:.18em;text-transform:uppercase;font-size:11px;color:#6b1f2c">Central Agency · Typewriter bureau</p>' +
+      pages + '</div>';
+    floorShell('Agent Reports', 'Typewriter bureau', body, '', 'reports');
   }
 
   /* —— Creative / Muse Video Studio (Keep Workshop parity) —— */
-  var FL_STUDIO = { modality: 'image' };
+  var FL_STUDIO = { modality: 'image', actors: {}, style: '' };
 
   function studioEndpointHost(ep) {
     try {
@@ -1215,14 +1312,9 @@
   }
 
   function studioPromptDefaults(engines, modality) {
-    var map = {
-      image: 'z-image-turbo',
-      video: 'wan-2.2-5b',
-      music: 'ace-step-1.5'
-    };
+    var map = { image: 'z-image-turbo', video: 'wan-2.2-5b', music: 'ace-step-1.5' };
     var key = map[modality] || map.image;
     var eng = (engines && engines[key]) || {};
-    // Prefer modality-matching engine if profile selected a different id
     Object.keys(engines || {}).forEach(function (k) {
       if (modality === 'image' && /image|z-image/i.test(k)) key = k;
       if (modality === 'video' && /wan|ltx|video/i.test(k)) key = k;
@@ -1237,10 +1329,26 @@
     };
   }
 
+  function floorStudioCloseModals() {
+    ['flVsOptimalModal', 'flVsFillModal'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.hidden = true;
+    });
+  }
+
+  function floorStudioOpenOptimal() {
+    var m = document.getElementById('flVsOptimalModal');
+    if (m) m.hidden = false;
+  }
+
+  function floorStudioOpenFill() {
+    var m = document.getElementById('flVsFillModal');
+    if (m) m.hidden = false;
+  }
+
   async function floorStudioSetModality(mod) {
     FL_STUDIO.modality = mod || 'image';
-    var tabs = document.querySelectorAll('.fl-studio-tabs .fl-tab');
-    tabs.forEach(function (t) {
+    document.querySelectorAll('.fl-vs-mode').forEach(function (t) {
       t.classList.toggle('on', t.getAttribute('data-mod') === FL_STUDIO.modality);
     });
     var defs = FL_STUDIO._defaults || {};
@@ -1256,22 +1364,27 @@
     var tuneVideo = document.getElementById('fl-tune-video');
     var tuneImage = document.getElementById('fl-tune-image');
     var tuneMusic = document.getElementById('fl-tune-music');
+    var musicPanel = document.getElementById('fl-vs-music-panel');
     var imgWidgets = document.getElementById('fl-studio-image-widgets');
-    var optBox = document.getElementById('fl-studio-optimal');
+    var drop = document.getElementById('fl-vs-drop');
     if (tuneVideo) tuneVideo.hidden = FL_STUDIO.modality !== 'video';
     if (tuneImage) tuneImage.hidden = FL_STUDIO.modality === 'music';
     if (tuneMusic) tuneMusic.hidden = FL_STUDIO.modality !== 'music';
+    if (musicPanel) musicPanel.hidden = FL_STUDIO.modality !== 'music';
     if (imgWidgets) imgWidgets.hidden = FL_STUDIO.modality !== 'image';
+    if (drop) drop.hidden = FL_STUDIO.modality === 'music';
+    var packs = (FL_STUDIO._optimal && FL_STUDIO._optimal[FL_STUDIO.modality]) || [];
+    var optBox = document.getElementById('fl-studio-optimal');
     if (optBox) {
-      var packs = (FL_STUDIO._optimal && FL_STUDIO._optimal[FL_STUDIO.modality]) || [];
       optBox.innerHTML = packs.length
         ? packs.map(function (p) {
-            return '<button type="button" class="fl-tab" title="' + esc(p.note || p.text || '') +
-              '" onclick=\'floorStudioApplyOptimal(' + JSON.stringify(p.text || '') + ')\'>' +
+            return '<button type="button" class="fl-vs-preset" title="' + esc(p.note || p.text || '') +
+              '" onclick=\'floorStudioApplyOptimal(' + JSON.stringify(p.text || '') + ');floorStudioCloseModals()\'>' +
               esc(p.label || p.id) + '</button>';
           }).join('')
         : '<span class="muted">No optimal packs for this mode yet.</span>';
     }
+    try { if (typeof otSfx === 'function') otSfx('click'); } catch (_e) {}
   }
 
   function floorStudioApplyOptimal(text) {
@@ -1279,6 +1392,23 @@
     if (!prompt) return;
     prompt.value = String(text || '');
     prompt.dataset.dirty = '1';
+  }
+
+  function floorStudioFillApply() {
+    var topic = (document.getElementById('fl-vs-fill-topic') || {}).value || '';
+    var mood = (document.getElementById('fl-vs-fill-mood') || {}).value || 'cinematic';
+    var prompt = document.getElementById('fl-studio-prompt');
+    if (!prompt) return;
+    var bits = [];
+    if (topic) bits.push(String(topic).trim());
+    bits.push(mood + ' lighting');
+    bits.push('coherent subject');
+    bits.push('high detail');
+    if (FL_STUDIO.modality === 'video') bits.push('smooth natural motion');
+    if (FL_STUDIO.modality === 'music') bits.push('clean mix, loop-friendly structure');
+    prompt.value = bits.join(', ');
+    prompt.dataset.dirty = '1';
+    floorStudioCloseModals();
   }
 
   function floorStudioToggleActor(id) {
@@ -1295,13 +1425,42 @@
     });
   }
 
+  function floorStudioAddActor() {
+    var name = ((document.getElementById('fl-vs-actor-name') || {}).value || '').trim();
+    var note = ((document.getElementById('fl-vs-actor-desc') || {}).value || '').trim();
+    if (!name) return;
+    var id = 'custom_' + name.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 24);
+    FL_STUDIO._actors = FL_STUDIO._actors || [];
+    FL_STUDIO._actors.push({ id: id, label: name, note: note || 'Custom cast', tag: 'custom', portrait: '' });
+    renderCreativeFloor();
+  }
+
+  function floorStudioAddStyle() {
+    var name = ((document.getElementById('fl-vs-style-name') || {}).value || '').trim();
+    if (!name) return;
+    var id = 'style_' + name.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 24);
+    FL_STUDIO._styles = FL_STUDIO._styles || [];
+    FL_STUDIO._styles.push({ id: id, label: name });
+    FL_STUDIO.style = id;
+    renderCreativeFloor();
+  }
+
   async function floorStudioGenerate() {
     var msg = document.getElementById('fl-studio-msg');
-    function say(t) { if (msg) msg.textContent = t; }
+    var log = document.getElementById('fl-vs-log');
+    function say(t) {
+      if (msg) msg.textContent = t;
+      if (log) log.textContent = (log.textContent ? log.textContent + '\n' : '') + '[' + new Date().toLocaleTimeString() + '] ' + t;
+    }
     var promptEl = document.getElementById('fl-studio-prompt');
     var negEl = document.getElementById('fl-studio-negative');
+    var musicDesc = document.getElementById('fl-vs-music-simple-desc');
     var prompt = promptEl ? String(promptEl.value || '').trim() : '';
-    if (!prompt) { say('Write a prompt first.'); return; }
+    if (FL_STUDIO.modality === 'music' && musicDesc && String(musicDesc.value || '').trim()) {
+      prompt = String(musicDesc.value || '').trim();
+      if (promptEl) { promptEl.value = prompt; promptEl.dataset.dirty = '1'; }
+    }
+    if (!prompt) { say('Write a prompt first — or tap Fill This In.'); return; }
     var engEl = document.getElementById('fl-studio-engine');
     var engine = engEl ? String(engEl.textContent || '').trim() : '';
     var tuning = {
@@ -1309,20 +1468,24 @@
       cfg: (document.getElementById('fl-tune-cfg') || {}).value,
       resolution: (document.getElementById('fl-tune-res') || {}).value,
       seed: (document.getElementById('fl-tune-seed') || {}).value,
-      duration: (document.getElementById('fl-tune-dur') || {}).value,
+      duration: (document.getElementById('fl-tune-dur') || {}).value ||
+        (document.getElementById('fl-vs-music-dur') || {}).value,
       fps: (document.getElementById('fl-tune-fps') || {}).value,
       quality: (document.getElementById('fl-tune-quality') || {}).value,
       bpm: (document.getElementById('fl-tune-bpm') || {}).value,
       key: (document.getElementById('fl-tune-key') || {}).value,
       bars: (document.getElementById('fl-tune-bars') || {}).value,
+      lyrics: (document.getElementById('fl-vs-music-lyrics') || {}).value,
       aspect: (document.getElementById('fl-img-aspect') || {}).value,
       identity_lock: (document.getElementById('fl-img-lock') || {}).value,
       batch: (document.getElementById('fl-img-batch') || {}).value,
       style: FL_STUDIO.style || '',
-      actors: Object.keys(FL_STUDIO.actors || {}).filter(function (k) { return FL_STUDIO.actors[k]; })
+      actors: Object.keys(FL_STUDIO.actors || {}).filter(function (k) { return FL_STUDIO.actors[k]; }),
+      ref_image: (document.getElementById('fl-vs-ref-name') || {}).textContent || ''
     };
     say('Queuing for Muse…');
     try {
+      if (typeof otSfx === 'function') otSfx('ok');
       var r = await api('/api/expansion/creative/generate', {
         modality: FL_STUDIO.modality || 'image',
         prompt: prompt,
@@ -1350,10 +1513,17 @@
     prompt.dataset.dirty = '1';
   }
 
+  function floorStudioOnDrop(ev) {
+    if (ev && ev.preventDefault) ev.preventDefault();
+    var f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+    var label = document.getElementById('fl-vs-ref-name');
+    if (f && label) label.textContent = f.name;
+  }
+
   async function renderCreativeFloor() {
     var d;
     try { d = await apiGet('/api/expansion/creative'); }
-    catch (e) { floorShell('Creative Studio', 'Muse', empty('Failed: ' + e)); return; }
+    catch (e) { floorShell('Creative Studio', 'Muse', empty('Failed: ' + e), '', 'studio'); return; }
     var state = String(d.video_studio_readiness || (d.video_studio && d.video_studio.state) || 'UNAVAILABLE').toUpperCase();
     var vs = d.video_studio || {};
     var studio = d.studio || {};
@@ -1363,198 +1533,193 @@
     var endpoint = studio.endpoint || (vs.discovery && vs.discovery.endpoint) || '';
     var ready = state === 'READY';
     var needsSetup = state === 'UNAVAILABLE' || state === 'NOT_CONFIGURED' || state === 'NEEDS_SETUP';
-    var liveCls = ready ? 'ok' : (needsSetup ? 'warn' : 'warn');
 
-    var hwLine = hw.profile_id
-      ? (esc(hw.profile_id) + ' · ' +
-        esc(String(hw.marketed_vram_gb || hw.vram_gb || '?')) + ' GB VRAM · ' +
-        esc(String(hw.marketed_ram_gb || hw.ram_gb || '?')) + ' GB RAM · Comfy ' +
-        esc(hw.comfy_runtime || '—'))
-      : '';
-
-    var statusStrip =
-      '<div class="fl-studio-status">' +
-      '<div class="fl-ready ' + liveCls + '"><div class="fl-ready-top"><b></b><span>Studio</span><em>' +
-      esc(ready ? 'LIVE' : state) + '</em></div><p>' +
-      esc(ready ? 'ComfyUI connected — Muse Workshop is live.' : (vs.detail || d.honest_note || 'Set up Video Studio to go READY.')) +
-      '</p></div>' +
-      '<div class="fl-ready ' + (studio.healthy ? 'ok' : 'warn') + '"><div class="fl-ready-top"><b></b><span>ComfyUI</span><em>' +
-      esc(studioEndpointHost(endpoint)) + '</em></div><p>' +
-      esc(hwLine || (endpoint ? 'Endpoint registered with Expansion.' : 'No endpoint yet.')) +
-      '</p></div>' +
-      '<div class="fl-ready"><div class="fl-ready-top"><b></b><span>Engines</span><em>LOCAL</em></div><p>' +
-      esc(((studio.modalities || []).map(function (m) {
-        return (m.label || m.id) + ': ' + (m.engine || '—');
-      }).join(' · ')) || 'Image · Video · Music') +
-      '</p></div></div>';
-
-    var actions =
-      '<div class="fl-rail fl-studio-actions">' +
-      (needsSetup
-        ? btn('Set Up Video Studio', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", false) +
-          btn('Start setup', "typeof startStudioSetup==='function'?startStudioSetup():(typeof showVideoStudioSetup==='function'&&showVideoStudioSetup())", true)
-        : btn('Refresh', 'renderCreativeFloor()', true) +
-          btn('Setup / Advanced', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", true)) +
-      '</div>';
-
-    if (needsSetup) {
-      floorShell('Muse Creative Studio', 'Expansion premium — Video Studio',
-        ariaGuideCard(
-          'Aria',
-          'Video Studio isn\'t set up yet. Tap Set Up — I\'ll install what\'s needed. You don\'t have to touch Docker or type any commands.'
-        ) +
-        statusStrip + actions +
-        '<div class="fl-panel fl-studio-hero"><h3 class="fl-h">Workshop</h3>' +
-        '<p class="fl-guide">After it says LIVE, you\'ll get Image / Video / Music, optimal prompts, actors, and tuning — like OtaconsKeep Production Studio.</p></div>');
-      return;
-    }
+    var actors = (FL_STUDIO._actors && FL_STUDIO._actors.length)
+      ? FL_STUDIO._actors
+      : (studio.actors || []).map(function (a) {
+          var aid = (a.id || '').replace(/_cameo|_self|_a|_b|_c/g, '').replace('muse', 'muse').replace('aria', 'aria');
+          var portraitId = /aria/i.test(a.id || a.label || '') ? 'aria'
+            : (/muse/i.test(a.id || a.label || '') ? 'muse'
+              : (/vector/i.test(a.id || '') ? 'vector'
+                : (/ledger/i.test(a.id || '') ? 'ledger'
+                  : (/sentry/i.test(a.id || '') ? 'sentry' : ''))));
+          return Object.assign({}, a, {
+            portrait: portraitId ? agentAsset(portraitId, portraitId + '.webp') : ''
+          });
+        });
+    FL_STUDIO._actors = actors;
+    var styles = (FL_STUDIO._styles && FL_STUDIO._styles.length) ? FL_STUDIO._styles : (studio.styles || []);
+    FL_STUDIO._styles = styles;
+    FL_STUDIO._optimal = studio.optimal_prompts || {};
+    FL_STUDIO.actors = FL_STUDIO.actors || {};
+    if (!FL_STUDIO.modality) FL_STUDIO.modality = 'image';
 
     var mods = studio.modalities || [
       { id: 'image', label: 'Image' },
       { id: 'video', label: 'Video' },
       { id: 'music', label: 'Music' }
     ];
-    if (!FL_STUDIO.modality) FL_STUDIO.modality = 'image';
-    FL_STUDIO._optimal = studio.optimal_prompts || {};
-    FL_STUDIO.actors = FL_STUDIO.actors || {};
     var defs = studioPromptDefaults(engines, FL_STUDIO.modality);
     mods.forEach(function (m) {
       if (m.id === FL_STUDIO.modality && m.engine) defs.engine = m.engine;
     });
-
-    var chips = [
-      'identity-preserving', 'cinematic lighting', 'stable subject',
-      'natural motion', 'clean background', 'film grain'
-    ];
-    var optPacks = (studio.optimal_prompts && studio.optimal_prompts[FL_STUDIO.modality]) || [];
-    var actors = studio.actors || [];
-    var styles = studio.styles || [];
     var musicAdv = studio.music_advanced || {};
     var imgWidgets = studio.image_widgets || [];
+    var optPacks = (studio.optimal_prompts && studio.optimal_prompts[FL_STUDIO.modality]) || [];
+    var vram = hw.marketed_vram_gb || hw.vram_gb || '?';
+    var chips = ['identity-preserving', 'cinematic lighting', 'stable subject', 'natural motion', 'clean background', 'film grain'];
 
-    var ariaLive = ariaGuideCard(
-      'Muse',
-      'Pick Image, Video, or Music. Tap an Optimal Prompt if you\'re unsure what to write. Choose actors/styles, tweak Tuning, then Generate — I queue the job. Advanced diagnostics stay collapsed.'
-    );
+    if (needsSetup) {
+      floorShell('The Workshop', 'Muse · Video Studio',
+        '<div class="fl-workshop">' +
+        '<div class="fl-vs-hero"><div class="fl-vs-byline"><img src="' + agentAsset('muse', 'muse.webp') +
+        '" alt=""><span>Muse // The Workshop</span></div>' +
+        '<h2>THE WORKSHOP</h2><p>Video Studio is not armed yet. Tap Set Up — Aria installs Comfy. Then you get the full Keep Workshop: actors, styles, optimal prompts, music, tuning gauges.</p>' +
+        '<div class="fl-vs-gpu"><i></i> ' + esc(state) + '</div></div>' +
+        '<div class="fl-rail">' +
+        btn('Set Up Video Studio', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", false) +
+        btn('Start setup', "typeof startStudioSetup==='function'?startStudioSetup():(typeof showVideoStudioSetup==='function'&&showVideoStudioSetup())", true) +
+        '</div></div>', '', 'studio');
+      return;
+    }
 
-    var optimal =
-      '<div class="fl-panel"><h3 class="fl-h">Optimal prompts</h3>' +
-      '<p class="muted">One-tap starters for non-experts — replaces guessing.</p>' +
-      '<div class="fl-rail" id="fl-studio-optimal">' +
-      (optPacks.map(function (p) {
-        return '<button type="button" class="fl-tab" onclick=\'floorStudioApplyOptimal(' +
-          JSON.stringify(p.text || '') + ')\'>' + esc(p.label || p.id) + '</button>';
-      }).join('') || '<span class="muted">—</span>') +
-      '</div></div>';
+    var body =
+      '<div class="fl-workshop">' +
+      '<div class="fl-vs-hero"><div class="fl-vs-byline"><img src="' + agentAsset('muse', 'muse.webp') +
+      '" alt=""><span>Muse // The Workshop</span></div>' +
+      '<h2>THE WORKSHOP</h2>' +
+      '<p>Keep Production Studio on Expansion — Image, Video, Music. Actors, styles, optimal prompts, tuning rack, workshop log. Same soul as OtaconsKeep.</p>' +
+      '<div class="fl-vs-gpu' + (ready ? ' ready' : '') + '"><i></i> ' +
+      esc(ready ? ('LIVE · ' + studioEndpointHost(endpoint) + ' · ' + vram + ' GB') : state) +
+      '</div></div>' +
 
-    var cast =
-      '<div class="fl-panel"><h3 class="fl-h">Actors</h3>' +
-      '<div class="fl-rail">' + actors.map(function (a) {
-        return '<button type="button" class="fl-tab" data-actor="' + esc(a.id) +
-          '" onclick="floorStudioToggleActor(\'' + esc(a.id) + '\')">' +
-          esc(a.label || a.id) + '</button>';
+      '<div class="fl-vs-rings">' +
+      '<div class="fl-vs-ring"><div class="g" style="--p:' + (ready ? '82' : '28') +
+      '%"><b>' + (ready ? 'OK' : '…') + '</b></div><div class="l">GPU</div></div>' +
+      '<div class="fl-vs-ring"><div class="g" style="--p:45%"><b>Q</b></div><div class="l">Queue</div></div>' +
+      '<div class="fl-vs-ring"><div class="g" style="--p:60%"><b>28</b></div><div class="l">Steps</div></div>' +
+      '<div class="fl-vs-ring"><div class="g" style="--p:70%"><b>' + esc(String(vram)) +
+      '</b></div><div class="l">VRAM</div></div></div>' +
+
+      '<div class="fl-vs-card"><h3>Actors</h3><div class="fl-vs-actors">' +
+      actors.map(function (a) {
+        var on = FL_STUDIO.actors[a.id] ? ' on' : '';
+        var img = a.portrait
+          ? ('<img src="' + esc(a.portrait) + '" alt="" onerror="this.style.display=\'none\'">')
+          : '<div class="ph">REF</div>';
+        return '<button type="button" class="fl-vs-actor' + on + '" data-actor="' + esc(a.id) +
+          '" onclick="floorStudioToggleActor(\'' + esc(a.id) + '\')">' + img +
+          '<div class="nm">' + esc(a.label || a.id) + '</div>' +
+          '<div class="ds">' + esc(a.note || a.tag || '') + '</div></button>';
       }).join('') + '</div>' +
-      '<p class="muted" style="margin-top:6px">Toggle who appears. Custom slots fill when you add face packs later.</p></div>';
+      '<div class="fl-form" style="margin-top:12px">' +
+      '<label>Name<input id="fl-vs-actor-name" placeholder="New actor"></label>' +
+      '<label>Note<input id="fl-vs-actor-desc" placeholder="Personality / look"></label>' +
+      '</div><div class="fl-rail" style="margin-top:8px">' +
+      '<button type="button" class="fl-vs-submit ghost" onclick="floorStudioAddActor()">Add actor</button></div></div>' +
 
-    var styleBox =
-      '<div class="fl-panel"><h3 class="fl-h">Styles</h3>' +
-      '<div class="fl-rail">' + styles.map(function (s) {
-        return '<button type="button" class="fl-tab" data-style="' + esc(s.id) +
-          '" onclick="floorStudioPickStyle(\'' + esc(s.id) + '\')">' +
-          esc(s.label || s.id) + '</button>';
-      }).join('') + '</div></div>';
+      '<div class="fl-vs-card"><h3>Styles</h3><div class="fl-vs-styles">' +
+      styles.map(function (s) {
+        var on = FL_STUDIO.style === s.id ? ' on' : '';
+        return '<button type="button" class="fl-vs-style' + on + '" data-style="' + esc(s.id) +
+          '" onclick="floorStudioPickStyle(\'' + esc(s.id) + '\')"><b>' + esc(s.label || s.id) +
+          '</b></button>';
+      }).join('') + '</div>' +
+      '<div class="fl-form" style="margin-top:12px"><label>New style<input id="fl-vs-style-name" placeholder="e.g. Soft noir"></label></div>' +
+      '<div class="fl-rail" style="margin-top:8px"><button type="button" class="fl-vs-submit ghost" onclick="floorStudioAddStyle()">Add style</button></div></div>' +
 
-    var imgBox =
-      '<div class="fl-panel" id="fl-studio-image-widgets"' +
-      (FL_STUDIO.modality === 'image' ? '' : ' hidden') + '>' +
-      '<h3 class="fl-h">Image widgets</h3><div class="fl-form">' +
-      imgWidgets.map(function (w) {
-        var opts = (w.options || []).map(function (o) {
-          return '<option>' + esc(o) + '</option>';
-        }).join('');
-        var id = w.id === 'aspect' ? 'fl-img-aspect'
-          : (w.id === 'ref_strength' ? 'fl-img-lock' : (w.id === 'batch' ? 'fl-img-batch' : ('fl-img-' + w.id)));
-        return '<label>' + esc(w.label || w.id) + '<select id="' + id + '">' + opts + '</select></label>';
-      }).join('') + '</div></div>';
-
-    var entry =
-      '<div class="fl-panel fl-studio-entry">' +
-      '<div class="fl-studio-entry-head"><h3 class="fl-h">New entry</h3>' +
-      '<span class="muted">Agent <b>Muse</b> · Engine <b id="fl-studio-engine">' + esc(defs.engine || '—') + '</b></span></div>' +
-      '<div class="fl-tabs fl-studio-tabs">' + mods.map(function (m) {
-        return '<button type="button" class="fl-tab' + (m.id === FL_STUDIO.modality ? ' on' : '') +
+      '<div class="fl-vs-card"><h3>New Entry</h3>' +
+      '<div class="fl-vs-modes">' + mods.map(function (m) {
+        return '<button type="button" class="fl-vs-mode' + (m.id === FL_STUDIO.modality ? ' on' : '') +
           '" data-mod="' + esc(m.id) + '" onclick="floorStudioSetModality(\'' + esc(m.id) + '\')">' +
           esc(m.label || m.id) + '</button>';
       }).join('') + '</div>' +
-      '<p class="fl-note" id="fl-studio-engine-role">' + esc(defs.role || '') + '</p>' +
-      '<div class="fl-studio-deck">' +
-      '<span class="fl-h">Prompt deck</span>' +
-      '<div class="fl-rail">' + chips.map(function (c) {
-        return '<button type="button" class="fl-tab" onclick=\'floorStudioApplyChip(' +
+      '<p class="muted">Agent <b>Muse</b> · Engine <b id="fl-studio-engine">' + esc(defs.engine || '—') +
+      '</b> · <span id="fl-studio-engine-role">' + esc(defs.role || '') + '</span></p>' +
+      '<div class="fl-rail" style="margin:.55rem 0">' +
+      '<button type="button" class="fl-vs-submit ghost" onclick="floorStudioOpenOptimal()">Optimal prompts</button>' +
+      '<button type="button" class="fl-vs-submit ghost" onclick="floorStudioOpenFill()">✦ Fill This In For Me</button>' +
+      '</div>' +
+      '<div class="fl-rail" style="margin:0 0 .75rem">' + chips.map(function (c) {
+        return '<button type="button" class="fl-vs-preset" onclick=\'floorStudioApplyChip(' +
           JSON.stringify(c) + ')\'>' + esc(c) + '</button>';
-      }).join('') + '</div></div>' +
-      '<label class="fl-studio-prompt-label">Prompt<textarea id="fl-studio-prompt" rows="5" oninput="this.dataset.dirty=\'1\'">' +
-      esc(defs.positive || '') + '</textarea></label>' +
-      '<label class="fl-studio-prompt-label">Negative<textarea id="fl-studio-negative" rows="2" oninput="this.dataset.dirty=\'1\'">' +
-      esc(defs.negative || '') + '</textarea></label>' +
-      '<div class="fl-rail" style="margin-top:10px">' +
-      btn('Generate', 'floorStudioGenerate()', false) +
-      btn('Optimal defaults', "var p=document.getElementById('fl-studio-prompt');var n=document.getElementById('fl-studio-negative');if(p)delete p.dataset.dirty;if(n)delete n.dataset.dirty;floorStudioSetModality(FL_STUDIO.modality)", true) +
-      '</div>' +
-      '<p id="fl-studio-msg" class="muted" style="margin-top:8px"></p></div>';
+      }).join('') + '</div>' +
+      '<div class="fl-vs-drop" id="fl-vs-drop" ondragover="event.preventDefault()" ondrop="floorStudioOnDrop(event)">' +
+      'Drop a reference image here (identity / start frame)<div id="fl-vs-ref-name" class="muted" style="margin-top:6px">No file</div></div>' +
+      '<div class="fl-vs-field"><label>Prompt</label><textarea id="fl-studio-prompt" rows="5" oninput="this.dataset.dirty=\'1\'">' +
+      esc(defs.positive || '') + '</textarea></div>' +
+      '<div class="fl-vs-field"><label>Negative</label><textarea id="fl-studio-negative" rows="2" oninput="this.dataset.dirty=\'1\'">' +
+      esc(defs.negative || '') + '</textarea></div>' +
 
-    var tuning =
-      '<div class="fl-panel fl-studio-tune"><h3 class="fl-h">Tuning</h3>' +
-      '<div class="fl-form" id="fl-tune-image">' +
-      '<label>Steps<input id="fl-tune-steps" type="number" value="28" min="1" max="150"></label>' +
-      '<label>CFG<input id="fl-tune-cfg" type="number" value="5" min="1" max="30" step="0.5"></label>' +
-      '<label>Resolution<select id="fl-tune-res"><option>1024x1024</option><option>1280x720</option><option>768x1344</option></select></label>' +
-      '<label>Seed<input id="fl-tune-seed" type="text" placeholder="random"></label>' +
-      '<label>Quality<select id="fl-tune-quality"><option>standard</option><option>high</option><option>draft</option></select></label>' +
-      '</div>' +
-      '<div class="fl-form" id="fl-tune-video" hidden>' +
-      '<label>Duration (s)<input id="fl-tune-dur" type="number" value="4" min="1" max="30"></label>' +
-      '<label>FPS<input id="fl-tune-fps" type="number" value="24" min="8" max="60"></label>' +
-      '</div>' +
-      '<div class="fl-form" id="fl-tune-music" hidden>' +
-      '<label>BPM<input id="fl-tune-bpm" type="number" value="' + esc(String(musicAdv.bpm || 90)) + '" min="40" max="200"></label>' +
+      '<div id="fl-vs-music-panel" ' + (FL_STUDIO.modality === 'music' ? '' : 'hidden') + '>' +
+      '<div class="fl-vs-field"><label>Describe the music</label>' +
+      '<textarea id="fl-vs-music-simple-desc" placeholder="Dark 1980s thriller score, slow pulsing synth…"></textarea></div>' +
+      '<div class="fl-form"><label>Duration (sec)<input id="fl-vs-music-dur" type="number" value="60" min="10" max="240"></label>' +
+      '<label>BPM<input id="fl-tune-bpm" type="number" value="' + esc(String(musicAdv.bpm || 90)) + '"></label>' +
       '<label>Key<input id="fl-tune-key" type="text" value="' + esc(musicAdv.key || 'Am') + '"></label>' +
-      '<label>Bars<input id="fl-tune-bars" type="number" value="' + esc(String(musicAdv.bars || 8)) + '" min="4" max="64"></label>' +
-      '<label>Vocals<select id="fl-tune-vocals"><option value="0">Instrumental</option><option value="1">Allow vocals</option></select></label>' +
-      '<label>Mood<select id="fl-tune-mood">' +
-      ((musicAdv.moods || ['calm']).map(function (m) {
-        return '<option>' + esc(m) + '</option>';
-      }).join('')) + '</select></label>' +
-      '</div>' +
-      '<details class="fl-studio-music-adv" id="fl-music-advanced" style="margin-top:10px"><summary>Music advanced</summary>' +
-      '<p class="muted">Stem split and longer forms land with Studio music packs. Mood + BPM above already shape the queue.</p>' +
-      '<label class="chk" style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
-      '<input type="checkbox" id="fl-tune-stems"> Prefer stem-friendly mix</label></details>' +
-      '<p class="muted" style="margin-top:8px">Knobs for the job — not a JSON dump.</p></div>';
+      '<label>Bars<input id="fl-tune-bars" type="number" value="' + esc(String(musicAdv.bars || 8)) + '"></label></div>' +
+      '<div class="fl-vs-field"><label>Lyrics (optional)</label>' +
+      '<textarea id="fl-vs-music-lyrics" placeholder="[Verse 1]…"></textarea></div></div>' +
 
-    var queueBody =
-      '<div class="fl-two">' +
+      '<div id="fl-studio-image-widgets" ' + (FL_STUDIO.modality === 'image' ? '' : 'hidden') + '>' +
+      '<div class="fl-vs-tune-grid">' + imgWidgets.map(function (w) {
+        var opts = (w.options || []).map(function (o) { return '<option>' + esc(o) + '</option>'; }).join('');
+        var id = w.id === 'aspect' ? 'fl-img-aspect'
+          : (w.id === 'ref_strength' ? 'fl-img-lock' : (w.id === 'batch' ? 'fl-img-batch' : ('fl-img-' + w.id)));
+        return '<div class="fl-vs-tune-slot"><label>' + esc(w.label || w.id) +
+          '</label><select id="' + id + '">' + opts + '</select></div>';
+      }).join('') + '</div></div>' +
+
+      '<div class="fl-rail" style="margin-top:12px">' +
+      '<button type="button" class="fl-vs-submit" onclick="floorStudioGenerate()">Generate</button>' +
+      '<button type="button" class="fl-vs-submit ghost" onclick="floorStudioSetModality((window.FL_STUDIO&&window.FL_STUDIO.modality)||\'image\')">Optimal defaults</button>' +
+      btn('Setup / Advanced', "typeof showVideoStudioSetup==='function'&&showVideoStudioSetup()", true) +
+      '</div><p id="fl-studio-msg" class="muted" style="margin-top:8px"></p></div>' +
+
+      '<div class="fl-vs-card"><h3>Tuning Parameters</h3>' +
+      '<div class="fl-vs-tune-grid" id="fl-tune-image">' +
+      '<div class="fl-vs-tune-slot"><label>Steps</label><input id="fl-tune-steps" type="number" value="28"></div>' +
+      '<div class="fl-vs-tune-slot"><label>CFG</label><input id="fl-tune-cfg" type="number" value="5" step="0.5"></div>' +
+      '<div class="fl-vs-tune-slot"><label>Resolution</label><select id="fl-tune-res"><option>1024x1024</option><option>1280x720</option><option>768x1344</option></select></div>' +
+      '<div class="fl-vs-tune-slot"><label>Seed</label><input id="fl-tune-seed" placeholder="random"></div>' +
+      '<div class="fl-vs-tune-slot"><label>Quality</label><select id="fl-tune-quality"><option>standard</option><option>high</option><option>draft</option></select></div>' +
+      '</div>' +
+      '<div class="fl-vs-tune-grid" id="fl-tune-video" hidden>' +
+      '<div class="fl-vs-tune-slot"><label>Duration (s)</label><input id="fl-tune-dur" type="number" value="4"></div>' +
+      '<div class="fl-vs-tune-slot"><label>FPS</label><input id="fl-tune-fps" type="number" value="24"></div>' +
+      '</div>' +
+      '<div id="fl-tune-music" hidden></div></div>' +
+
+      '<div class="fl-vs-card"><h3>Workshop Log</h3><pre class="fl-vs-log" id="fl-vs-log">Ready.</pre>' +
+      '<div class="fl-two" style="margin-top:12px">' +
       panel('Queue', listCards(d.creative_queue || [], jobCard, 'Queue empty.')) +
-      panel('Active renders', listCards(d.active_renders || [], jobCard, 'No active renders.')) +
+      panel('Active', listCards(d.active_renders || [], jobCard, 'No active renders.')) +
       '</div>' +
-      panel('Recent output', listCards(d.recent_output || d.recent_creative_jobs || [],
-        jobCard, 'No completed creative jobs yet.'));
+      panel('Recent output', listCards(d.recent_output || d.recent_creative_jobs || [], jobCard, 'No completed jobs yet.')) +
+      '</div>' +
 
-    var advanced =
-      '<details class="fl-studio-advanced"><summary>Advanced · Diagnostics</summary>' +
-      '<p class="muted">Endpoint, discovery, and runtime context stay here — not in the workshop viewport.</p>' +
-      panel('Discovery', kvPre(vs.discovery || {}, 800)) +
-      panel('Runtime context', kvPre(d.runtime_context || {}, 800)) +
-      panel('Capabilities', kvPre(d.capabilities || {}, 400)) +
-      '</details>';
+      '<div class="fl-vs-modal" id="flVsOptimalModal" hidden onclick="if(event.target===this)floorStudioCloseModals()">' +
+      '<div class="fl-vs-modal-card"><h3 style="margin-top:0;color:#f2d596">Optimal prompts</h3>' +
+      '<p class="muted">One-tap Keep starters for ' + esc(FL_STUDIO.modality) + '.</p>' +
+      '<div class="fl-vs-presets" id="fl-studio-optimal">' +
+      (optPacks.map(function (p) {
+        return '<button type="button" class="fl-vs-preset" onclick=\'floorStudioApplyOptimal(' +
+          JSON.stringify(p.text || '') + ');floorStudioCloseModals()\'>' + esc(p.label || p.id) + '</button>';
+      }).join('') || '<span class="muted">—</span>') +
+      '</div><button type="button" class="fl-vs-submit ghost" onclick="floorStudioCloseModals()">Close</button></div></div>' +
 
-    floorShell('Muse Creative Studio', 'Expansion premium — Video Studio',
-      ariaLive + statusStrip + actions +
-      '<div class="fl-two">' + optimal + cast + '</div>' +
-      styleBox + imgBox +
-      '<div class="fl-two fl-studio-work">' + entry + tuning + '</div>' +
-      queueBody + advanced);
+      '<div class="fl-vs-modal" id="flVsFillModal" hidden onclick="if(event.target===this)floorStudioCloseModals()">' +
+      '<div class="fl-vs-modal-card"><h3 style="margin-top:0;color:#f2d596">✦ Fill This In For Me</h3>' +
+      '<p class="muted">Describe the vibe — Muse drafts a workshop-ready prompt.</p>' +
+      '<div class="fl-vs-field"><label>Topic / scene</label><input id="fl-vs-fill-topic" placeholder="rainy neon alley, lone courier"></div>' +
+      '<div class="fl-vs-field"><label>Mood</label><select id="fl-vs-fill-mood">' +
+      '<option>cinematic</option><option>tender</option><option>tense</option><option>hopeful</option><option>noir</option></select></div>' +
+      '<div class="fl-rail"><button type="button" class="fl-vs-submit" onclick="floorStudioFillApply()">Apply</button>' +
+      '<button type="button" class="fl-vs-submit ghost" onclick="floorStudioCloseModals()">Cancel</button></div></div></div>' +
 
+      '</div>';
+
+    floorShell('The Workshop', 'Muse · Keep Video Studio', body, '', 'studio');
     floorStudioSetModality(FL_STUDIO.modality);
   }
 
@@ -1676,7 +1841,21 @@
               : '') + '</div>';
         }).join('') + '</div></div>'
       : '';
-    floorShell('Sentry Operations', 'Security / monitoring',
+    var openN = (d.monitoring_state && d.monitoring_state.sentry_open_jobs) || 0;
+    var failN = (d.monitoring_state && d.monitoring_state.failed) || 0;
+    var incN = (d.active_incidents || []).length;
+    var findN = (d.security_findings || []).length;
+    floorShell('Sentry Operations', 'Military sci-fi perimeter',
+      cineHero('Perimeter command', 'Sentry Operations',
+        'Futuristic military ops glass — incidents, remediation, and optional integrations under green TAC lighting.') +
+      '<div class="fl-ops-tac fl-ops-scanline">' +
+      '<div class="fl-ops-tile"><div class="n">' + esc(String(incN)) + '</div><div class="l">incidents</div></div>' +
+      '<div class="fl-ops-tile"><div class="n">' + esc(String(findN)) + '</div><div class="l">findings</div></div>' +
+      '<div class="fl-ops-tile"><div class="n">' + esc(String(openN)) + '</div><div class="l">open jobs</div></div>' +
+      '<div class="fl-ops-tile"><div class="n">' + esc(String(failN)) + '</div><div class="l">failed</div></div>' +
+      '<div class="fl-ops-tile"><div class="n">' + esc(String(Object.keys(services).length)) + '</div><div class="l">services</div></div>' +
+      '</div>' +
+      '<div class="fl-symbol-row"><span class="fl-symbol">⚔</span><span class="fl-symbol">🛡</span><span class="fl-symbol">📡</span><span class="fl-symbol">⚙</span></div>' +
       ariaGuideCard(
         'Aria',
         'Ops is where optional extras live. Discord, Home Assistant, and n8n are not required for chat. When you want one, use Configure — I walk you through it in plain language.'
@@ -1700,8 +1879,7 @@
           esc(String(t.summary || t.message || t.result || '').slice(0, 200)) + '</p></div>';
       }, 'No remediation actions.')) +
       panel('Monitoring', '<div class="fl-strip">' +
-        metric((d.monitoring_state && d.monitoring_state.sentry_open_jobs) || 0, 'open') +
-        metric((d.monitoring_state && d.monitoring_state.failed) || 0, 'failed') + '</div>') +
+        metric(openN, 'open') + metric(failN, 'failed') + '</div>') +
       panel('Service readiness', '<div class="fl-grid">' + Object.keys(services).map(function (k) {
         return integrationCard(k, services[k] || {});
       }).join('') + '</div><div id="fl-int-msg" class="muted" style="margin-top:8px"></div>') +
@@ -1709,7 +1887,8 @@
         return '<div class="fl-card"><b>' + esc(e.job_id) + '</b>' +
           '<p class="muted">' + esc((e.evidence_ids || []).join(', ') || '—') +
           (e.error ? ' · ' + esc(e.error) : '') + '</p>' + jobLink(e.job_id) + '</div>';
-      }, 'No evidence rows.')));
+      }, 'No evidence rows.')),
+      '', 'ops');
   }
 
   /* —— Page Builder —— */
@@ -1912,6 +2091,7 @@
 
   Object.assign(window, {
     FL: FL,
+    FL_STUDIO: FL_STUDIO,
     FLOOR_KINDS: FLOOR_KINDS,
     floorShell: floorShell,
     showFloorDrawer: showFloorDrawer,
@@ -1928,6 +2108,14 @@
     floorStudioSetModality: floorStudioSetModality,
     floorStudioGenerate: floorStudioGenerate,
     floorStudioApplyChip: floorStudioApplyChip,
+    floorStudioOpenOptimal: floorStudioOpenOptimal,
+    floorStudioOpenFill: floorStudioOpenFill,
+    floorStudioFillApply: floorStudioFillApply,
+    floorStudioAddActor: floorStudioAddActor,
+    floorStudioAddStyle: floorStudioAddStyle,
+    floorStudioOnDrop: floorStudioOnDrop,
+    floorStudioCloseModals: floorStudioCloseModals,
+    startPsalmRain: startPsalmRain,
     floorStudioApplyOptimal: floorStudioApplyOptimal,
     floorStudioToggleActor: floorStudioToggleActor,
     floorStudioPickStyle: floorStudioPickStyle,

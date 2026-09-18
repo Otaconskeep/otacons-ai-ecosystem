@@ -178,19 +178,32 @@ function formatGpuLine(scan){
   return det.message||'GPU detection unavailable — retry';
 }
 
-function renderMoodStrip(mood){
+function renderMoodStrip(mood, human, ctx){
   const el=document.getElementById('codec-mood');
   if(!el) return;
-  if(!mood||(!mood.line&&!(mood.elevated||[]).length)){
-    el.innerHTML='<span class="muted">Mood offline</span>';
-    return;
-  }
-  const chips=(mood.elevated||[]).slice(0,5).map(x=>{
+  const h=human||{};
+  const chips=(mood&&mood.elevated||[]).slice(0,5).map(x=>{
     const id=escapeHtml(String(x.id||''));
     const hot=Number(x.value)>=0.6?' mood-hot':'';
     return `<span class="mood-chip${hot}" title="${id}">${id}</span>`;
   }).join('');
-  el.innerHTML=`<div class="mood-line">${escapeHtml(mood.line||'Present.')}</div><div class="mood-chips">${chips}</div>`;
+  const taste=[].concat((h.taste&&h.taste.music)||[], (h.taste&&h.taste.film)||[]).slice(0,3)
+    .map(t=>`<span class="mood-chip">${escapeHtml(String(t))}</span>`).join('');
+  const bio=h.short_bio||h.biography||(ctx&&ctx.dossier_summary&&ctx.dossier_summary.role)||'';
+  const truth=h.emotional_truth||'';
+  const mbti=h.mbti?`<span class="mood-chip mood-hot">${escapeHtml(String(h.mbti))}</span>`:'';
+  const arch=ctx&&ctx.archetype?`<span class="mood-chip">${escapeHtml(String(ctx.archetype))}</span>`:'';
+  if((!mood||(!mood.line&&!chips))&&!bio){
+    el.innerHTML='<span class="muted">Mood offline</span>';
+    return;
+  }
+  el.innerHTML=`<div class="codec-human">
+    <div class="mood-line">${escapeHtml((mood&&mood.line)||'Present.')}</div>
+    <div class="mood-chips">${arch}${mbti}${chips}</div>
+    ${bio?`<p class="codec-human-bio">${escapeHtml(String(bio).slice(0,220))}</p>`:''}
+    ${truth?`<p class="codec-human-truth">${escapeHtml(String(truth).slice(0,160))}</p>`:''}
+    ${taste?`<div class="mood-chips codec-taste">${taste}</div>`:''}
+  </div>`;
 }
 
 async function refreshCodecMood(){
@@ -198,13 +211,15 @@ async function refreshCodecMood(){
   const aid=currentAgentId();
   try{
     const ctx=await apiGet('/api/expansion/agent/'+encodeURIComponent(aid)+'/context', 8000);
-    if(ctx&&ctx.mood_summary) renderMoodStrip(ctx.mood_summary);
+    if(ctx&&ctx.mood_summary) renderMoodStrip(ctx.mood_summary, ctx.human, ctx);
     else if(ctx&&ctx.emotion){
       renderMoodStrip({
         line:'',
         elevated:Object.keys(ctx.emotion.dimensions||{}).map(k=>({id:k,value:ctx.emotion.dimensions[k]}))
           .sort((a,b)=>b.value-a.value).slice(0,5)
-      });
+      }, ctx.human, ctx);
+    }else if(ctx&&ctx.human){
+      renderMoodStrip({line:'Present.',elevated:[]}, ctx.human, ctx);
     }
   }catch(_e){
     const el=document.getElementById('codec-mood');
@@ -1338,9 +1353,21 @@ async function showGenomeSetup(){
     :(gpuOk
       ?'GPU looks good. Tap Install Genome once — I pull the trainer. When it says READY, open Clone a voice.'
       :'I need NVIDIA visible in WSL first (nvidia-smi). Run Fix-Otacon-GPU.bat, reopen Ubuntu, then come back.');
-  appRoot().innerHTML=`<div class="home gn-shell">
-  <header class="home-header"><div><p class="home-kicker">Expansion · Genome</p><h1 class="home-greeting">Voice Trainer</h1></div>
+  try{ if(typeof otSfx==='function') otSfx('transmit'); }catch(_e){}
+  appRoot().innerHTML=`<div class="home gn-shell fl-theme-genome">
+  <header class="home-header"><div><p class="home-kicker">Expansion · Genome Lab</p><h1 class="home-greeting">Voice Trainer</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
+
+  <div class="gn-lab-hero">
+    <p class="eyebrow" style="letter-spacing:.2em;text-transform:uppercase;font-size:10px;color:var(--ot-cyan);margin:0 0 6px">Futuristic voice lab</p>
+    <h2 style="margin:0 0 6px;letter-spacing:.06em">Genome · Piper forge</h2>
+    <p class="muted" style="margin:0;max-width:40rem;line-height:1.5">Widgets, gauges, and clone popups — not a terminal dump. Symbols pulse while GPU work runs.</p>
+    <div class="gn-lab-gauges">
+      <div class="fl-gauge-ring" style="--pct:${gpuOk?'78':'18'}%"><i>GPU</i></div>
+      <div class="fl-gauge-ring" style="--pct:${ready?'90':(offline?'55':'22')}%"><i>VT</i></div>
+      <span class="gn-lab-sym">◈</span><span class="gn-lab-sym">◉</span><span class="gn-lab-sym">⬡</span>
+    </div>
+  </div>
 
   <div class="guide-aria">
     <img src="${agentAsset('aria','aria.webp')}" alt="Aria">

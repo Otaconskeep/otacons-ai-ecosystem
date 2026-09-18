@@ -626,6 +626,28 @@ class Handler(BaseHTTPRequestHandler):
                 from expansion.runtime import ExpansionRuntime
                 rt = ExpansionRuntime(core_memory=MEMORY)
                 ctx = rt.assemble_context(agent_id)
+                human = {}
+                try:
+                    from expansion.humanization import load_human_sheet
+                    sheet = load_human_sheet(agent_id) or {}
+                    taste = sheet.get('taste') if isinstance(sheet.get('taste'), dict) else {}
+                    frameworks = sheet.get('frameworks') if isinstance(sheet.get('frameworks'), dict) else {}
+                    identity = sheet.get('identity') if isinstance(sheet.get('identity'), dict) else {}
+                    human = {
+                        'short_bio': (identity.get('short_bio') or sheet.get('biography') or '')[:280],
+                        'biography': (sheet.get('biography') or '')[:480],
+                        'emotional_truth': (sheet.get('emotional_truth') or '')[:220],
+                        'core_wound': (sheet.get('core_wound') or '')[:180],
+                        'mbti': frameworks.get('mbti') or sheet.get('mbti') or '',
+                        'taste': {
+                            'music': (taste.get('music') or [])[:3],
+                            'film': (taste.get('film') or [])[:2],
+                            'food': (taste.get('food') or [])[:2],
+                        },
+                        'pronouns': identity.get('pronouns') or '',
+                    }
+                except Exception:
+                    human = {}
                 self.send_json({
                     'agent_id': ctx.agent_id,
                     'display_name': ctx.display_name,
@@ -637,6 +659,7 @@ class Handler(BaseHTTPRequestHandler):
                     'vulnerabilities': ctx.vulnerabilities,
                     'dossier_summary': ctx.dossier_summary,
                     'provenance_hints': ctx.provenance_hints,
+                    'human': human,
                 })
             except Exception as exc:
                 self.send_json({'error': str(exc)}, 404)
