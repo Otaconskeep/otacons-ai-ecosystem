@@ -445,26 +445,70 @@
       '<p class="fl-aria-copy">' + esc(text || '') + '</p></div></div>';
   }
 
-  /* —— Dossiers —— */
+  /* —— Dossiers (Central Agency / secret-agent folder) —— */
+  function dosRow(label, value) {
+    if (value == null || value === '' || (Array.isArray(value) && !value.length)) {
+      return '<tr><th>' + esc(label) + '</th><td class="fl-dos-empty">—</td></tr>';
+    }
+    var v = Array.isArray(value) ? value.map(function (x) { return esc(String(x)); }).join(', ') : esc(String(value));
+    return '<tr><th>' + esc(label) + '</th><td>' + v + '</td></tr>';
+  }
+
+  function dosTable(title, rowsHtml) {
+    return '<section class="fl-dos-panel"><h3 class="fl-dos-h">◆ ' + esc(title) + '</h3>' +
+      '<table class="fl-dos-table"><tbody>' + rowsHtml + '</tbody></table></section>';
+  }
+
+  function dosChips(arr) {
+    if (!arr || !arr.length) return '<span class="fl-dos-empty">—</span>';
+    return '<div class="fl-dos-chips">' + arr.map(function (x) {
+      return '<span class="fl-dos-chip">' + esc(String(x)) + '</span>';
+    }).join('') + '</div>';
+  }
+
+  function dosRedact(text, absent) {
+    if (absent) return '<span class="fl-dos-redact" title="Not emphasized in this product dossier">████████</span>';
+    return esc(text || '—');
+  }
+
   function renderVulnGroups(byKind) {
     var bk = byKind || {};
     return VULN_KINDS.map(function (kind) {
       var items = bk[kind] || [];
       var body = items.length ? items.map(function (v) {
         var absent = !!v.intentional_absence;
-        return '<div class="fl-card' + (absent ? ' muted-abs' : '') + '">' +
+        return '<div class="fl-dos-vuln' + (absent ? ' muted-abs' : '') + '">' +
           '<div><b>' + esc(v.label || kind) + '</b> ' + pill(kind) +
-          (absent ? ' ' + pill('not emphasized') : '') +
+          (absent ? ' ' + pill('REDACTED') : '') +
           (v.intensity != null ? ' ' + pill('i=' + v.intensity) : '') + '</div>' +
-          '<p class="muted">' + esc(absent
-            ? (v.description || 'Intentional absence — not emphasized in this product dossier.')
-            : (v.description || '')) + '</p>' +
-          (v.triggers && v.triggers.length
+          '<p>' + dosRedact(v.description || '', absent) + '</p>' +
+          (v.triggers && v.triggers.length && !absent
             ? '<p class="muted">triggers: ' + esc(v.triggers.join(', ')) + '</p>' : '') +
           '</div>';
-      }).join('') : empty('No entries for ' + kind + '.');
-      return panel(kind.replace(/_/g, ' '), body);
+      }).join('') : '<p class="fl-dos-empty">No entries for ' + esc(kind) + '.</p>';
+      return dosTable(kind.replace(/_/g, ' ').toUpperCase(), '<tr><td colspan="2">' + body + '</td></tr>');
     }).join('');
+  }
+
+  function renderPolaroidBank(card) {
+    var id = card.agent_id;
+    var src = agentAsset(id, id + '.webp');
+    var shots = [
+      { cap: 'Front Profile', rot: -6, filter: '' },
+      { cap: 'Operations Board', rot: 4, filter: 'fl-pol-ops' },
+      { cap: 'Surveillance Still', rot: -3, filter: 'fl-pol-surv' },
+      { cap: 'Agency Archive', rot: 7, filter: 'fl-pol-arch' }
+    ];
+    return '<aside class="fl-dos-photos">' +
+      '<div class="fl-dos-ribbon">TOP SECRET</div>' +
+      '<p class="fl-dos-photo-sub">FIELD IMAGERY / POLAROID STACK</p>' +
+      '<div class="fl-dos-polaroids">' + shots.map(function (s, i) {
+        return '<figure class="fl-dos-polaroid" style="--rot:' + s.rot + 'deg">' +
+          '<div class="fl-dos-polaroid-frame ' + s.filter + '">' +
+          '<img src="' + src + '" alt="" loading="eager">' +
+          '<i class="fl-dos-classified">CLASSIFIED</i><i class="fl-dos-scan"></i></div>' +
+          '<figcaption>' + esc(s.cap) + '</figcaption></figure>';
+      }).join('') + '</div></aside>';
   }
 
   function renderDossierBody(card) {
@@ -472,8 +516,16 @@
     var id = card.agent_id;
     var ident = card.identity || {};
     var ch = card.character || {};
+    var bg = card.background || {};
     var caps = card.capabilities || {};
     var social = card.social || {};
+    var stress = card.stress || {};
+    var prefs = card.preferences || {};
+    var fw = card.frameworks || {};
+    var phys = card.physical || {};
+    var taste = card.taste || {};
+    var culture = card.culture || {};
+    var presence = card.social_presence || {};
     var living = (card.living && card.living.observations) || [];
     var learn = card.learning || {};
     var claims = [].concat(learn.private || [], learn.shared_keep || learn.shared || []);
@@ -482,73 +534,152 @@
     var dims = [];
     Object.keys(base).forEach(function (k) { if (dims.indexOf(k) < 0) dims.push(k); });
     Object.keys(cur).forEach(function (k) { if (dims.indexOf(k) < 0) dims.push(k); });
-    dims = dims.slice(0, 16);
+    dims = dims.slice(0, 12);
+    var roles = ((card.permissions || {}).role_permissions) || [];
+    var rooms = ((card.permissions || {}).room_permissions) || [];
 
-    var identityHtml = '<div class="fl-card"><b>' + esc(ident.display_name || id) + '</b> · ' +
-      esc(ident.role || '') + ' · ' + esc(ch.archetype || '') +
-      '<p class="muted">' + esc(ident.tagline || ident.summary || '') + '</p>' +
-      '<p class="muted">' + esc((card.background &&
-        (card.background.public_summary || card.background.origin)) || '') + '</p></div>';
+    var mast = '<header class="fl-dos-mast">' +
+      '<div class="fl-dos-stamps"><span class="fl-dos-stamp ok">ACTIVE FILE</span>' +
+      '<span class="fl-dos-stamp">KEEP ROSTER</span>' +
+      (roles[0] ? '<span class="fl-dos-stamp">' + esc(String(roles[0]).toUpperCase()) + '</span>' : '') +
+      '</div>' +
+      '<p class="fl-dos-agency">CENTRAL AGENCY DOSSIER</p>' +
+      '<h2 class="fl-dos-codename">' + esc(ident.display_name || id) + '</h2>' +
+      '<p class="fl-dos-tag">' + esc(ch.role || ident.short_bio || '') + ' · ' +
+      esc(ch.archetype || '') + ' · ' + esc(ident.pronouns || '') + '</p>' +
+      '</header>';
 
-    var personality = '<div class="fl-card"><p>' + esc(ch.personality || ch.summary || ch.voice || '') +
-      '</p><p class="muted">diary style: ' + esc(ch.diary_style || '—') +
-      ' · humor: ' + esc(ch.humor || '—') + '</p></div>';
+    var identity = dosTable('IDENTITY',
+      dosRow('Codename', ident.display_name) +
+      dosRow('Role', ch.role) +
+      dosRow('Archetype', ch.archetype) +
+      dosRow('Pronouns', ident.pronouns) +
+      dosRow('Presentation', ident.presentation) +
+      dosRow('Alignment', (ch.values || []).slice(0, 3).join(' · ')) +
+      dosRow('Authority', roles.join(', ')) +
+      dosRow('Duty rooms', rooms.join(', ')) +
+      dosRow('Specialties', (prefs.interests || []).slice(0, 6).join(', ')) +
+      dosRow('Skills', (caps.strengths || []).join(', ')) +
+      dosRow('Education', card.education || bg.education_training) +
+      dosRow('Short bio', ident.short_bio)
+    );
 
-    function bulletList(arr) {
-      if (!arr || !arr.length) return empty('None listed.');
-      return '<ul>' + arr.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>';
-    }
-    var sw = '<div class="fl-grid"><div class="fl-card"><h4 class="fl-h">strengths</h4>' +
-      bulletList(caps.strengths) + '</div><div class="fl-card"><h4 class="fl-h">weaknesses</h4>' +
-      bulletList(caps.weaknesses) + '</div></div>';
+    var physical = dosTable('PHYSICAL TRAITS',
+      dosRow('Build', phys.build) +
+      dosRow('Distinguishing', phys.distinguishing) +
+      dosRow('Field notes', phys.presentation_notes) +
+      dosRow('Presentation', ident.presentation)
+    );
 
-    var attach = '<div class="fl-grid">' +
-      '<div class="fl-card"><b>attachment</b><p class="muted">' + esc(social.attachment_style || '—') + '</p></div>' +
-      '<div class="fl-card"><b>jealousy</b><p class="muted">' +
-      esc(String(social.jealousy_sensitivity != null ? social.jealousy_sensitivity : '—')) +
-      '</p><p class="muted">' + esc(social.jealousy_behavior || '') + '</p></div>' +
-      '<div class="fl-card"><b>rivalry</b><p class="muted">' + esc(social.rivalry_behavior || '—') + '</p></div></div>';
+    var professional = dosTable('PROFESSIONAL PROFILE',
+      dosRow('Role', ch.role) +
+      dosRow('Origin', bg.origin_summary) +
+      dosRow('History', bg.history || card.biography) +
+      dosRow('Career', Array.isArray(card.career) ? card.career : bg.career) +
+      dosRow('Culture', culture.background || culture.upbringing) +
+      dosRow('Strengths', caps.strengths) +
+      dosRow('Weaknesses', caps.weaknesses) +
+      dosRow('Blind spots', caps.blind_spots) +
+      dosRow('Failure modes', caps.failure_modes)
+    );
 
-    var emoCmp = dims.length ? dims.map(function (k) {
-      return '<div class="fl-card"><b>' + esc(k) + '</b>' +
-        '<div class="fl-bar-h"><span>baseline</span><span>' +
-        esc(String(base[k] != null ? base[k] : '—')) + '</span></div>' +
-        bar('current', cur[k] != null ? cur[k] : 0, { onclick: oc('floorEmotionWhy', id, k) }) +
-        '</div>';
-    }).join('') : empty('No emotion dimensions loaded.');
+    var psych = dosTable('PSYCHOLOGICAL PROFILE',
+      dosRow('Temperament', ch.communication_style) +
+      dosRow('Humor', ch.humor_style) +
+      dosRow('Diary voice', ch.diary_style) +
+      dosRow('Emotional truth', card.emotional_truth) +
+      dosRow('Core wound', card.core_wound) +
+      dosRow('Trust behavior', social.trust_behavior) +
+      dosRow('Conflict', social.conflict_behavior) +
+      dosRow('Stress behavior', stress.stress_behavior) +
+      dosRow('Recovery', stress.recovery_behavior) +
+      dosRow('Values', ch.values) +
+      dosRow('Morals', ch.morals)
+    );
+
+    var frameworks = dosTable('PERSONALITY FRAMEWORKS',
+      dosRow('MBTI', fw.mbti) +
+      dosRow('Enneagram', fw.enneagram) +
+      dosRow('Archetype', ch.archetype) +
+      dosRow('Notes', fw.big_five_note)
+    );
+
+    var tasteHtml = dosTable('TASTE & MUSIC',
+      dosRow('Music', taste.music) +
+      dosRow('Film', taste.film) +
+      dosRow('Games', taste.games) +
+      dosRow('Food', taste.food) +
+      dosRow('Pop culture', taste.pop_culture) +
+      dosRow('Likes', prefs.likes) +
+      dosRow('Dislikes', prefs.dislikes) +
+      dosRow('Interests', prefs.interests)
+    );
+
+    var socialMedia = '<section class="fl-dos-panel"><h3 class="fl-dos-h">◆ SOCIAL PRESENCE</h3>' +
+      '<p class="fl-dos-note">Keep-native channels — not a third-party feed clone.</p>' +
+      '<div class="fl-dos-social">' +
+      ((presence.channels || []).map(function (c) {
+        return '<article class="fl-dos-social-card">' +
+          '<div class="fl-dos-social-net">' + esc(c.network || '') + '</div>' +
+          '<div class="fl-dos-social-handle">' + esc(c.handle || '') + '</div>' +
+          '<p>' + esc(c.style || '') + '</p></article>';
+      }).join('') || '<p class="fl-dos-empty">No channels on file.</p>') +
+      '</div></section>';
+
+    var trauma = dosTable('TRAUMA / STRESS PROFILE',
+      dosRow('Core wound', card.core_wound) +
+      dosRow('Stress behavior', stress.stress_behavior) +
+      dosRow('Recovery', stress.recovery_behavior) +
+      dosRow('Attachment', social.attachment_style) +
+      dosRow('Jealousy sensitivity', social.jealousy_sensitivity) +
+      dosRow('Possessiveness', social.possessiveness) +
+      dosRow('Rivalry', social.rivalry_behavior)
+    );
+
+    var keyRel = dosTable('KEY RELATIONSHIPS',
+      '<tr><td colspan="2"><ul class="fl-dos-list">' +
+      ((card.key_relationships || []).map(function (r) {
+        return '<li>' + esc(r) + '</li>';
+      }).join('') || '<li class="fl-dos-empty">—</li>') +
+      '</ul></td></tr>'
+    );
+
+    var emoCmp = dims.length ? '<div class="fl-dos-emo">' + dims.map(function (k) {
+      return '<div class="fl-dos-emo-row"><b>' + esc(k) + '</b>' +
+        bar('now', cur[k] != null ? cur[k] : 0, { onclick: oc('floorEmotionWhy', id, k) }) +
+        '<span class="muted">base ' + esc(String(base[k] != null ? base[k] : '—')) + '</span></div>';
+    }).join('') + '</div>' : empty('No emotion dimensions.');
 
     var livingHtml = listCards(living, function (o) {
       return '<div class="fl-card"><b>' + esc(o.category || 'obs') + '</b> · conf ' +
         esc(String(o.confidence)) + '<p>' + esc(o.value || '') + '</p>' +
-        '<p class="muted">' + fmtTs(o.last_updated || o.first_observed) + '</p>' +
         btn('WHY', oc('floorLivingWhy', id, o.observation_id), true) + '</div>';
     }, 'No living observations yet.');
 
     var learnHtml = listCards(claims, function (c) {
       return '<div class="fl-card"><b>' + esc(c.claim || '') + '</b>' +
-        '<p class="muted">conf ' + esc(String(c.confidence)) + ' · ' +
-        esc(c.scope_label || c.scope || '') + ' · ev ' + esc(String(c.evidence_count || 0)) + '</p>' +
+        '<p class="muted">conf ' + esc(String(c.confidence)) + '</p>' +
         btn('WHY', oc('floorLearningWhy', c.claim_id), true) + '</div>';
     }, 'No graduated learning claims.');
 
     var relHtml = listCards(card.relationship_highlights || [], function (r) {
-      var tops = topDims(r.dimensions, 3).map(function (kv) { return kv[0] + '=' + kv[1]; }).join(', ');
       return '<div class="fl-card"><b>' + esc(id) + ' → ' + esc(r.target) + '</b> · ' + esc(r.label || '') +
         '<p class="muted">' + esc(r.narrative || '') + '</p>' +
-        '<p class="muted">' + esc(tops) + '</p>' +
         btn('Rel WHY', oc('floorRelWhy', id, r.target), true) + '</div>';
     }, 'No relationship highlights.');
 
-    return panel('Identity', identityHtml) +
-      panel('Personality', personality) +
-      panel('Strengths / weaknesses', sw) +
-      panel('Vulnerability groups', renderVulnGroups((card.vulnerabilities || {}).by_kind)) +
-      panel('Attachment / jealousy / rivalry', attach) +
-      panel('Emotional baseline vs current', '<div class="fl-grid">' + emoCmp + '</div>') +
-      panel('Living observations', livingHtml) +
-      panel('Learning claims', learnHtml) +
-      panel('Relationship highlights', relHtml) +
-      '<p class="fl-note">' + esc(card.canonical_history_notes || '') + '</p>';
+    var left = '<div class="fl-dos-col">' + identity + physical + professional + psych +
+      frameworks + tasteHtml + socialMedia + trauma + keyRel +
+      '<section class="fl-dos-panel"><h3 class="fl-dos-h">◆ VULNERABILITY GROUPS</h3>' +
+      renderVulnGroups((card.vulnerabilities || {}).by_kind) + '</section>' +
+      '<section class="fl-dos-panel"><h3 class="fl-dos-h">◆ EMOTIONAL BASELINE VS LIVE</h3>' + emoCmp + '</section>' +
+      '<section class="fl-dos-panel"><h3 class="fl-dos-h">◆ LIVING OBSERVATIONS</h3>' + livingHtml + '</section>' +
+      '<section class="fl-dos-panel"><h3 class="fl-dos-h">◆ LEARNING</h3>' + learnHtml + '</section>' +
+      '<section class="fl-dos-panel"><h3 class="fl-dos-h">◆ RELATIONSHIP HIGHLIGHTS</h3>' + relHtml + '</section>' +
+      '<p class="fl-dos-foot">' + esc(card.canonical_history_notes || '') + '</p></div>';
+
+    return '<div class="fl-dos-shell">' + mast +
+      '<div class="fl-dos-grid">' + left + renderPolaroidBank(card) + '</div></div>';
   }
 
   async function renderDossiersFloor() {
@@ -569,8 +700,8 @@
         '" onclick="FL.dossierTab=\'' + a + '\';renderDossiersFloor()">' + esc(a) + '</button>';
     }).join('');
     var card = agents.filter(function (a) { return a.agent_id === FL.dossierTab; })[0] || agents[0];
-    floorShell('Agent Dossiers', 'Canonical + living',
-      '<p class="fl-note">' + esc(d.rule || 'Canonical = product lore; living = observed with evidence.') + '</p>' +
+    floorShell('Central Agency Dossiers', 'Personnel · classified field files',
+      ariaGuideCard('Aria', 'These are personnel files — not chat bios. Flip agents above. Polaroids are field imagery. Redacted bars mean we chose not to emphasize that wound in product.') +
       '<div class="fl-tabs">' + tabs + '</div>' + renderDossierBody(card));
   }
 
@@ -622,17 +753,19 @@
         "FL.journal.event_type=document.getElementById('fl-j-et').value;" +
         "FL.journal.job_id=document.getElementById('fl-j-job').value;renderJournalFloor()", true) +
       '</div>';
-    floorShell('Journal Browser', 'WHAT HAPPENED',
+    floorShell('Mission Journal', 'CASEFILE · WHAT HAPPENED',
+      ariaGuideCard('Ledger', 'Objective continuity only — stamps, not feelings. Tap a card for the full mission packet.') +
       '<p class="fl-note">' + esc(d.rule || 'JOURNAL = objective continuity.') + '</p>' +
-      filters + '<div class="fl-stack" id="fl-journal-list"></div>');
+      filters + '<div class="fl-stack fl-journal-casefile" id="fl-journal-list"></div>');
     var list = document.getElementById('fl-journal-list');
     if (!list) return;
     if (!entries.length) { list.innerHTML = empty('No journal entries match these filters.'); return; }
     FL._journalById = {};
     list.innerHTML = entries.map(function (e) {
       FL._journalById[e.entry_id] = e;
-      return '<button type="button" class="fl-card clickable" onclick="' +
+      return '<button type="button" class="fl-card clickable fl-journal-card" onclick="' +
         oc('floorOpenJournal', e.entry_id) + '">' +
+        '<div class="fl-journal-stamp">CASEFILE</div>' +
         '<div><b>JOURNAL</b> ' + pill(e.agent_id || '') + ' ' + pill(e.event_type || '') + '</div>' +
         '<p>' + esc(e.summary || '') + '</p>' +
         '<p class="muted">' + esc(e.objective_result || '') + '</p>' +
@@ -664,7 +797,14 @@
     var body;
     if (!block) body = empty('No diary agents.');
     else {
-      body = '<p class="muted">diary_style: ' + esc(block.diary_style || '—') + ' · ' +
+      var aid = block.agent_id;
+      var thumb = agentAsset(aid, aid + '.webp');
+      body = '<div class="fl-diary-desk">' +
+        '<aside class="fl-diary-polaroid"><div class="fl-dos-polaroid-frame">' +
+        '<img src="' + thumb + '" alt=""><i class="fl-dos-classified">PRIVATE</i></div>' +
+        '<figcaption>' + esc(block.display_name || aid) + '</figcaption></aside>' +
+        '<div class="fl-diary-stack">' +
+        '<p class="fl-diary-meta">diary voice: <i>' + esc(block.diary_style || '—') + '</i> · ' +
         esc(String(block.count || entries.length)) + ' entries</p>' +
         listCards(entries, function (e) {
           var snap = e.emotional_state_snapshot || {};
@@ -673,13 +813,17 @@
             if (typeof r === 'string') return r;
             return (r.target || r.agent_id || '') + ':' + (r.label || r.dim || '');
           }).join(', ');
-          return '<article class="fl-diary-page"><p class="when">' + esc(fmtTs(e.timestamp)) + '</p><p>' + esc(e.text || '(empty — diary not populated yet)') + '</p>' +
+          return '<article class="fl-diary-page"><div class="fl-diary-pin"></div>' +
+            '<p class="when">' + esc(fmtTs(e.timestamp)) + '</p><p>' +
+            esc(e.text || '(empty — diary not populated yet)') + '</p>' +
             '<p class="muted" style="font-style:normal;font-family:var(--ot-mono);font-size:.7rem">snapshot: ' +
             esc(top || '—') + ' · rel: ' + esc(refs || '—') + '</p>' +
             btn('WHY', oc('floorDiaryWhy', block.agent_id, e.diary_id), true) + '</article>';
-        }, 'No diary entries for this agent yet — live meaning accumulates as they journal.');
+        }, 'No diary entries for this agent yet — live meaning accumulates as they journal.') +
+        '</div></div>';
     }
-    floorShell('Diary Browser', 'WHAT IT MEANT',
+    floorShell('Private Diaries', 'WHAT IT MEANT',
+      ariaGuideCard('Ledger', 'Diaries are subjective — ink and meaning. Journal is the casefile. WHY opens the evidence drawer.') +
       '<p class="fl-note">' + esc(d.rule || 'DIARY = subjective meaning; Journal = objective facts.') + '</p>' +
       '<div class="fl-tabs">' + tabs + '</div>' + body);
   }

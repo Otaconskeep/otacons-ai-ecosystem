@@ -75,6 +75,20 @@ def build_dossier_card(agent_id: str, layout: Optional[StateLayout] = None) -> d
     caps = d.capabilities
     strengths = list(caps.strengths) if isinstance(caps.strengths, (list, tuple)) else [caps.strengths]
     weaknesses = list(caps.weaknesses) if isinstance(caps.weaknesses, (list, tuple)) else [caps.weaknesses]
+    # Humanization extras live on raw product JSON (taste/MBTI/etc.) — not stripped for UI.
+    human: dict = {}
+    try:
+        from expansion.humanization import load_human_sheet
+        raw = load_human_sheet(agent_id, layout) or {}
+        for key in (
+            'biography', 'culture', 'education', 'career', 'taste', 'speech',
+            'emotional_truth', 'core_wound', 'key_relationships', 'embodiment',
+            'frameworks', 'physical', 'social_presence',
+        ):
+            if key in raw and raw[key] not in (None, '', [], {}):
+                human[key] = raw[key]
+    except Exception:
+        human = {}
     return {
         'agent_id': agent_id,
         'identity': asdict(d.identity),
@@ -89,6 +103,7 @@ def build_dossier_card(agent_id: str, layout: Optional[StateLayout] = None) -> d
         'social': asdict(d.social),
         'stress': asdict(d.stress),
         'preferences': asdict(d.preferences),
+        'permissions': asdict(d.permissions) if hasattr(d, 'permissions') else {},
         'vulnerabilities': {
             'items': [_vuln_item(v) for v in d.vulnerabilities.items],
             'by_kind': group_vulnerabilities(d.vulnerabilities.items),
@@ -102,6 +117,18 @@ def build_dossier_card(agent_id: str, layout: Optional[StateLayout] = None) -> d
         'learning': learn,
         'relationship_highlights': rel_highlights,
         'canonical_history_notes': d.canonical_history_notes,
+        'human': human,
+        'biography': human.get('biography') or '',
+        'taste': human.get('taste') or {},
+        'frameworks': human.get('frameworks') or {},
+        'physical': human.get('physical') or {},
+        'social_presence': human.get('social_presence') or {},
+        'emotional_truth': human.get('emotional_truth') or '',
+        'core_wound': human.get('core_wound') or '',
+        'key_relationships': human.get('key_relationships') or [],
+        'culture': human.get('culture') or {},
+        'education': human.get('education') or (d.background.education_training if d.background else ''),
+        'career': human.get('career') or [],
     }
 
 
