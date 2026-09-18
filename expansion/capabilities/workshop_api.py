@@ -247,19 +247,35 @@ def _health() -> dict[str, Any]:
     hw = studio_hardware_snapshot()
     disc = vs.discovery or {}
     ready = vs.state == 'READY'
+    packs: dict[str, Any] = {}
+    try:
+        from expansion.capabilities.studio_packs import packs_status
+        packs = packs_status(endpoint=disc.get('endpoint') or None, hw=hw) or {}
+    except Exception:
+        packs = {}
+    video_ready = bool(
+        (packs.get('packs') or {}).get('wan', {}).get('ok')
+        or (packs.get('packs') or {}).get('ltx2', {}).get('ok')
+    )
+    image_ready = bool(packs.get('image_ready') or (packs.get('packs') or {}).get('z_image', {}).get('ok'))
     return {
         'cuda_available': bool(hw.get('cuda_available') or ready),
         'ready': ready,
         'gpu_name': hw.get('gpu_model') or 'GPU',
         'vram_total_gb': float(hw.get('marketed_vram_gb') or hw.get('vram_gb') or 0),
         'vram_free_gb': float(hw.get('marketed_vram_gb') or hw.get('vram_gb') or 0) * 0.55,
-        'backend': 'Otacon Expansion · Muse Workshop',
+        'backend': 'Otacon Expansion · Muse Creative',
         'studio_state': vs.state,
         'endpoint': disc.get('endpoint') or '',
         'queue_running': 0,
         'queue_pending': 0,
         'comfyui_warm': ready,
         'expansion': True,
+        'image_ready': image_ready,
+        'video_ready': video_ready,
+        'music_ready': bool((packs.get('packs') or {}).get('ace_step', {}).get('ok')),
+        'preferred_mode': 'image' if (image_ready and not video_ready) else 'video',
+        'packs_aria': packs.get('aria') or '',
     }
 
 

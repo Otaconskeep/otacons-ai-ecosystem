@@ -1043,14 +1043,9 @@ const VS_CODEC_STATIC_SRC = 'data:image/svg+xml;utf8,' + encodeURIComponent(
 document.addEventListener('error', (e) => {
   const t = e.target;
   if (!t) return;
-  if (t.tagName === 'VIDEO' || t.tagName === 'SOURCE') {
-    const vid = t.tagName === 'VIDEO' ? t : t.parentElement;
-    if (!vid || vid.dataset.vsMediaErr === '1') return;
-    vid.dataset.vsMediaErr = '1';
-    const note = document.createElement('div');
-    note.className = 'vs-note';
-    note.textContent = 'Playback failed — GPU view did not return a video file. Use Download / view mp4.';
-    vid.insertAdjacentElement('afterend', note);
+  if (t.tagName === 'VIDEO' || t.tagName === 'AUDIO' || t.tagName === 'SOURCE') {
+    const media = (t.tagName === 'SOURCE') ? (t.closest('video, audio') || t.parentElement) : t;
+    vsReplaceBrokenMedia(media);
     return;
   }
   if (t.tagName !== 'IMG' || t.src === VS_CODEC_STATIC_SRC) return;
@@ -1060,6 +1055,106 @@ document.addEventListener('error', (e) => {
   t.style.objectFit = 'contain';
   t.style.background = '#c0c0c0';
 }, true);
+
+// Crist 2026-09-18: never leave the browser "No video with supported format
+// and MIME type found" chrome on missing/JSON/404 outputs (common on 8 GB
+// profiles without video packs). Probe before mounting <video>/<audio>.
+const VS_MEDIA_UNAVAILABLE =
+  'Output is not ready or this profile does not have that video pack installed yet. Image generation is available in Creative.';
+
+function vsReplaceBrokenMedia(el) {
+  if (!el || el.dataset.vsMediaErr === '1') return;
+  el.dataset.vsMediaErr = '1';
+  const note = document.createElement('div');
+  note.className = 'vs-note';
+  note.textContent = VS_MEDIA_UNAVAILABLE;
+  try { el.replaceWith(note); } catch (_e) {
+    el.insertAdjacentElement('afterend', note);
+    el.remove();
+  }
+}
+
+function vsAttrEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;');
+}
+
+function vsDeferredVideoHtml(url, linkLabel) {
+  const safe = vsAttrEsc(url);
+  return `<a class="vs-video-link" href="${safe}" target="_blank" rel="noopener">${linkLabel || 'Download / view'}</a>
+    <div class="vs-media-slot" data-vs-probe-video="${safe}"><div class="vs-note">Checking output…</div></div>`;
+}
+
+function vsDeferredAudioHtml(url, linkLabel) {
+  const safe = vsAttrEsc(url);
+  return `<a class="vs-video-link" href="${safe}" target="_blank" rel="noopener">${linkLabel || 'Download / view audio'}</a>
+    <div class="vs-media-slot" data-vs-probe-audio="${safe}"><div class="vs-note">Checking output…</div></div>`;
+}
+
+async function vsOutputLooksPlayable(url, kind) {
+  try {
+    const r = await fetch(url, {
+      method: 'GET',
+      headers: { Range: 'bytes=0-63' },
+      cache: 'no-store',
+    });
+    if (!r.ok) return false;
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    if (ct.includes('application/json') || ct.includes('text/html') || ct.includes('text/plain')) {
+      return false;
+    }
+    const buf = await r.arrayBuffer();
+    const u8 = new Uint8Array(buf);
+    if (kind === 'video') {
+      if (ct.includes('video/') || ct.includes('mp4')) return true;
+      // ISO BMFF / MP4: ....ftyp
+      if (u8.length >= 8) {
+        const tag = String.fromCharCode(u8[4], u8[5], u8[6], u8[7]);
+        if (tag === 'ftyp') return true;
+      }
+      return false;
+    }
+    if (kind === 'audio') {
+      if (ct.includes('audio/') || ct.includes('mpeg') || ct.includes('ogg') || ct.includes('wav')) return true;
+      // ID3 / MP3 frame sync / RIFF
+      if (u8.length >= 3 && u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) return true;
+      if (u8.length >= 2 && u8[0] === 0xff && (u8[1] & 0xe0) === 0xe0) return true;
+      if (u8.length >= 4 && u8[0] === 0x52 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x46) return true;
+      return ct.includes('octet-stream');
+    }
+    return false;
+  } catch (_e) {
+    return false;
+  }
+}
+
+async function vsMountProbedMedia(root) {
+  const scope = root || document;
+  const slots = scope.querySelectorAll('[data-vs-probe-video],[data-vs-probe-audio]');
+  await Promise.all(Array.from(slots).map(async (slot) => {
+    const videoUrl = slot.getAttribute('data-vs-probe-video');
+    const audioUrl = slot.getAttribute('data-vs-probe-audio');
+    const url = videoUrl || audioUrl;
+    if (!url) return;
+    slot.removeAttribute('data-vs-probe-video');
+    slot.removeAttribute('data-vs-probe-audio');
+    const kind = videoUrl ? 'video' : 'audio';
+    const ok = await vsOutputLooksPlayable(url, kind);
+    if (!ok) {
+      slot.innerHTML = `<div class="vs-note">${VS_MEDIA_UNAVAILABLE}</div>`;
+      return;
+    }
+    const safe = vsAttrEsc(url);
+    if (videoUrl) {
+      slot.innerHTML = `<video class="vs-player" controls preload="metadata" playsinline>
+        <source src="${safe}" type="video/mp4"></video>`;
+    } else {
+      slot.innerHTML = `<audio controls preload="metadata" style="width:100%;max-width:420px;margin-top:.4rem" src="${safe}"></audio>`;
+    }
+  }));
+}
 
 // ── Optimal Prompts (2026-09-03) ────────────────────────────────────────
 // Deterministic, offline, no-LLM prompt templates for Video mode's "New
@@ -1737,7 +1832,11 @@ function vsUpdateActorRequiredWarning(videoEngine) {
 }
 
 document.querySelectorAll('.vs-mode-btn').forEach(btn => {
-  btn.addEventListener('click', () => { vsMode = btn.dataset.mode; vsApplyMode(); });
+  btn.addEventListener('click', () => {
+    vsMode = btn.dataset.mode;
+    window.__vsModePinned = true;
+    vsApplyMode();
+  });
 });
 document.getElementById('vs-duration-select').addEventListener('change', (e) => {
   document.getElementById('vs-duration-custom').style.display = e.target.value === 'custom' ? '' : 'none';
@@ -2022,13 +2121,20 @@ async function vsRefreshHealth() {
       txt.textContent = 'No GPU visible — Foxhound V3 will not run on CPU';
     }
     if (compute) {
-      if (h.ready) {
+      if (h.video_ready === false && h.image_ready) {
+        compute.textContent = `IMAGE PATH · ready · video packs not installed on this ${h.vram_total_gb || '?'} GB profile`;
+      } else if (h.ready) {
         compute.textContent = `VIDEO PATH · GPU · ${h.gpu_name || 'CUDA'} · VRAM ${used}% · not CPU`;
       } else if (h.cuda_available) {
         compute.textContent = 'VIDEO PATH · GPU CARD SEEN · waiting for VRAM / gate';
       } else {
         compute.textContent = 'VIDEO PATH · GPU NOT READY · will not fall back to CPU';
       }
+    }
+    // Prefer Image mode when this PC has Z-Image but no video packs (typical 8 GB).
+    if (!window.__vsModePinned && h.preferred_mode === 'image' && vsMode === 'video') {
+      vsMode = 'image';
+      vsApplyMode();
     }
   } catch (e) {
     txt.textContent = 'GPU gate unreachable';
@@ -2050,8 +2156,8 @@ async function vsRefreshJobs() {
     return;
   }
   el.innerHTML = jobs.map(j => {
-    const created = new Date(j.created_ts * 1000).toLocaleString();
-    const jt = j.job_type || 'video';
+    const created = new Date((j.created_ts || j.created_at || 0) * 1000).toLocaleString();
+    const jt = j.job_type || j.type || 'video';
     const outUrl = `/video-studio/api/jobs/${j.id}/output`;
     // 2026-09-08: only job types actually stored in the modern
     // workshop_video_v2_jobs store are purgeable via DELETE .../purge --
@@ -2117,10 +2223,7 @@ async function vsRefreshJobs() {
              ${j.shadow_qc && j.shadow_qc.qc_seconds != null ? `<div style="color:var(--vs-sub);margin-top:.2rem">QC time: ${j.shadow_qc.qc_seconds}s</div>` : ''}
            </details>` : '';
       if (j.status === 'completed') {
-        extra = `${anchors}${shadowQcBadge}<a class="vs-video-link" href="${v2OutUrl}" target="_blank">Download / view mp4</a>
-             <video class="vs-player" controls preload="metadata" playsinline>
-               <source src="${v2OutUrl}" type="video/mp4">
-             </video>`;
+        extra = `${anchors}${shadowQcBadge}${vsDeferredVideoHtml(v2OutUrl, 'Download / view mp4')}`;
       } else if (j.status === 'failed') {
         extra = `${anchors}${shadowQcBadge}<div class="vs-note">${(j.error||'').slice(0,200).replace(/</g,'&lt;')}</div>`;
       } else {
@@ -2147,8 +2250,7 @@ async function vsRefreshJobs() {
     } else if (jt === 'music_v1') {
       const musicOutUrl = `/video-studio/api/generate-music-v1/${j.id}/output`;
       if (j.status === 'completed') {
-        extra = `<a class="vs-video-link" href="${musicOutUrl}" target="_blank">Download / view audio</a>
-             <audio controls preload="none" style="width:100%; max-width:420px; margin-top:.4rem" src="${musicOutUrl}"></audio>`;
+        extra = vsDeferredAudioHtml(musicOutUrl, 'Download / view audio');
       } else if (j.status === 'failed') {
         extra = `<div class="vs-note">${(j.error||'').slice(0,200).replace(/</g,'&lt;')}</div>`;
       } else {
@@ -2196,13 +2298,10 @@ async function vsRefreshJobs() {
       meta = `<span class="agent-pill">${j.agent_id||'albedo'}</span> · ${isMovieMode ? 'movie project' : 'story project'} · ${movieMeta} · ${created}`;
     } else {
       if (j.status === 'completed') {
-        extra = jt === 'image'
+        extra = jt === 'image' || jt === 'image_v1' || jt === 'hidream_v1'
           ? `<a class="vs-video-link" href="${outUrl}" target="_blank">Download / view image</a>
              <img class="vs-player" loading="lazy" src="${outUrl}">`
-          : `<a class="vs-video-link" href="${outUrl}" target="_blank">Download / view mp4</a>
-             <video class="vs-player" controls preload="metadata" playsinline>
-               <source src="${outUrl}" type="video/mp4">
-             </video>`;
+          : vsDeferredVideoHtml(outUrl, 'Download / view mp4');
       } else if (j.status === 'failed') {
         extra = `<div class="vs-note">${(j.error||'').slice(0,200)}</div>`;
       }
@@ -2223,6 +2322,7 @@ async function vsRefreshJobs() {
       <span class="vs-status ${j.status}">${vsStatusLabel(j.status)}</span>
     </div>`;
   }).join('');
+  try { await vsMountProbedMedia(el); } catch (_e) {}
   el.querySelectorAll('.vs-job-delete-btn').forEach(btn => {
     // 2026-09-08 fix: window.confirm() is a native dialog -- after several
     // deletes in quick succession, Firefox (and Chrome) auto-suppress
@@ -2292,6 +2392,7 @@ async function vsOpenProjectView(id, skipAutoResume) {
   try {
     const p = await (await fetch(`/video-studio/api/projects/${id}`)).json();
     target.innerHTML = vsRenderProjectHtml(p);
+    try { await vsMountProbedMedia(target); } catch (_e) {}
     if (keepTab) vsSwitchProjectTab(`vs-project-tabs-${p.id}`, keepTab);
     // Resume watching any shot still queued/generating -- this is the fix for
     // shots that get stuck showing a static "Queuing..." forever: previously
@@ -2589,10 +2690,11 @@ async function vsWatchMusicJob(jobId, btn) {
     if (j.status === 'completed') {
       vsProgressStop();
       note.textContent = '';
+      const out = `/video-studio/api/generate-music-v1/${jobId}/output`;
       resultBox.innerHTML = `<div class="vs-write-output">✓ Complete
-        <audio controls preload="none" style="width:100%; margin-top:.5rem" src="/video-studio/api/generate-music-v1/${jobId}/output"></audio>
-        <a class="vs-video-link" href="/video-studio/api/generate-music-v1/${jobId}/output" target="_blank" style="display:inline-block; margin-top:.5rem">Download</a>
+        ${vsDeferredAudioHtml(out, 'Download')}
       </div>`;
+      try { await vsMountProbedMedia(resultBox); } catch (_e) {}
       btn.disabled = false; btn.textContent = 'Generate Music';
       vsRefreshJobs();
       return;
@@ -3219,8 +3321,8 @@ function vsShotMediaBlock(shot, projectId) {
   const genBtnId = `vs-shotgen-${projectId}-${shot.id}`;
   if (status === 'complete' && shot.asset_url) {
     const media = shot.asset_type === 'video'
-      ? `<video class="vs-shot-thumb" controls preload="metadata" playsinline><source src="${shot.asset_url}" type="video/mp4"></video>`
-      : `<img class="vs-shot-thumb" loading="lazy" src="${shot.asset_url}">`;
+      ? `<div class="vs-media-slot" data-vs-probe-video="${vsAttrEsc(shot.asset_url)}"><div class="vs-note">Checking output…</div></div>`
+      : `<img class="vs-shot-thumb" loading="lazy" src="${vsAttrEsc(shot.asset_url)}">`;
     return `<div class="vs-shot-media">
       ${media}
       <button type="button" class="vs-shot-gen-btn" id="${genBtnId}" onclick="event.stopPropagation(); vsGenerateShot('${projectId}','${shot.id}',true,this)">Regenerate</button>
@@ -3639,12 +3741,7 @@ function vsRenderFinalMovie(p) {
     const src = `/video-studio/api/projects/${p.id}/final-movie/output`;
     return `<div class="vs-final-movie">
       <div class="vs-prod-current-label">Final Movie</div>
-      <video class="vs-player" controls preload="metadata" playsinline>
-        <source src="${src}" type="video/mp4">
-      </video>
-      <div class="vs-final-movie-actions">
-        <a class="vs-final-movie-dl" href="${src}" target="_blank" rel="noopener">Open / Download</a>
-      </div>
+      ${vsDeferredVideoHtml(src, 'Open / Download')}
     </div>`;
   }
   if (p.final_movie_error) {
@@ -3666,8 +3763,10 @@ function vsRenderReviewPanel(projectId, shots) {
   if (!shots || !shots.length) return '';
   const rows = shots.map(sh => {
     const preview = sh.asset_type === 'video'
-      ? `<video controls preload="metadata" playsinline style="max-width:220px;max-height:140px;display:block"><source src="${vsEsc(sh.asset_url)}" type="video/mp4"></video>`
-      : `<img src="${vsEsc(sh.asset_url)}" style="max-width:220px;max-height:140px;display:block;object-fit:cover">`;
+      ? `<div class="vs-media-slot" data-vs-probe-video="${vsAttrEsc(sh.asset_url || '')}"><div class="vs-note">Checking output…</div></div>`
+      : (sh.asset_url
+        ? `<img src="${vsAttrEsc(sh.asset_url)}" style="max-width:220px;max-height:140px;display:block;object-fit:cover" loading="lazy">`
+        : '');
     const findings = (sh.qc_findings || []).map(f => `<li>${vsEsc(f)}</li>`).join('') || '<li style="opacity:.6">no specific findings recorded</li>';
     return `<div class="vs-review-row" style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px solid rgba(255,255,255,.08)">
       ${preview}
@@ -4194,7 +4293,9 @@ async function vsWatchVideoV2Job(jobId) {
     if (job.stage === 'complete') {
       bar.style.background = '#5a9a5a';
       vsProgressStop();
-      resultEl.innerHTML = `<video controls preload="metadata" playsinline style="max-width:100%; border-radius:6px;"><source src="/video-studio/api/generate-v2/${jobId}/output" type="video/mp4"></video>`;
+      const out = `/video-studio/api/generate-v2/${jobId}/output`;
+      resultEl.innerHTML = vsDeferredVideoHtml(out, 'Download / view mp4');
+      try { await vsMountProbedMedia(resultEl); } catch (_e) {}
       cancelBtn.style.display = 'none';
       vsActiveJobId = null;
       vsClearActiveJob();
