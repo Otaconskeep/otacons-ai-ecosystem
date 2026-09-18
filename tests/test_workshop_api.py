@@ -323,6 +323,37 @@ class WorkshopApiTests(unittest.TestCase):
         self.assertNotIn('value="otacon"', html)
         self.assertIn('jobs/${jobId}/cancel', html)
         self.assertIn('VS_WORKSHOP_CLIENT', html)
+        self.assertIn('jobs_ahead', html)
+        self.assertIn('install-packs', html)
+
+    def test_generate_music_queues_when_submitter_ok(self):
+        with TemporaryDirectory() as td:
+            with mock.patch.dict(os.environ, {
+                'OTACON_EXPANSION_DATA_ROOT': str(Path(td) / 'data'),
+                'OTACON_EXPANSION_CONFIG_ROOT': str(Path(td) / 'cfg'),
+            }):
+                from expansion.state_layout import resolve_layout
+                layout = resolve_layout()
+                layout.ensure_user_dirs()
+                got = {}
+
+                def send(data, status=200):
+                    got['data'] = data
+                    got['status'] = status
+
+                with mock.patch.object(wa, 'resolve_layout', return_value=layout), \
+                     mock.patch.object(wa, '_create_music_job', return_value={
+                         'id': 'm1', 'status': 'queued', 'prompt_id': 'mpid', 'error': '',
+                     }):
+                    ok = wa.handle_workshop_write(
+                        'POST', '/video-studio/api/generate-music-v1',
+                        {'tags': 'warm pads', 'duration': 30},
+                        send,
+                    )
+                self.assertTrue(ok)
+                self.assertEqual(got.get('status'), 200)
+                self.assertTrue(got['data'].get('ok'))
+                self.assertEqual(got['data'].get('job_id'), 'm1')
 
 
 if __name__ == '__main__':

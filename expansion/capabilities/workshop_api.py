@@ -420,6 +420,12 @@ def _health() -> dict[str, Any]:
         or workflow.get('ok')
     )
     music_ready = bool((packs.get('packs') or {}).get('ace_step', {}).get('ok'))
+    if not music_ready and endpoint:
+        try:
+            from expansion.capabilities.comfy_submit import music_workflow_status
+            music_ready = bool(music_workflow_status(endpoint).get('ok'))
+        except Exception:
+            pass
     studio_ready = bool(comfy_ok or vs.state == 'READY')
     # Image generation must not wait on video/music packs or a READY-only label.
     generation_ready = bool(studio_ready and image_ready)
@@ -522,7 +528,7 @@ def _create_image_job(
 
 
 def _refresh_image_job(job: dict[str, Any], layout: Optional[StateLayout] = None) -> dict[str, Any]:
-    if job.get('status') in ('completed', 'failed') or not job.get('prompt_id'):
+    if job.get('status') in ('completed', 'failed', 'cancelled') or not job.get('prompt_id'):
         return job
     from expansion.capabilities.comfy_submit import _history_outputs, _studio_endpoint
     ep = job.get('endpoint') or _studio_endpoint()
@@ -533,6 +539,67 @@ def _refresh_image_job(job: dict[str, Any], layout: Optional[StateLayout] = None
         job['outputs'] = files
         job['output_file'] = files[0]
         _upsert_job(job, layout)
+    return job
+
+
+def _create_music_job(
+    *,
+    tags: str,
+    lyrics: str = '',
+    duration: float = 60,
+    bpm: Optional[float] = None,
+    seed: Optional[int] = None,
+    tuning: Optional[dict] = None,
+    layout: Optional[StateLayout] = None,
+) -> dict[str, Any]:
+    from expansion.capabilities.comfy_submit import submit_music_job
+
+    job_id = uuid.uuid4().hex[:12]
+    now = time.time()
+    job = {
+        'id': job_id,
+        'type': 'music_v1',
+        'job_type': 'music_v1',
+        'status': 'queued',
+        'prompt': tags,
+        'tags': tags,
+        'lyrics': lyrics or '',
+        'duration': duration,
+        'bpm': bpm,
+        'seed': seed,
+        'audio_format': 'mp3',
+        'agent_id': 'workshop',
+        'created_at': now,
+        'created_ts': now,
+        'stage': 'submitting',
+    }
+    _upsert_job(job, layout)
+    submitted = submit_music_job(
+        tags=tags,
+        lyrics=lyrics,
+        duration_sec=duration,
+        bpm=bpm,
+        seed=seed,
+        tuning=tuning or {},
+    )
+    if not submitted.get('ok') or not submitted.get('prompt_id'):
+        job.update({
+            'status': 'failed',
+            'error': submitted.get('detail') or submitted.get('error') or 'music packs or Comfy not ready',
+            'soft_block': bool(submitted.get('soft_block')),
+            'action': submitted.get('action') or '',
+            'stage': 'failed',
+        })
+        _upsert_job(job, layout)
+        return job
+    job.update({
+        'status': 'queued',
+        'stage': 'comfy',
+        'prompt_id': submitted['prompt_id'],
+        'endpoint': submitted.get('endpoint') or '',
+        'duration': submitted.get('duration') or duration,
+    })
+    _upsert_job(job, layout)
     return job
 
 
@@ -692,6 +759,19 @@ def handle_workshop_get(
             key=lambda x: float(x.get('created_at') or 0),
             reverse=True,
         )[:80]
+        try:
+            from expansion.capabilities.comfy_submit import annotate_jobs_with_queue_position
+            # Refresh in-flight image/music cards, then overlay live Comfy positions.
+            refreshed = []
+            for j in jobs:
+                jt = j.get('job_type') or j.get('type') or ''
+                if jt in ('image_v1', 'hidream_v1', 'music_v1') and j.get('prompt_id'):
+                    refreshed.append(_refresh_image_job(dict(j), layout))
+                else:
+                    refreshed.append(j)
+            jobs = annotate_jobs_with_queue_position(refreshed)
+        except Exception:
+            pass
         send_json(jobs)
         return True
     if rel == 'scripts':
@@ -763,8 +843,22 @@ def handle_workshop_get(
     if m:
         return _send_job_output(unquote(m.group(1)), layout, send_json, send_redirect, send_bytes)
 
+    m = re.match(r'generate-music-v1/([^/]+)$', rel)
+    if m:
+        jid = unquote(m.group(1))
+        job = _get_job(jid, layout)
+        if job:
+            send_json(_refresh_image_job(dict(job), layout))
+            return True
+        send_json({'error': 'not found'}, 404)
+        return True
+
+    m = re.match(r'generate-music-v1/([^/]+)/output$', rel)
+    if m:
+        return _send_job_output(unquote(m.group(1)), layout, send_json, send_redirect, send_bytes)
+
     # Soft stubs for modalities not fully wired yet — keep UI from hard-failing.
-    if rel.startswith('generate-music-v1/') or rel.startswith('generate-v2/') or rel.startswith('generate-hidream'):
+    if rel.startswith('generate-v2/') or rel.startswith('generate-hidream'):
         send_json({'error': 'job not found', 'expansion_stub': True}, 404)
         return True
 
@@ -1099,6 +1193,64 @@ def handle_workshop_write(
         }, code)
         return True
 
+    if rel == 'generate-music-v1' and method == 'POST':
+        tags = str(data.get('tags') or data.get('prompt') or data.get('description') or '').strip()
+        if not tags:
+            send_json({'ok': False, 'error': 'tags required'}, 400)
+            return True
+        try:
+            duration = float(data.get('duration') or 60)
+        except (TypeError, ValueError):
+            duration = 60.0
+        bpm_raw = data.get('bpm')
+        try:
+            bpm = float(bpm_raw) if bpm_raw not in (None, '', 'null') else None
+        except (TypeError, ValueError):
+            bpm = None
+        seed_raw = data.get('seed')
+        try:
+            seed = int(seed_raw) if seed_raw not in (None, '', 'null', '-1') else None
+        except (TypeError, ValueError):
+            seed = None
+        job = _create_music_job(
+            tags=tags,
+            lyrics=str(data.get('lyrics') or ''),
+            duration=duration,
+            bpm=bpm,
+            seed=seed,
+            tuning={
+                'cfg_scale': data.get('cfg_scale') or data.get('cfg') or 2,
+                'key_scale': data.get('key_scale') or data.get('key') or '',
+                'time_signature': data.get('time_signature') or '4',
+                'language': data.get('language') or 'en',
+                'max_duration_sec': 120,
+            },
+            layout=layout,
+        )
+        code = 200 if job.get('status') != 'failed' else 409
+        send_json({
+            'ok': job.get('status') != 'failed',
+            'id': job['id'],
+            'job_id': job['id'],
+            'job': job,
+            'status': job.get('status'),
+            'error': job.get('error') or '',
+            'action': job.get('action') or '',
+            'soft_block': bool(job.get('soft_block')),
+        }, code)
+        return True
+
+    if rel == 'install-packs' and method == 'POST':
+        from expansion.capabilities.studio_packs import start_pack_install
+        which = data.get('which')
+        if isinstance(which, str):
+            which = [which]
+        if which is not None and not isinstance(which, list):
+            which = None
+        out = start_pack_install(layout=layout, which=which)
+        send_json(out, 200 if out.get('started') or out.get('running') or out.get('ok') else 409)
+        return True
+
     if rel == 'music-prompt-assist' and method == 'POST':
         desc = str(data.get('description') or data.get('prompt') or '').strip()
         send_json({
@@ -1128,10 +1280,10 @@ def handle_workshop_write(
         })
         return True
 
-    # Video / music generate — honest soft response until modality submitters land.
+    # Video generate — honest soft response until modality submitters land.
     if rel in (
         'generate', 'generate-v2', 'generate-v2-start-end', 'generate-v2-auto-start-end',
-        'generate-v2-direct-t2v', 'generate-h3', 'generate-music-v1', 'generate-hidream-v1',
+        'generate-v2-direct-t2v', 'generate-h3', 'generate-hidream-v1',
     ) and method == 'POST':
         from expansion.capabilities.studio_packs import packs_status
         packs = packs_status()
@@ -1140,8 +1292,8 @@ def handle_workshop_write(
             'error': 'modality_pack_or_submitter',
             'detail': (
                 packs.get('aria')
-                or 'Video/music generate uses the same Workshop UI; install packs for this GPU, '
-                   'then image generate works now. Video/music Comfy submitters ship next.'
+                or 'Video generate uses the same Workshop UI; install video packs for this GPU. '
+                   'Image and music generate when their packs are ready.'
             ),
             'soft_block': True,
             'action': 'install_packs',

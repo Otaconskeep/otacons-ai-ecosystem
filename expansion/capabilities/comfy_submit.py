@@ -463,8 +463,14 @@ def fetch_comfy_output_bytes(
         mime = 'image/gif'
     elif low.endswith(('.mp4', '.webm')):
         mime = 'video/mp4' if low.endswith('.mp4') else 'video/webm'
-    elif low.endswith(('.mp3', '.wav', '.flac', '.ogg')):
-        mime = 'audio/mpeg' if low.endswith('.mp3') else 'audio/wav'
+    elif low.endswith(('.mp3',)):
+        mime = 'audio/mpeg'
+    elif low.endswith(('.wav',)):
+        mime = 'audio/wav'
+    elif low.endswith(('.flac',)):
+        mime = 'audio/flac'
+    elif low.endswith(('.ogg',)):
+        mime = 'audio/ogg'
 
     disk = resolve_output_file(name)
     if disk is not None:
@@ -571,9 +577,12 @@ def _history_outputs(endpoint: str, prompt_id: str) -> list[str]:
         for node_out in outputs.values():
             if not isinstance(node_out, dict):
                 continue
-            for img in node_out.get('images') or []:
-                if isinstance(img, dict) and img.get('filename'):
-                    files.append(str(img.get('filename')))
+            for key in ('images', 'audio', 'gifs', 'files'):
+                for item in node_out.get(key) or []:
+                    if isinstance(item, dict) and item.get('filename'):
+                        files.append(str(item.get('filename')))
+                    elif isinstance(item, str) and item:
+                        files.append(item)
     return files
 
 
@@ -632,6 +641,308 @@ def poll_creative_jobs_once(*, layout: Optional[StateLayout] = None) -> dict[str
                 )
                 failed += 1
     return {'ok': True, 'completed': completed, 'failed': failed}
+
+
+def comfy_queue_snapshot(endpoint: Optional[str] = None) -> dict[str, Any]:
+    """Live Comfy queue order — running first, then pending (FIFO)."""
+    ep = (endpoint or _studio_endpoint()).rstrip('/')
+    code, q = _http_json('GET', f'{ep}/queue', timeout=5.0)
+    running: list[str] = []
+    pending: list[str] = []
+    if code == 200 and isinstance(q, dict):
+        for row in q.get('queue_running') or []:
+            if isinstance(row, (list, tuple)) and len(row) > 1:
+                running.append(str(row[1]))
+        for row in q.get('queue_pending') or []:
+            if isinstance(row, (list, tuple)) and len(row) > 1:
+                pending.append(str(row[1]))
+    return {
+        'ok': code == 200,
+        'endpoint': ep,
+        'running': running,
+        'pending': pending,
+        'order': running + pending,
+    }
+
+
+def annotate_jobs_with_queue_position(
+    jobs: list[dict[str, Any]],
+    *,
+    endpoint: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Annotate Workshop job cards with live Comfy position (read-only — no store write).
+
+    Comfy accepts many prompts at once but runs one GPU job. Without this, every
+    accepted prompt shows as "Rendering" and a backlog looks hung.
+    """
+    snap = comfy_queue_snapshot(endpoint)
+    order = list(snap.get('order') or [])
+    running_set = set(snap.get('running') or [])
+    pos_map = {pid: i for i, pid in enumerate(order)}
+    out: list[dict[str, Any]] = []
+    for raw in jobs:
+        j = dict(raw)
+        st = str(j.get('status') or '')
+        if st in ('completed', 'failed', 'cancelled', 'ready'):
+            j.pop('queue_position', None)
+            j.pop('jobs_ahead', None)
+            out.append(j)
+            continue
+        pid = str(j.get('prompt_id') or '').strip()
+        if pid and pid in pos_map:
+            pos = int(pos_map[pid])
+            j['queue_position'] = pos
+            j['jobs_ahead'] = pos
+            if pid in running_set and pos == 0:
+                j['status'] = 'running'
+                j['stage'] = 'rendering'
+            else:
+                j['status'] = 'queued'
+                j['stage'] = f'queue_pos_{pos}'
+        elif pid and st in ('running', 'queued') and snap.get('ok'):
+            # Prompt accepted but not in live queue yet (or already finished between polls).
+            j['queue_position'] = None
+            j['jobs_ahead'] = None
+            if st == 'running':
+                j['status'] = 'queued'
+                j['stage'] = 'waiting_gpu'
+        out.append(j)
+    return out
+
+
+_DEFAULT_ACE_CKPT = 'ace_step_1.5_turbo_aio.safetensors'
+
+
+def music_workflow_status(endpoint: Optional[str] = None) -> dict[str, Any]:
+    """Probe whether ACE-Step AIO checkpoint is indexed by ComfyUI."""
+    ep = (endpoint or _studio_endpoint()).rstrip('/')
+    ckpts = list_models(ep, 'checkpoints')
+    hit = next(
+        (c for c in ckpts if c == _DEFAULT_ACE_CKPT or c.endswith('/' + _DEFAULT_ACE_CKPT)),
+        '',
+    )
+    if not hit:
+        hit = next((c for c in ckpts if 'ace_step' in c.lower() and 'aio' in c.lower()), '')
+    ok = bool(hit)
+    return {
+        'ok': ok,
+        'modality': 'music',
+        'engine': 'ace-step-1.5',
+        'endpoint': ep,
+        'checkpoint': hit,
+        'missing': [] if ok else [f'checkpoints/{_DEFAULT_ACE_CKPT}'],
+        'assets_ready': ok,
+        'detail': (
+            'ACE-Step AIO indexed by ComfyUI'
+            if ok
+            else f'Studio connected, but music checkpoint missing: {_DEFAULT_ACE_CKPT}'
+        ),
+    }
+
+
+def build_ace_step_prompt(
+    *,
+    tags: str,
+    lyrics: str = '',
+    duration_sec: float = 60,
+    bpm: Optional[float] = None,
+    seed: Optional[int] = None,
+    steps: int = 8,
+    cfg: float = 1.0,
+    checkpoint: str = _DEFAULT_ACE_CKPT,
+    filename_prefix: str = 'otacon_music',
+    key_scale: str = '',
+    time_signature: str = '4',
+    language: str = 'en',
+    cfg_scale: float = 2.0,
+) -> dict[str, Any]:
+    """API-format ACE-Step 1.5 AIO graph (Comfy-Org audio_ace_step_1_5_checkpoint)."""
+    seed_i = int(seed) if seed is not None and int(seed) >= 0 else random.randint(1, 2**31 - 1)
+    seconds = max(10.0, min(240.0, float(duration_sec or 60)))
+    bpm_v = float(bpm) if bpm not in (None, '', 0, '0') else 120.0
+    tags_s = (tags or '').strip() or 'instrumental bed, clean mix, emotional but controlled'
+    lyrics_s = lyrics if lyrics is not None else ''
+    return {
+        '97': {
+            'class_type': 'CheckpointLoaderSimple',
+            'inputs': {'ckpt_name': checkpoint},
+        },
+        '94': {
+            'class_type': 'TextEncodeAceStepAudio1.5',
+            'inputs': {
+                'clip': ['97', 1],
+                'tags': tags_s,
+                'lyrics': lyrics_s,
+                'seed': seed_i,
+                'bpm': bpm_v,
+                'duration': seconds,
+                'timesignature': str(time_signature or '4'),
+                'language': str(language or 'en'),
+                'keyscale': str(key_scale or ''),
+                'generate_audio_codes': True,
+                'cfg_scale': float(cfg_scale),
+                'temperature': 0.85,
+                'top_p': 0.9,
+                'top_k': 0,
+                'min_p': 0,
+            },
+        },
+        '78': {
+            'class_type': 'ModelSamplingAuraFlow',
+            'inputs': {'model': ['97', 0], 'shift': 3},
+        },
+        '98': {
+            'class_type': 'EmptyAceStep1.5LatentAudio',
+            'inputs': {'seconds': seconds, 'batch_size': 1},
+        },
+        '47': {
+            'class_type': 'ConditioningZeroOut',
+            'inputs': {'conditioning': ['94', 0]},
+        },
+        '3': {
+            'class_type': 'KSampler',
+            'inputs': {
+                'model': ['78', 0],
+                'positive': ['94', 0],
+                'negative': ['47', 0],
+                'latent_image': ['98', 0],
+                'seed': seed_i,
+                'steps': int(steps),
+                'cfg': float(cfg),
+                'sampler_name': 'euler',
+                'scheduler': 'simple',
+                'denoise': 1,
+            },
+        },
+        '18': {
+            'class_type': 'VAEDecodeAudio',
+            'inputs': {'samples': ['3', 0], 'vae': ['97', 2]},
+        },
+        # Prefer MP3 when the node exists (Crist's image); Advanced as compatible fallback.
+        '106': {
+            'class_type': 'SaveAudioMP3',
+            'inputs': {
+                'audio': ['18', 0],
+                'filename_prefix': filename_prefix,
+                'quality': 'V0',
+            },
+        },
+    }
+
+
+def submit_music_job(
+    *,
+    tags: str,
+    lyrics: str = '',
+    duration_sec: float = 60,
+    bpm: Optional[float] = None,
+    seed: Optional[int] = None,
+    tuning: Optional[dict] = None,
+    endpoint: Optional[str] = None,
+    client_id: str = 'otacon-expansion-music',
+) -> dict[str, Any]:
+    """Submit ACE-Step 1.5 to ComfyUI. Returns ok+prompt_id or honest error."""
+    from expansion.capabilities.video_studio import comfy_endpoint_healthy
+
+    vs = probe_video_studio(clear_stale=False)
+    disc = vs.discovery or {}
+    ep = (endpoint or disc.get('endpoint') or _studio_endpoint()).rstrip('/')
+    ok, health_detail = comfy_endpoint_healthy(ep, timeout=4.0)
+    if not ok:
+        return {
+            'ok': False,
+            'queued': False,
+            'error': 'creative workflow submitter: ComfyUI not reachable',
+            'detail': f'Music generate needs a live ComfyUI. Last check: {health_detail}.',
+            'studio_state': vs.state,
+            'endpoint': ep,
+            'http_status': 503,
+        }
+    probe = music_workflow_status(ep)
+    if not probe.get('ok'):
+        try:
+            from expansion.capabilities.studio_packs import soft_block_payload, start_pack_install
+            block = soft_block_payload()
+            # Kick ACE-only install when music assets are the gap.
+            try:
+                start_pack_install(which=['ace_step'])
+                block['detail'] = (
+                    'ACE-Step music pack is downloading (~12 GB). '
+                    'Music Generate unlocks when the checkpoint is indexed.'
+                )
+                block['action'] = 'install_music_pack'
+            except Exception:
+                pass
+        except Exception:
+            block = {
+                'ok': False,
+                'queued': False,
+                'soft_block': True,
+                'action': 'install_music_pack',
+                'error': 'creative_packs_needed',
+                'detail': probe.get('detail') or 'ACE-Step checkpoint not installed.',
+                'http_status': 409,
+            }
+        block.update({
+            'missing': probe.get('missing') or [],
+            'studio_state': vs.state,
+            'endpoint': ep,
+            'workflow': probe,
+        })
+        return block
+
+    tuning = tuning if isinstance(tuning, dict) else {}
+    ckpt = str(probe.get('checkpoint') or _DEFAULT_ACE_CKPT)
+    seconds = float(tuning.get('duration') or duration_sec or 60)
+    try:
+        max_dur = float(tuning.get('max_duration_sec') or 120)
+    except (TypeError, ValueError):
+        max_dur = 120.0
+    seconds = max(10.0, min(max_dur, seconds))
+    graph = build_ace_step_prompt(
+        tags=tags,
+        lyrics=lyrics,
+        duration_sec=seconds,
+        bpm=bpm if bpm is not None else tuning.get('bpm'),
+        seed=seed if seed is not None else tuning.get('seed'),
+        steps=int(tuning.get('steps') or 8),
+        cfg=float(tuning.get('cfg') or 1.0),
+        checkpoint=ckpt,
+        key_scale=str(tuning.get('key_scale') or tuning.get('key') or ''),
+        time_signature=str(tuning.get('time_signature') or '4'),
+        language=str(tuning.get('language') or 'en'),
+        cfg_scale=float(tuning.get('cfg_scale') or 2.0),
+    )
+    code, data = _http_json(
+        'POST',
+        f'{ep}/prompt',
+        {'prompt': graph, 'client_id': client_id},
+        timeout=60.0,
+    )
+    prompt_id = ''
+    if isinstance(data, dict):
+        prompt_id = str(data.get('prompt_id') or '')
+    if code != 200 or not prompt_id:
+        return {
+            'ok': False,
+            'queued': False,
+            'error': 'comfy_prompt_rejected',
+            'detail': str((data or {}).get('error') or data)[:400],
+            'http_status': 502 if code else 503,
+            'endpoint': ep,
+        }
+    return {
+        'ok': True,
+        'queued': True,
+        'prompt_id': prompt_id,
+        'endpoint': ep,
+        'studio_state': vs.state,
+        'engine': 'ace-step-1.5',
+        'modality': 'music',
+        'workflow': probe,
+        'duration': seconds,
+        'message': f'Submitted music to ComfyUI · prompt_id={prompt_id}',
+    }
 
 
 def cancel_comfy_prompt(

@@ -24,7 +24,8 @@ class ComfySubmitTests(unittest.TestCase):
                  'ok': False,
                  'detail': 'missing models',
                  'missing': ['z_image'],
-             }):
+             }), \
+             mock.patch('expansion.capabilities.video_studio.comfy_endpoint_healthy', return_value=(True, 'ok')):
             pvs.return_value = mock.Mock(state='READY', discovery={'endpoint': 'http://127.0.0.1:8188'})
             out = cs.submit_image_job(prompt='test')
         self.assertFalse(out['ok'])
@@ -39,6 +40,7 @@ class ComfySubmitTests(unittest.TestCase):
              mock.patch.object(cs, 'image_workflow_status', return_value={
                  'ok': True, 'unet': 'z.safetensors', 'clip': 'c.safetensors', 'vae': 'ae.safetensors',
              }), \
+             mock.patch('expansion.capabilities.video_studio.comfy_endpoint_healthy', return_value=(True, 'ok')), \
              mock.patch.object(cs, '_http_json', return_value=(200, {'prompt_id': 'abc-123'})):
             pvs.return_value = mock.Mock(state='READY', discovery={'endpoint': 'http://127.0.0.1:8188'})
             out = cs.submit_image_job(prompt='hero portrait')
@@ -155,7 +157,50 @@ class ComfySubmitTests(unittest.TestCase):
                 self.assertIn('Migrated stuck', store.get(stuck.job_id).error or '')
 
 
-    def test_cancel_comfy_prompt_pending_deletes_queue(self):
+    def test_annotate_jobs_with_queue_position(self):
+        with mock.patch.object(cs, 'comfy_queue_snapshot', return_value={
+            'ok': True,
+            'running': ['pid-a'],
+            'pending': ['pid-b', 'pid-c'],
+            'order': ['pid-a', 'pid-b', 'pid-c'],
+        }):
+            jobs = [
+                {'id': '1', 'status': 'running', 'prompt_id': 'pid-a'},
+                {'id': '2', 'status': 'running', 'prompt_id': 'pid-b'},
+                {'id': '3', 'status': 'running', 'prompt_id': 'pid-c'},
+                {'id': '4', 'status': 'completed', 'prompt_id': 'pid-old'},
+            ]
+            out = cs.annotate_jobs_with_queue_position(jobs)
+        self.assertEqual(out[0]['status'], 'running')
+        self.assertEqual(out[0]['jobs_ahead'], 0)
+        self.assertEqual(out[1]['status'], 'queued')
+        self.assertEqual(out[1]['jobs_ahead'], 1)
+        self.assertEqual(out[2]['jobs_ahead'], 2)
+        self.assertEqual(out[3]['status'], 'completed')
+
+    def test_build_ace_step_prompt_has_required_nodes(self):
+        g = cs.build_ace_step_prompt(tags='warm synth pad', lyrics='', duration_sec=30)
+        self.assertEqual(g['97']['class_type'], 'CheckpointLoaderSimple')
+        self.assertEqual(g['94']['class_type'], 'TextEncodeAceStepAudio1.5')
+        self.assertEqual(g['98']['class_type'], 'EmptyAceStep1.5LatentAudio')
+        self.assertEqual(g['106']['class_type'], 'SaveAudioMP3')
+        self.assertEqual(g['94']['inputs']['tags'], 'warm synth pad')
+
+    def test_submit_music_refuses_without_checkpoint(self):
+        with mock.patch.object(cs, 'probe_video_studio') as pvs, \
+             mock.patch.object(cs, 'music_workflow_status', return_value={
+                 'ok': False, 'missing': ['checkpoints/ace_step_1.5_turbo_aio.safetensors'],
+             }), \
+             mock.patch('expansion.capabilities.video_studio.comfy_endpoint_healthy', return_value=(True, 'ok')), \
+             mock.patch('expansion.capabilities.studio_packs.start_pack_install', return_value={'started': True}), \
+             mock.patch('expansion.capabilities.studio_packs.soft_block_payload', return_value={
+                 'ok': False, 'queued': False, 'soft_block': True, 'action': 'install_packs',
+                 'error': 'creative_packs_needed', 'http_status': 409, 'detail': 'need ace',
+             }):
+            pvs.return_value = mock.Mock(state='READY', discovery={'endpoint': 'http://127.0.0.1:8188'})
+            out = cs.submit_music_job(tags='lofi beat')
+        self.assertFalse(out['ok'])
+        self.assertTrue(out.get('soft_block'))
         with mock.patch.object(cs, '_studio_endpoint', return_value='http://127.0.0.1:8188'), \
              mock.patch.object(cs, '_http_json') as http, \
              mock.patch.object(cs, '_history_outputs', return_value=[]):

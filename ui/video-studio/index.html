@@ -2118,7 +2118,14 @@ async function vsFetch(url, opts) {
   return r.json();
 }
 
-function vsStatusLabel(s) {
+function vsStatusLabel(s, j) {
+  if (j && (j.status === 'queued' || s === 'queued' || s === 'waiting_gpu')) {
+    const ahead = j.jobs_ahead;
+    if (ahead === 0) return 'Rendering';
+    if (ahead != null && ahead > 0) return `Queued · ${ahead} ahead`;
+    return 'Queued';
+  }
+  if (j && j.status === 'running' && j.jobs_ahead === 0) return 'Rendering';
   return ({queued:'Queued', waiting_gpu:'Waiting on GPU', running:'Rendering', completed:'Done', ready:'Done', failed:'Failed', cancelled:'Cancelled',
     generating_bible:'Bible', generating_plot:'Plot', generating_outline:'Outline', reviewing:'Review', revising:'Revising', generating_shots:'Shots',
     checking_runtime:'Runtime check', expanding_runtime:'Expanding', compressing_runtime:'Compressing', needs_attention:'Needs Attention',
@@ -2373,7 +2380,7 @@ async function vsRefreshJobs() {
         ${extra}
         ${deleteBtn}
       </div>
-      <span class="vs-status ${j.status}">${vsStatusLabel(j.status)}</span>
+      <span class="vs-status ${j.status}">${vsStatusLabel(j.status, j)}</span>
     </div>`;
   }).join('');
   // Crist 2026-09-18: skip innerHTML churn when markup unchanged so <img>
@@ -2702,7 +2709,20 @@ async function vsGenerateMusic(advanced) {
   const flags = window.__vsPackFlags || {};
   if (flags.music_ready === false) {
     if (note) {
-      note.textContent = 'Music packs are not installed on this profile yet. Use Image mode — generate works there.';
+      note.textContent = 'Music pack not installed yet (~12 GB ACE-Step). Starting download…';
+    }
+    try {
+      await fetch('/video-studio/api/install-packs', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({which: ['ace_step']}),
+      });
+    } catch (_e) {}
+    if (note) {
+      note.textContent = (
+        'Music pack download started. Stay on Image until ACE-Step finishes — '
+        + 'Generate Music unlocks when the checkpoint is indexed.'
+      );
     }
     return;
   }
