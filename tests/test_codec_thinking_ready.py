@@ -48,6 +48,8 @@ def main() -> int:
          "Deck instruments + ambient bed", fails)
     must("linkOperatorCam" in js and "operatorPortHtml" in js and "cc-rack" in js,
          "Codec OPERATOR port + instrument rack sidebar", fails)
+    must("codecPortraitUrl" in js and "bindCodecVideoFallback" in js,
+         "per-agent Codec portrait fallback (not Aria-only)", fails)
     must("showGenomeSetup" in js and "showVideoStudioSetup" in js and "Fix-Otacon-GPU" in js,
          "Aria-guided Genome/Studio setup with GPU fix path", fails)
     must("startComfySidecar" in js and "useDetectedComfy" in js and "video-studio/detect" in js,

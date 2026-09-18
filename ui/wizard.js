@@ -29,6 +29,29 @@ function codecVideoFor(mode){
   const m=mode||'idle';
   return `/assets/${id}/${id}-${m}.mp4`;
 }
+function codecPortraitUrl(id){
+  const aid=id||currentPortraitId();
+  return `/assets/${aid}/${aid}.webp`;
+}
+function bindCodecVideoFallback(v){
+  if(!v||v.dataset.boundPortraitFallback) return;
+  v.dataset.boundPortraitFallback='1';
+  v.addEventListener('error', ()=>{
+    const id=currentPortraitId();
+    const port=document.getElementById('port-active');
+    if(!port) return;
+    // Prefer this agent's still portrait over swapping to Aria's motion pack.
+    if(!port.querySelector('img.codec-still')){
+      const img=document.createElement('img');
+      img.className='codec-still';
+      img.alt=currentAgentName()||id;
+      img.src=codecPortraitUrl(id);
+      img.onerror=()=>{ img.src='/assets/aria/aria.webp'; };
+      v.style.display='none';
+      port.insertBefore(img, v);
+    }
+  });
+}
 function roomKindFromRoute(route){
   const p=String(route||'').replace(/\/+$/,'')||'/';
   const map={
@@ -862,18 +885,12 @@ function setCodecMode(mode){
   state.codecMode=mode;
   if(port) port.classList.toggle('codec-talking', mode==='talking');
   if(!v) return;
+  bindCodecVideoFallback(v);
+  const still=port&&port.querySelector('img.codec-still');
+  if(still){ still.remove(); v.style.display=''; }
   const src=codecVideoFor(mode);
-  const fallback=CODEC_FALLBACK[mode]||CODEC_FALLBACK.idle;
-  if(!v.dataset.boundFallback){
-    v.dataset.boundFallback='1';
-    v.addEventListener('error', ()=>{
-      if(v.src && !v.src.endsWith(fallback) && !String(v.src).includes('/assets/aria/')){
-        v.src=fallback;
-        v.play().catch(()=>{});
-      }
-    });
-  }
   const cur=v.getAttribute('src')||'';
+  v.setAttribute('poster', codecPortraitUrl());
   if(cur!==src){ v.src=src; }
   v.play().catch(()=>{});
   const badge=document.getElementById('codecStatus');
@@ -1058,7 +1075,7 @@ async function showChat(){
               </div>
             </div>
             <div class="codec-port port-right" id="port-active">
-              <video id=codecVideo autoplay loop muted playsinline src="${idleSrc}" onerror="this.src='/assets/aria/aria-idle.mp4'"></video>
+              <video id=codecVideo autoplay loop muted playsinline poster="${codecPortraitUrl(portraitAgent)}" src="${idleSrc}"></video>
               <div class="codec-port-crt"></div>
               <div class="codec-port-lbl" id="active-ai-label">STANDBY</div>
             </div>
@@ -1129,6 +1146,7 @@ async function showChat(){
   if(state.conversation) await openConversation(state.conversation);
   try{ await loadMemories(); }catch(e){}
   setCodecMode('idle');
+  bindCodecVideoFallback(document.getElementById('codecVideo'));
   bootCodecOnce();
   refreshCodecMood();
   otAmbientStart();

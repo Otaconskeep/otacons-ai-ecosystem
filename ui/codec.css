@@ -106,7 +106,7 @@ a:hover{color:var(--mf-accent-bright)}
   padding:10px;border:1px solid rgba(151,159,236,.2);background:rgba(12,10,14,.85);
   box-shadow:inset 0 0 0 1px rgba(151,159,236,.08),0 0 24px rgba(151,159,236,.06)}
 .codec-port{position:relative;height:280px;overflow:hidden;background:#050406;border:1px solid rgba(151,159,236,.22)}
-.codec-port img,.codec-port canvas,.codec-port video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.codec-port img.codec-still{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:1;background:#050406}
 .codec-port video{object-fit:contain}
 .codec-port-lbl{position:absolute;left:8px;bottom:6px;z-index:5;font-size:10px;letter-spacing:.18em;color:var(--mf-lilac)}
 .codec-port-crt{position:absolute;inset:0;z-index:3;pointer-events:none;
