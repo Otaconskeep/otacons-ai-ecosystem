@@ -1,6 +1,7 @@
 """Video Studio setup orchestrator — mocked regression matrix (A–L)."""
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import threading
@@ -332,8 +333,19 @@ class StudioSetupOrchestratorTests(unittest.TestCase):
             self.assertIsNotNone(save.call_args)
             self.assertEqual(save.call_args.args[0], 'http://127.0.0.1:8188')
 
-    def test_G_no_required_assets_no_redownload(self):
-        self.assertEqual(ss.required_studio_assets(), [])
+    def test_G_required_assets_follow_hardware_profile(self):
+        with mock.patch('core.hardware_profile.detect_studio_profile') as det:
+            from core.hardware_profile import classify_studio_profile
+            det.return_value = classify_studio_profile(
+                vram_gb=12, ram_gb=32, free_disk_gb=200,
+                gpu_model='NVIDIA GeForce RTX 3060', cuda_available=True,
+            )
+            assets = ss.required_studio_assets()
+        kinds = {a.get('kind') for a in assets}
+        self.assertIn('image', kinds)
+        self.assertIn('video', kinds)
+        self.assertIn('music', kinds)
+        self.assertTrue(all('crist' not in json.dumps(a) for a in assets))
 
     def test_H_interrupted_resume_via_second_start(self):
         ss.save_setup_state({

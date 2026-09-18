@@ -2,10 +2,12 @@
 
 Public Expansion keeps Studio as an endpoint contract. This module:
   - auto-detects localhost :8188 / :8199
-  - can start deploy/comfyui/docker-compose.yml (empty Comfy → READY)
+  - starts deploy/comfyui/docker-compose.yml (CPU) or docker-compose.gpu.yml
+    when hardware_profile selects comfy_runtime=gpu
   - saves the URL into preferences (same as manual config)
 
-No LTX/model pack here — that stays a later Studio deps drop.
+Model packs (Z-Image / Wan / LTX-2 / ACE-Step) are selected by
+core.hardware_profile and surfaced via studio_setup.
 """
 from __future__ import annotations
 
@@ -32,8 +34,22 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def compose_file() -> Path:
-    return _repo_root() / 'deploy' / 'comfyui' / 'docker-compose.yml'
+def compose_file(*, runtime: str | None = None) -> Path:
+    """Pick CPU or GPU compose from Studio hardware profile (VRAM-first)."""
+    root = _repo_root() / 'deploy' / 'comfyui'
+    rt = (runtime or '').strip().lower()
+    if not rt:
+        rt = (os.environ.get('OTACON_STUDIO_COMFY') or '').strip().lower()
+    if not rt:
+        try:
+            from core.hardware_profile import detect_studio_profile
+            rt = detect_studio_profile().comfy_runtime
+        except Exception:
+            rt = 'cpu'
+    gpu_compose = root / 'docker-compose.gpu.yml'
+    if rt == 'gpu' and gpu_compose.is_file():
+        return gpu_compose
+    return root / 'docker-compose.yml'
 
 
 def detect_local_comfy(timeout: float = 1.5) -> dict:

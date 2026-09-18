@@ -436,6 +436,27 @@ fi
 echo "EXP_GENOME_STATE=$EXP_GENOME_STATE"
 
 # ------------------------------------------------------------------------------
+# Video Studio hardware profile (VRAM-first → RAM → GPU gen)
+# Persists studio_hardware_profile.json + bootstrap-hardware.env Studio keys.
+# Actual Comfy provision still runs from Expansion UI "Set Up Video Studio".
+# ------------------------------------------------------------------------------
+EXP_STUDIO_PROFILE=unknown
+if [[ -n "${VPY:-}" ]] && [[ -f "$INSTALL_DIR/core/hardware_profile.py" ]]; then
+  log "Video Studio profile (Z-Image / Wan·LTX-2 / ACE-Step)"
+  STUDIO_OUT="$(
+    run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" PYTHONPATH="$INSTALL_DIR" \
+      "$VPY" -c "from core.hardware_profile import detect_studio_profile, persist_studio_profile, profile_asset_manifest; p=detect_studio_profile(); persist_studio_profile(p); print(p.profile_id); print(p.comfy_runtime); print(int(p.auto_install_studio)); print(','.join(a['id'] for a in profile_asset_manifest(p)))" \
+      2>/dev/null || true
+  )"
+  EXP_STUDIO_PROFILE="$(printf '%s\n' "$STUDIO_OUT" | sed -n '1p')"
+  EXP_STUDIO_COMFY="$(printf '%s\n' "$STUDIO_OUT" | sed -n '2p')"
+  EXP_STUDIO_AUTO="$(printf '%s\n' "$STUDIO_OUT" | sed -n '3p')"
+  EXP_STUDIO_ASSETS="$(printf '%s\n' "$STUDIO_OUT" | sed -n '4p')"
+  ok "Studio profile=${EXP_STUDIO_PROFILE:-?} comfy=${EXP_STUDIO_COMFY:-?} auto=${EXP_STUDIO_AUTO:-?} assets=${EXP_STUDIO_ASSETS:-none}"
+fi
+echo "EXP_STUDIO_PROFILE=${EXP_STUDIO_PROFILE:-unknown}"
+
+# ------------------------------------------------------------------------------
 # Final summary
 # ------------------------------------------------------------------------------
 FINAL_STATE=READY

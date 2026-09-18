@@ -182,13 +182,37 @@ def _set_phase(
 
 
 def required_studio_assets() -> list[dict[str, str]]:
-    """Required model/asset pack for READY.
+    """Model/asset packs for this host from VRAM-first hardware_profile.
 
-    Base empty Comfy answering on :8188 is enough for Studio READY today.
-    Model/LTX packs are a later product drop — return empty so we do not
-    redownload or block Setup.
+    Connectivity READY still only needs Comfy answering. Packs listed here
+    are what Setup should install next (Z-Image / Wan / LTX-2 / ACE-Step)
+    without blocking the empty-Comfy connect path.
     """
-    return []
+    try:
+        from core.hardware_profile import detect_studio_profile, profile_asset_manifest
+        return profile_asset_manifest(detect_studio_profile())
+    except Exception:
+        return []
+
+
+def studio_hardware_snapshot() -> dict[str, Any]:
+    """Live Studio profile for UI / setup_status."""
+    try:
+        from core.hardware_profile import (
+            detect_studio_profile,
+            persist_studio_profile,
+            profile_asset_manifest,
+            load_studio_defaults,
+        )
+        profile = detect_studio_profile()
+        persist_studio_profile(profile)
+        return {
+            **profile.to_dict(),
+            'assets': profile_asset_manifest(profile),
+            'defaults': load_studio_defaults(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {'profile_id': 'UNKNOWN', 'error': str(exc), 'assets': []}
 
 
 def docker_desktop_exe_candidates() -> list[Path]:
@@ -497,6 +521,7 @@ def setup_status(layout: Optional[StateLayout] = None) -> dict[str, Any]:
         'desktop_installed': docker_desktop_installed(),
         'install_action': state.get('install_action') or _default_install_action(),
         'worker_alive': _worker_alive(),
+        'hardware_profile': studio_hardware_snapshot(),
     }
     return {
         **state,
@@ -710,11 +735,57 @@ def _orchestrate(layout: StateLayout) -> None:
     if not ok_docker:
         return
 
+    # VRAM-first Studio profile → CPU vs GPU compose + pack selection
+    hw = studio_hardware_snapshot()
+    try:
+        os.environ['OTACON_STUDIO_COMFY'] = str(hw.get('comfy_runtime') or 'cpu')
+        os.environ['OTACON_STUDIO_PROFILE'] = str(hw.get('profile_id') or '')
+    except Exception:
+        pass
+    state['hardware_profile'] = {
+        'profile_id': hw.get('profile_id'),
+        'vram_gb': hw.get('vram_gb'),
+        'ram_gb': hw.get('ram_gb'),
+        'comfy_runtime': hw.get('comfy_runtime'),
+        'warnings': hw.get('warnings') or [],
+    }
+    save_setup_state(state, layout=layout)
+
+    if not hw.get('auto_install_studio') and (hw.get('ram_tier') == 'unsupported' or hw.get('vram_gb', 0) < 6):
+        warns = '; '.join((hw.get('warnings') or [])[:2]) or 'Hardware below Studio auto-install floor.'
+        _set_phase(
+            state,
+            FAILED if hw.get('ram_tier') == 'unsupported' else DEGRADED,
+            aria=(
+                f"This PC's hardware profile is {hw.get('profile_id')} "
+                f"({hw.get('vram_gb', 0):.0f} GB VRAM / {hw.get('ram_gb', 0):.0f} GB RAM). "
+                f"{warns} I can still connect an existing ComfyUI if you have one."
+            ),
+            message='Studio auto-install not recommended on this hardware.',
+            error=warns,
+            technical=json.dumps(hw)[:1500],
+            layout=layout,
+        )
+        # Still try connect-only if something is already up
+        found2 = _prefer_endpoint(layout)
+        if found2.get('found'):
+            save_studio_endpoint(found2['endpoint'], layout=layout)
+            _finish_components_and_ready(load_setup_state(layout), layout, found2['endpoint'])
+        return
+
+    profile_aria = (
+        f"Docker is ready. Hardware profile {hw.get('profile_id')} "
+        f"({hw.get('vram_gb', 0):.0f} GB VRAM) — "
+        f"Comfy {hw.get('comfy_runtime')}, "
+        f"image={(hw.get('image') or {}).get('tier')}, "
+        f"video={(hw.get('video') or {}).get('engine')}, "
+        f"music={(hw.get('music') or {}).get('tier')}."
+    )
     state = _set_phase(
         state,
         DOCKER_READY,
-        aria='Docker is ready, so I can set up Video Studio for you.',
-        message='Docker ready',
+        aria=profile_aria,
+        message=f"Docker ready · profile {hw.get('profile_id')}",
         checklist_key='docker',
         layout=layout,
     )
@@ -872,15 +943,46 @@ def _finish_components_and_ready(
     layout: StateLayout,
     endpoint: str,
 ) -> None:
+    hw = studio_hardware_snapshot()
+    assets = hw.get('assets') or required_studio_assets()
+    state['hardware_profile'] = {
+        'profile_id': hw.get('profile_id'),
+        'vram_gb': hw.get('vram_gb'),
+        'ram_gb': hw.get('ram_gb'),
+        'comfy_runtime': hw.get('comfy_runtime'),
+        'image': (hw.get('image') or {}).get('tier') if isinstance(hw.get('image'), dict) else None,
+        'video': (hw.get('video') or {}).get('engine') if isinstance(hw.get('video'), dict) else None,
+        'music': (hw.get('music') or {}).get('tier') if isinstance(hw.get('music'), dict) else None,
+        'ltx2_eligible': hw.get('ltx2_eligible'),
+        'assets': assets,
+        'warnings': hw.get('warnings') or [],
+    }
+    save_setup_state(state, layout=layout)
+
+    pack_bits = []
+    img = hw.get('image') if isinstance(hw.get('image'), dict) else {}
+    vid = hw.get('video') if isinstance(hw.get('video'), dict) else {}
+    mus = hw.get('music') if isinstance(hw.get('music'), dict) else {}
+    if img.get('enabled'):
+        pack_bits.append(f"Z-Image ({img.get('tier')})")
+    if vid.get('enabled'):
+        pack_bits.append(f"{vid.get('engine')} ({vid.get('tier')})")
+    if mus.get('enabled') and mus.get('tier') != 'deferred':
+        pack_bits.append(f"ACE-Step ({mus.get('tier')})")
+    pack_line = ', '.join(pack_bits) if pack_bits else 'connectivity only (packs deferred)'
+
     state = _set_phase(
         state,
         INSTALLING_MODELS,
-        aria='Checking required Studio components…',
-        message='Verifying components…',
+        aria=(
+            f"Hardware profile {hw.get('profile_id') or 'UNKNOWN'} "
+            f"({hw.get('vram_gb', 0):.0f} GB VRAM). Selected: {pack_line}."
+        ),
+        message=f"Studio profile {hw.get('profile_id')} — verifying components…",
         layout=layout,
     )
-    # Empty required set → nothing to download (idempotent, no redownload).
-    _ = required_studio_assets()
+    # Connectivity READY does not block on model downloads; packs are recorded for Muse.
+    _ = assets
     state = _set_phase(
         state,
         VERIFYING,
@@ -892,10 +994,15 @@ def _finish_components_and_ready(
     report = probe_video_studio(layout)
     if report.state == 'READY':
         state['endpoint'] = endpoint
+        warn = (hw.get('warnings') or [])[:2]
+        extra = (' ' + ' '.join(warn)) if warn else ''
         _set_phase(
             state,
             READY,
-            aria='Done. Video Studio is connected and ready.',
+            aria=(
+                f"Done. Video Studio is connected (profile {hw.get('profile_id')}). "
+                f"{pack_line}.{extra}"
+            ),
             message='Video Studio is ready.',
             layout=layout,
         )
@@ -905,6 +1012,21 @@ def _finish_components_and_ready(
         state['ok'] = True
         state['running'] = False
         state['endpoint'] = endpoint
+        state['hardware_profile'] = state.get('hardware_profile') or hw
+        # Persist Keep-parity prompts/settings for Muse Creative
+        try:
+            from expansion.persist import atomic_write_json as _aw
+            prefs = layout.user_preferences
+            prefs.mkdir(parents=True, exist_ok=True)
+            _aw(prefs / 'studio_creative_settings.json', {
+                'profile_id': hw.get('profile_id'),
+                'image': img,
+                'video': vid,
+                'music': mus,
+                'defaults': hw.get('defaults') or {},
+            })
+        except Exception:
+            pass
         save_setup_state(state, layout=layout)
         return
     _set_phase(

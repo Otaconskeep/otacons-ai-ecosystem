@@ -1473,8 +1473,12 @@ async function showVideoStudioSetup(){
     :'';
   const diag=setup.diagnostics||{};
   const disc=diag.discovery||{};
+  const hw=diag.hardware_profile||setup.hardware_profile||{};
   const ep=setup.endpoint||(disc.endpoint)||(state.capabilities&&state.capabilities.video_endpoint)||'';
   const src=setup.source||disc.source||'';
+  const hwLine=hw.profile_id
+    ?`<p class="muted" style="margin:8px 0 0;font-size:11px;line-height:1.45"><b>Hardware profile</b> · ${escapeHtml(hw.profile_id)} · ${escapeHtml(String(hw.vram_gb||'?'))} GB VRAM · ${escapeHtml(String(hw.ram_gb||'?'))} GB RAM · Comfy ${escapeHtml(hw.comfy_runtime||'—')}<br>Image: ${escapeHtml((hw.image&&hw.image.engine)||'off')} (${escapeHtml((hw.image&&hw.image.tier)||'—')}) · Video: ${escapeHtml((hw.video&&hw.video.engine)||'off')} · Music: ${escapeHtml((hw.music&&hw.music.engine)||'off')} (${escapeHtml((hw.music&&hw.music.tier)||'—')})${hw.ltx2_eligible?' · LTX-2 eligible':''}</p>`
+    :'';
   appRoot().innerHTML=`<div class="home">
   <header class="home-header"><div><p class="home-kicker">Expansion · Muse</p><h1 class="home-greeting">Video Studio</h1></div>
   <div class="home-meta">${btnHome()}</div></header>
@@ -1486,6 +1490,7 @@ async function showVideoStudioSetup(){
         <p id="studioAriaCopy" style="margin:0 0 10px;line-height:1.5">${escapeHtml(aria)}</p>
         <p><b>Status:</b> <span id="studioPhaseLabel">${escapeHtml(ready?'READY':(setup.phase||st||'…'))}</span></p>
         <p class="muted" id="studioSetupMessage" style="margin-top:6px">${escapeHtml(setup.message||setup.user_action||'')}</p>
+        ${hwLine}
       </div>
     </div>
     ${stepHtml}

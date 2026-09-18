@@ -1,0 +1,16 @@
+# Otacon Expansion — GPU ComfyUI sidecar when Studio profile selects comfy_runtime=gpu.
+# Selected automatically by hardware_profile / comfy_sidecar (VRAM-first).
+services:
+  otacon-comfyui:
+    image: yanwk/comfyui-boot:cu124
+    container_name: otacon-comfyui
+    ports:
+      - "8188:8188"
+    restart: unless-stopped
+    gpus: all
+    environment:
+      - CLI_ARGS=--listen 0.0.0.0 --port 8188
+    volumes:
+      - otacon-comfy-data:/root
+volumes:
+  otacon-comfy-data:

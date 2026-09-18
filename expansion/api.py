@@ -29,6 +29,14 @@ def handle_expansion_get(path: str, send_json) -> bool:
             'discovery': report.discovery,
         })
         return True
+    if path == '/api/expansion/studio/hardware-profile':
+        from expansion.capabilities.studio_setup import studio_hardware_snapshot
+        send_json(studio_hardware_snapshot())
+        return True
+    if path == '/api/expansion/video-studio/hardware-profile':
+        from expansion.capabilities.studio_setup import studio_hardware_snapshot
+        send_json(studio_hardware_snapshot())
+        return True
     if path == '/api/expansion/command':
         from expansion.floors import build_command_floor
         from expansion.runtime import ExpansionRuntime

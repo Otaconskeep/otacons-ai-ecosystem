@@ -1,0 +1,34 @@
+{
+  "product": "Otaconskeep Expansion · Video Studio",
+  "engines": {
+    "z-image-turbo": {
+      "role": "identity-preserving image",
+      "default_positive": "identity-preserving portrait, natural lighting, sharp eyes, consistent face, clean background, high detail",
+      "default_negative": "blurry, deformed face, extra limbs, watermark, text, low quality, oversaturated"
+    },
+    "wan-2.2-5b": {
+      "role": "consumer local video (default under 32 GB VRAM)",
+      "default_positive": "cinematic motion, smooth camera, natural physics, coherent subject, stable identity across frames",
+      "default_negative": "jitter, morphing face, flicker, text overlay, watermark, low fps look"
+    },
+    "ltx-2": {
+      "role": "official high-VRAM video (32 GB+)",
+      "default_positive": "high-fidelity cinematic shot, coherent motion, detailed lighting, stable subject, filmic color",
+      "default_negative": "jitter, morphing face, flicker, text overlay, watermark, low fps look",
+      "vram_gb_min": 32,
+      "disk_gb_min": 100
+    },
+    "ace-step-1.5": {
+      "role": "default local music engine",
+      "default_positive": "instrumental bed, clean mix, no vocals unless requested, loop-friendly structure, emotional but controlled",
+      "disk_gb_core": 10
+    }
+  },
+  "selection_policy": {
+    "priority": ["vram", "system_ram", "gpu_generation", "free_disk", "cuda"],
+    "default_video_under_32gb": "wan-2.2-5b",
+    "ltx2_requires_vram_gb": 32,
+    "studio_ram_minimum_gb": 16,
+    "studio_ram_recommended_gb": 32
+  }
+}

@@ -1576,6 +1576,27 @@ OTACON_LLM_MODEL=$RECOMMENDED_MODEL
 OTACON_LLM_PROVIDER=ollama
 EOF
 
+# VRAM-first Video Studio / music profile (Z-Image, Wan/LTX-2, ACE-Step)
+if [[ -n "${VPY:-}" ]] && [[ -f "$INSTALL_DIR/core/hardware_profile.py" ]]; then
+  log "Detecting Video Studio hardware profile (VRAM → RAM → GPU gen)"
+  "$VPY" - <<'PY' || true
+from core.hardware_profile import detect_studio_profile, persist_studio_profile, profile_asset_manifest
+p = detect_studio_profile()
+path = persist_studio_profile(p)
+print(f"STUDIO_PROFILE={p.profile_id}")
+print(f"STUDIO_COMFY={p.comfy_runtime}")
+print(f"STUDIO_IMAGE={p.image.engine if p.image.enabled else 'off'}:{p.image.tier}")
+print(f"STUDIO_VIDEO={p.video.engine if p.video.enabled else 'off'}:{p.video.tier}")
+print(f"STUDIO_MUSIC={p.music.engine if p.music.enabled else 'off'}:{p.music.tier}")
+print(f"STUDIO_LTX2={int(p.ltx2_eligible)}")
+print(f"STUDIO_AUTO={int(p.auto_install_studio)}")
+print(f"STUDIO_ASSETS={len(profile_asset_manifest(p))}")
+print(f"STUDIO_PROFILE_PATH={path}")
+for w in p.warnings[:4]:
+    print(f"STUDIO_WARN={w}")
+PY
+fi
+
 ok "Python environment ready"
 
 # ------------------------------------------------------------------------------
