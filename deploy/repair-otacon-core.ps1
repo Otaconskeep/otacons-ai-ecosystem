@@ -615,13 +615,21 @@ exit 0
     }
     . $helper
     $run = Invoke-OtaconWslBashFile -Distro $Name -ScriptBody $bash -User "root" -Label "otacon-repair"
-    Write-RepairLog ("WSL stage={0} exit={1} win={2} linux={3}" -f $run.Stage, $run.ExitCode, $run.WindowsPath, $run.LinuxPath)
+    Write-RepairLog ("WSL stage={0} exit={1} class={2} win={3} linux={4}" -f $run.Stage, $run.ExitCode, $run.FailureClass, $run.WindowsPath, $run.LinuxPath)
     if ($run.Output) { Write-RepairLog ($run.Output.Trim()) }
     if (-not $run.Ok) {
-        Write-RepairLog ("UPDATE FAILED at stage={0} exit={1}" -f $run.Stage, $run.ExitCode)
-        # Propagate transport/syntax failure immediately (do not treat as soft missing markers).
-        $script:OtaconWslTransportExit = [int]$run.ExitCode
-        if ($script:OtaconWslTransportExit -eq 0) { $script:OtaconWslTransportExit = 1 }
+        Write-RepairLog ("UPDATE FAILED at stage={0} exit={1} class={2}" -f $run.Stage, $run.ExitCode, $run.FailureClass)
+        # ONLY true transport/syntax failures abort as OtaconWslTransportExit.
+        # Script exit 8 (E2E_HEALTH_FAIL) and other payload failures must fall through
+        # to marker-based classification below — do not mislabel as bash transport.
+        $cls = [string]$run.FailureClass
+        if ($cls -eq 'transport' -or $cls -eq 'syntax' -or $run.Stage -eq 'bash -n' -or $run.Stage -eq 'exception' -or $run.Stage -eq 'wslpath') {
+            $script:OtaconWslTransportExit = [int]$run.ExitCode
+            if ($script:OtaconWslTransportExit -eq 0) { $script:OtaconWslTransportExit = 1 }
+        } else {
+            $script:OtaconWslTransportExit = 0
+            $script:OtaconWslScriptExit = [int]$run.ExitCode
+        }
         return [string]$run.Output
     }
     # Surface explicit Git stage markers from the Linux script (separate from transport OK).
@@ -736,11 +744,14 @@ try {
 Write-RepairLog "==== INSPECT END ===="
 
 $script:OtaconWslTransportExit = 0
+$script:OtaconWslScriptExit = 0
 $text = Invoke-WslAppUpdate -Name $distro -PortNum $Port -TargetRev $target
 if ([int]$script:OtaconWslTransportExit -ne 0) {
     Write-RepairLog "UPDATE FAILED: WSL bash file transport/syntax (stage exit=$($script:OtaconWslTransportExit))"
     Write-Host ""
     Write-Host "  UPDATE FAILED - WSL Bash transport error (temp .sh / bash -n)." -ForegroundColor Red
+    Write-Host "  This is an installer machinery problem — not Otacon app health." -ForegroundColor Yellow
+    Write-Host "  Re-run OtaconsKeep-Setup.bat (refreshes cached helpers), then retry Update." -ForegroundColor Yellow
     Write-Host "  Log: $LogFile" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  Press any key to close." -ForegroundColor DarkYellow

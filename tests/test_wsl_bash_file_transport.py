@@ -40,9 +40,31 @@ def main() -> int:
     must("--exec bash" in helper, "executes via --exec bash <file>", fails)
     must("Remove-Item" in helper and "finally" in helper, "temp .sh cleaned in finally", fails)
 
+    must("FailureClass" in helper or "FailureClass" in helper.replace(" ", ""),
+         "transport returns FailureClass (transport|syntax|script)", fails)
+    must("stage-to-/tmp" in helper or "/tmp/" in helper,
+         "stages payload into Linux /tmp when possible", fails)
+
     must("bash -lc $bash" not in repair, "repair does not use bash -lc $bash", fails)
     must("Invoke-OtaconWslBashFile" in repair, "repair uses file transport", fails)
     must("wsl-bash-file.ps1" in repair, "repair dotsources wsl-bash-file.ps1", fails)
+    # Josh regression: script exit 8 (E2E) must NOT be labeled transport/syntax.
+    must("FailureClass" in repair or "OtaconWslScriptExit" in repair,
+         "repair distinguishes script exit from transport/syntax", fails)
+    must("E2E_HEALTH_FAIL" in repair and "end-to-end health" in repair,
+         "E2E exit 8 has its own user-facing path", fails)
+    # Must not set transport exit for every nonzero Ok=false
+    must(
+        "class={2}" in repair or "FailureClass" in repair,
+        "repair logs FailureClass for Josh/Cristo separation",
+        fails,
+    )
+    # Guard: transport abort only for transport|syntax|bash -n|exception
+    must(
+        "transport" in repair and "syntax" in repair and "OtaconWslTransportExit" in repair,
+        "transport abort gated on FailureClass",
+        fails,
+    )
 
     must("bash -lc $bash" not in fixgpu, "fix-gpu does not use bash -lc $bash", fails)
     must("Invoke-OtaconWslBashFile" in fixgpu, "fix-gpu uses file transport", fails)
