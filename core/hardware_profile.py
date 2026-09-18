@@ -208,19 +208,23 @@ def _zimage_path(vram_gb: float) -> CreativePath:
         )
     if vram_gb < 10:
         return CreativePath(
-            True, 'z-image-turbo', 'fp8_quant',
-            '8 GB minimum path: Z-Image Turbo FP8 text encoder + BF16 unet.',
+            True, 'z-image-turbo', 'nvfp4',
+            '8 GB (8GB_FAST): Z-Image Turbo NVFP4 + Qwen FP4 — laptop / 3070-class.',
             {
-                'precision': 'fp8',
+                'precision': 'nvfp4',
                 'low_vram': True,
                 'resolution': 768,
                 'steps': 6,
                 'cfg': 1.0,
-                'unet': 'z_image_turbo_bf16.safetensors',
-                'clip': 'qwen_3_4b_fp8_mixed.safetensors',
+                'unet': 'z_image_turbo_nvfp4.safetensors',
+                'clip': 'qwen_3_4b_fp4_mixed.safetensors',
                 'vae': 'ae.safetensors',
                 'comfy_docs': docs,
                 'hf_repo': 'Comfy-Org/z_image_turbo',
+                'skip': [
+                    'z_image_turbo_bf16.safetensors',
+                    'qwen_3_4b.safetensors',
+                ],
             },
             {'positive': _ZIMAGE_PROMPT, 'negative': _ZIMAGE_NEG},
         )

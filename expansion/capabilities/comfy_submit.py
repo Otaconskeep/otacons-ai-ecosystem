@@ -74,31 +74,32 @@ def image_workflow_status(endpoint: Optional[str] = None) -> dict[str, Any]:
     unets = list_models(ep, 'diffusion_models') or list_models(ep, 'unet')
     clips = list_models(ep, 'text_encoders') or list_models(ep, 'clip')
     vaes = list_models(ep, 'vae')
-    unet = next((u for u in unets if 'z_image' in u.lower()), '')
-    clip = next((
-        c for c in clips
-        if c == _DEFAULT_CLIP
-        or 'qwen_3_4b' in c.lower()
-    ), '')
-    vae = next((v for v in vaes if v == _DEFAULT_VAE or v.endswith('/ae.safetensors') or v == 'ae.safetensors'), '')
+    # Prefer lighter indexed files first (8 GB laptop path → nvfp4 / fp4).
+    unet = ''
+    for candidate in (
+        'z_image_turbo_nvfp4.safetensors',
+        'z_image_turbo_int8_convrot.safetensors',
+        _DEFAULT_UNET,
+    ):
+        hit = next((u for u in unets if u == candidate or u.endswith('/' + candidate)), '')
+        if hit:
+            unet = hit
+            break
     if not unet:
-        for candidate in (
-            _DEFAULT_UNET,
-            'z_image_turbo_int8_convrot.safetensors',
-            'z_image_turbo_nvfp4.safetensors',
-        ):
-            if candidate in unets:
-                unet = candidate
-                break
+        unet = next((u for u in unets if 'z_image' in u.lower()), '')
+    clip = ''
+    for candidate in (
+        'qwen_3_4b_fp4_mixed.safetensors',
+        'qwen_3_4b_fp8_mixed.safetensors',
+        _DEFAULT_CLIP,
+    ):
+        hit = next((c for c in clips if c == candidate or c.endswith('/' + candidate)), '')
+        if hit:
+            clip = hit
+            break
     if not clip:
-        for candidate in (
-            _DEFAULT_CLIP,
-            'qwen_3_4b_fp8_mixed.safetensors',
-            'qwen_3_4b_fp4_mixed.safetensors',
-        ):
-            if candidate in clips:
-                clip = candidate
-                break
+        clip = next((c for c in clips if 'qwen_3_4b' in c.lower()), '')
+    vae = next((v for v in vaes if v == _DEFAULT_VAE or v.endswith('/ae.safetensors') or v == 'ae.safetensors'), '')
     if not vae and _DEFAULT_VAE in vaes:
         vae = _DEFAULT_VAE
     ready = bool(unet and clip and vae)
@@ -118,8 +119,9 @@ def image_workflow_status(endpoint: Optional[str] = None) -> dict[str, Any]:
         'clip': clip,
         'vae': vae,
         'missing': missing,
+        'assets_ready': ready,
         'detail': (
-            'Z-Image Turbo workflow ready'
+            'Z-Image assets indexed by ComfyUI'
             if ready
             else ('Studio connected, but image workflow models are not installed yet: ' + ', '.join(missing))
         ),

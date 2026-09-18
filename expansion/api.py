@@ -138,18 +138,41 @@ def handle_expansion_get(path: str, send_json) -> bool:
                 'aria': str(exc)[:200],
                 'packs': {},
             }
-        gen_ok = bool(vs.state == 'READY' and (workflow.get('ok') or packs.get('image_ready')))
+        # Three readiness levels (do not treat Comfy healthy alone as generate-ready).
+        studio_ready = vs.state == 'READY'
+        assets_ready = bool(workflow.get('ok') or packs.get('image_ready'))
+        try:
+            from expansion.capabilities.comfy_submit import submit_image_job as _submit_fn
+            submitter_ready = callable(_submit_fn)
+        except Exception:
+            submitter_ready = False
+        generation_ready = bool(studio_ready and assets_ready and submitter_ready)
+        gen_ok = generation_ready
         if packs.get('running'):
             blocked = packs.get('aria') or (
                 'Creative packs are downloading — Generate unlocks when Z-Image finishes.'
             )
-        elif gen_ok:
+        elif generation_ready:
             blocked = ''
-        else:
-            blocked = packs.get('aria') or workflow.get('detail') or (
-                'Creative packs are not installed yet. Tap Install packs — '
-                'Generate stays quiet until packs are ready.'
+        elif studio_ready and assets_ready and not submitter_ready:
+            blocked = (
+                'Z-Image assets are installed and ComfyUI is connected, '
+                'but /creative still needs a Comfy workflow submitter.'
             )
+        elif studio_ready and not assets_ready:
+            blocked = packs.get('aria') or workflow.get('detail') or (
+                'ComfyUI is connected, but Z-Image model assets are not installed yet.'
+            )
+        else:
+            blocked = packs.get('aria') or (
+                'Video Studio is not connected yet. Set up Studio first.'
+            )
+        readiness = {
+            'studio_ready': studio_ready,
+            'assets_ready': assets_ready,
+            'generation_ready': generation_ready,
+            'submitter_ready': submitter_ready,
+        }
         send_json({
             'surface': 'muse_creative',
             'creative_queue': [asdict(j) for j in jobs
@@ -164,7 +187,9 @@ def handle_expansion_get(path: str, send_json) -> bool:
                 'voice_motion': 'readiness_dependent',
                 'image_workflow': workflow,
                 'packs': packs,
+                'readiness': readiness,
             },
+            'readiness': readiness,
             'video_studio': vs.to_dict(),
             'video_studio_readiness': vs.state,
             'comfy_detect': detected,
@@ -191,9 +216,15 @@ def handle_expansion_get(path: str, send_json) -> bool:
                 'image_widgets': (defaults.get('image_widgets') or []),
                 'workflow': workflow,
                 'packs': packs,
+                'readiness': readiness,
+                'studio_ready': studio_ready,
+                'assets_ready': assets_ready,
+                'generation_ready': generation_ready,
                 'generate_enabled': gen_ok,
                 'generate_blocked_reason': blocked,
-                'soft_block': bool(packs.get('soft_block')) and not gen_ok,
+                'soft_block': (not gen_ok) and bool(
+                    packs.get('soft_block') or (studio_ready and not assets_ready)
+                ),
                 'action': packs.get('action') or ('' if gen_ok else 'install_packs'),
                 'modalities': [
                     {

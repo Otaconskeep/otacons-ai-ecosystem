@@ -43,7 +43,9 @@ class HardwareProfileMatrixTests(unittest.TestCase):
         self.assertEqual(p.profile_id, '8GB_FAST')
         self.assertEqual(p.video.engine, 'wan-2.2-5b')
         self.assertFalse(p.ltx2_eligible)
-        self.assertEqual(p.image.tier, 'fp8_quant')
+        self.assertEqual(p.image.tier, 'nvfp4')
+        self.assertEqual(p.image.settings.get('unet'), 'z_image_turbo_nvfp4.safetensors')
+        self.assertEqual(p.image.settings.get('clip'), 'qwen_3_4b_fp4_mixed.safetensors')
 
     def test_12gb_recommended_zimage(self):
         p = classify_studio_profile(

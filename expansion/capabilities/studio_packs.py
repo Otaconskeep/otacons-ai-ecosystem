@@ -60,6 +60,15 @@ ZIMAGE_FP8 = [
     _f('Comfy-Org/z_image_turbo', 'split_files/vae/ae.safetensors',
        'vae', 'ae.safetensors', 100_000),
 ]
+# 8 GB / 8GB_FAST — Crist-validated laptop path (RTX 3070 Laptop).
+ZIMAGE_NVFP4 = [
+    _f('Comfy-Org/z_image_turbo', 'split_files/diffusion_models/z_image_turbo_nvfp4.safetensors',
+       'diffusion_models', 'z_image_turbo_nvfp4.safetensors', 500_000_000),
+    _f('Comfy-Org/z_image_turbo', 'split_files/text_encoders/qwen_3_4b_fp4_mixed.safetensors',
+       'text_encoders', 'qwen_3_4b_fp4_mixed.safetensors', 100_000_000),
+    _f('Comfy-Org/z_image_turbo', 'split_files/vae/ae.safetensors',
+       'vae', 'ae.safetensors', 100_000),
+]
 ZIMAGE_INT8 = [
     _f('Comfy-Org/z_image_turbo', 'split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors',
        'diffusion_models', 'z_image_turbo_int8_convrot.safetensors', 500_000_000),
@@ -243,7 +252,9 @@ def _zimage_files_for_tier(tier: str) -> list[dict[str, Any]]:
     t = (tier or '').lower()
     if t in ('low_vram_quant', 'int8', 'int8_quant'):
         return ZIMAGE_INT8
-    if t in ('fp8_quant', 'fp8', 'recommended'):
+    if t in ('nvfp4', 'fp8_quant', '8gb_fast'):
+        return ZIMAGE_NVFP4
+    if t in ('fp8', 'recommended'):
         return ZIMAGE_FP8
     return ZIMAGE_BF16
 
@@ -812,6 +823,12 @@ def ensure_auto_install(
 ) -> dict[str, Any]:
     """If Studio is READY and packs missing, kick hardware-matched downloads (no UI pick)."""
     layout = layout or resolve_layout()
+    if hw is None:
+        try:
+            from expansion.capabilities.studio_setup import studio_hardware_snapshot
+            hw = studio_hardware_snapshot()
+        except Exception:
+            hw = {}
     status = packs_status(layout=layout, hw=hw)
     if status.get('ok') or status.get('image_ready'):
         return {**status, 'auto_started': False, 'detail': 'packs already ready'}
@@ -822,7 +839,10 @@ def ensure_auto_install(
     st = load_packs_state(layout)
     if st.get('auto_kicked') and st.get('phase') not in ('FAILED', 'NOT_STARTED', '', None):
         return {**status, 'auto_started': False, 'detail': 'auto already attempted'}
-    out = start_pack_install(layout=layout, hw=hw)
+    # ≤10 GB: image-unblock only (NVFP4 / INT8). Skip Wan/ACE/LTX until user asks.
+    vram = float((hw or {}).get('marketed_vram_gb') or (hw or {}).get('vram_gb') or 0)
+    which = ['zimage'] if vram and vram < 12 else None
+    out = start_pack_install(layout=layout, hw=hw, which=which)
     st = load_packs_state(layout)
     st['auto_kicked'] = True
     save_packs_state(st, layout)
