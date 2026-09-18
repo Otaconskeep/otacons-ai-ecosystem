@@ -332,7 +332,26 @@ a:hover{color:var(--mf-accent-bright)}
 .codec-chip-row .hud-chip.warn{color:var(--mf-warn)}.codec-chip-row .hud-chip.warn b{background:var(--mf-warn);box-shadow:0 0 6px var(--mf-warn)}
 .codec-chip-row .hud-chip.bad{color:var(--mf-pink)}.codec-chip-row .hud-chip.bad b{background:var(--mf-pink)}
 
+/* Agent codec port: portraits are already tight face/chest crops.
+   cover was zooming them past the frame (Ledger/Muse/Sentry/Vector).
+   contain keeps the full figure letterboxed on the CRT. */
 .codec-port.port-bleed{height:320px}
-.codec-port.port-bleed video,.codec-port.port-bleed img.codec-still{object-fit:cover}
+.codec-port.port-bleed video,
+.codec-port.port-bleed img.codec-still{
+  object-fit:contain;
+  object-position:center center;
+  background:#050406;
+}
+/* Per-agent nudge: show a bit more headroom when media is face-heavy */
+.codec-port.port-bleed[data-agent="vector"] video,
+.codec-port.port-bleed[data-agent="vector"] img.codec-still,
+.codec-port.port-bleed[data-agent="ledger"] video,
+.codec-port.port-bleed[data-agent="ledger"] img.codec-still,
+.codec-port.port-bleed[data-agent="muse"] video,
+.codec-port.port-bleed[data-agent="muse"] img.codec-still,
+.codec-port.port-bleed[data-agent="sentry"] video,
+.codec-port.port-bleed[data-agent="sentry"] img.codec-still{
+  object-position:center 18%;
+}
 @media (max-width:700px){.codec-port.port-bleed{height:240px}}
 

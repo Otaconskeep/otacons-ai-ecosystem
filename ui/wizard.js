@@ -969,7 +969,10 @@ function setCodecMode(mode){
   const v=document.getElementById('codecVideo');
   const port=document.getElementById('port-active');
   state.codecMode=mode;
-  if(port) port.classList.toggle('codec-talking', mode==='talking');
+  if(port){
+    port.classList.toggle('codec-talking', mode==='talking');
+    port.setAttribute('data-agent', currentPortraitId());
+  }
   setCodecLinkMeters(mode);
   if(!v) return;
   bindCodecVideoFallback(v);
@@ -1175,7 +1178,7 @@ async function showChat(){
                 ${agentBtns}
               </div>
             </div>
-            <div class="codec-port port-right port-bleed" id="port-active">
+            <div class="codec-port port-right port-bleed" id="port-active" data-agent="${escapeHtml(portraitAgent)}">
               <video id=codecVideo autoplay loop muted playsinline poster="${codecPortraitUrl(portraitAgent)}" src="${idleSrc}"></video>
               <div class="codec-port-crt"></div>
               <div class="codec-port-lbl" id="active-ai-label">STANDBY</div>
