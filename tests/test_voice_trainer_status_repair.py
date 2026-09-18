@@ -139,10 +139,11 @@ class ExpansionVoiceTrainerStatusTests(unittest.TestCase):
     def test_probe_voice_trainer_builds_disc_when_ui_down(self):
         """Regression: disc must exist when :8765 is not listening (Crist optional_capabilities)."""
         from expansion.capabilities import voice_trainer as vt
+        from expansion.capabilities import voice_trainer_status as vts
         with mock.patch.object(vt, '_vt_home', return_value=self.home), \
              mock.patch.object(vt, '_docker_image_present', return_value=''), \
              mock.patch.object(vt, '_gpu_usable', return_value=True), \
-             mock.patch.object(vt, 'port_listening', return_value=False), \
+             mock.patch.object(vts, 'port_listening', return_value=False), \
              mock.patch.object(vt, 'train_state', return_value={}):
             report = vt.probe_voice_trainer()
         self.assertIsNotNone(report.discovery)
