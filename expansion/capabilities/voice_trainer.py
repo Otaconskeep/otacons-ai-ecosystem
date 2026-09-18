@@ -311,16 +311,24 @@ def genome_train_status() -> dict:
 
 
 def ensure_genome(*, auto_install: bool = True) -> dict:
-    """Autonomous path: install if needed (GPU), then start trainer UI."""
+    """Autonomous path: install if needed (GPU), then start trainer UI.
+
+    Even when capability is already READY (classic status page can still own
+    :8765), always ensure Expansion Genome UI is the listener.
+    """
     report = probe_voice_trainer()
     home = _vt_home()
     installed = home.is_dir() and any(home.iterdir())
     if report.state == CapabilityState.READY.value:
+        ui = ensure_voice_trainer_ui()
         return {
-            'ok': True,
-            'action': 'ready',
-            'url': (report.discovery or {}).get('url'),
-            'state': report.state,
+            'ok': bool(ui.get('ok')),
+            'action': ui.get('action') or 'ready',
+            'url': ui.get('url') or (report.discovery or {}).get('url'),
+            'state': probe_voice_trainer().state,
+            'product': ui.get('product') or 'genome-trainer',
+            'reclaim': ui.get('reclaim'),
+            'hint': ui.get('hint') or ui.get('error') or '',
         }
     if not installed and auto_install and _gpu_usable():
         inst = install_voice_trainer()

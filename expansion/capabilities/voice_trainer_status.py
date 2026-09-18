@@ -202,12 +202,13 @@ def port_listening(port: int = DEFAULT_PORT, host: str = '127.0.0.1') -> bool:
         return False
 
 
-def verify_ui(port: int = DEFAULT_PORT, timeout: float = 3.0) -> dict[str, Any]:
+def verify_ui(port: int = DEFAULT_PORT, timeout: float = 3.0, *, require_genome: bool = False) -> dict[str, Any]:
     base = f'http://127.0.0.1:{port}'
     out: dict[str, Any] = {
         'ok': False,
         'index_ok': False,
         'status_ok': False,
+        'genome_ok': False,
         'status': None,
         'error': '',
     }
@@ -221,10 +222,21 @@ def verify_ui(port: int = DEFAULT_PORT, timeout: float = 3.0) -> dict[str, Any]:
                 data = json.loads(resp.read().decode('utf-8'))
                 out['status'] = data
                 out['status_ok'] = int(resp.status) == 200 and isinstance(data, dict) and bool(data.get('ok'))
-            if out['index_ok'] and out['status_ok']:
-                out['ok'] = True
-                return out
-            last_err = 'index or status.json check failed'
+            if require_genome:
+                try:
+                    with urllib.request.urlopen(f'{base}/api/train-status', timeout=1.5) as resp:
+                        out['genome_ok'] = int(resp.status) == 200
+                except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+                    out['genome_ok'] = False
+                if out['index_ok'] and out['status_ok'] and out['genome_ok']:
+                    out['ok'] = True
+                    return out
+                last_err = 'Genome /api/train-status missing (classic status page still on port)'
+            else:
+                if out['index_ok'] and out['status_ok']:
+                    out['ok'] = True
+                    return out
+                last_err = 'index or status.json check failed'
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, OSError) as exc:
             last_err = str(exc)
         time.sleep(0.2)
@@ -310,7 +322,7 @@ def ensure_status_and_ui(
             if g.get('ok'):
                 # Always refresh on-disk status.json for static clients / repair.
                 write_status_json(root)
-                check = verify_ui(port)
+                check = verify_ui(port, require_genome=True)
                 if check['ok']:
                     return {
                         'ok': True,
@@ -319,6 +331,8 @@ def ensure_status_and_ui(
                         'install_dir': str(root),
                         'status_json': written['path'],
                         'verify': check,
+                        'product': 'genome-trainer',
+                        'reclaim': g.get('reclaim'),
                     }
                 # Port may be foreign genome-less server — fall through to repair.
                 if g.get('action') == 'port_busy_foreign':
@@ -329,6 +343,14 @@ def ensure_status_and_ui(
                         'hint': g.get('hint') or 'Free the port; refusing to kill foreign process.',
                         'install_dir': str(root),
                     }
+            elif g.get('action') == 'port_busy_foreign':
+                return {
+                    'ok': False,
+                    'action': 'port_conflict',
+                    'error': g.get('error') or f'Port {port} occupied by unrelated process',
+                    'hint': g.get('hint') or 'Free the port; refusing to kill foreign process.',
+                    'install_dir': str(root),
+                }
         except Exception:
             pass
 

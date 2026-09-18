@@ -630,6 +630,7 @@ async function showHome(){
   await ensureLanAuthSession();
   await loadCapabilities();
   await loadExpansion();
+  setTimeout(()=>{ autoKickPremiumSurfaces(); }, 600);
   let scanPack=await loadHardwareScan(15000);
   state.scan=scanPack.data;
   state.scanStatus=scanPack;
@@ -689,7 +690,7 @@ async function showHome(){
 
   const railChips=expOn?`
     <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('transmit');showChat()"><span>CODEC</span><em class="${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'DOWN'}</em></button>
-    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()')}"><span>GENOME</span><em class="${gnmChip}">${vtOk?'OPEN':(vtOffline?'START':'SETUP')}</em></button>
+    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');showGenomeSetup()"><span>GENOME</span><em class="${gnmChip}">${vtOk?'OPEN':(vtOffline?'START':'SETUP')}</em></button>
     <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');showVideoStudioSetup()"><span>STUDIO</span><em class="${stuChip}">${videoOk?'READY':'SETUP'}</em></button>
     <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('war-room')"><span>WAR</span><em class="ok">ENTER</em></button>
     <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('command')"><span>COMMAND</span><em class="ok">ENTER</em></button>
@@ -746,7 +747,7 @@ async function showHome(){
             <p class="line">${escapeHtml(ariaLine)}</p>
             <div class="hud-cta-row">
               <button type="button" class="hud-cta primary" onclick="otArmAudio();otSfx('transmit');showChat()">Open Codec</button>
-              ${expOn?`<button type="button" class="hud-cta" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':(vtOffline?'startVoiceTrainer()':'showGenomeSetup()')}">Genome</button>
+              ${expOn?`<button type="button" class="hud-cta" onclick="otArmAudio();otSfx('click');showGenomeSetup()">Genome</button>
               <button type="button" class="hud-cta warn" onclick="otArmAudio();otSfx('click');showVideoStudioSetup()">Studio</button>`:''}
             </div>
             <div class="hud-prio-rail">${railChips}</div>
@@ -1256,7 +1257,7 @@ async function showChat(){
       <div class="cc-rack">
         <div class="cc-rack-h">GENOME</div>
         <p class=muted style="font-size:10px;margin:0 0 8px">${vtOk?'Voice Trainer on :8765.':vtOffline?'Installed — start UI.':'Open Setup to install/start.'}</p>
-        ${vtOk?'<button type=button class="cc-btn" onclick="otSfx(\'click\');openVoiceTrainer()">Open :8765</button>':(vtOffline?'<button type=button class="cc-btn" onclick="otSfx(\'ok\');startVoiceTrainer()">Start Genome</button>':'<button type=button class="cc-btn" onclick="otSfx(\'click\');showGenomeSetup()">Setup Genome</button>')}
+        <button type=button class="cc-btn" onclick="otSfx('click');showGenomeSetup()">Open Genome</button>
       </div>
     </aside>
   </div>
@@ -1303,34 +1304,52 @@ async function openCurrentAgentRoom(){
 }
 
 async function openVoiceTrainer(){
-  const url=(state.capabilities&&state.capabilities.voice_trainer_url)||'';
-  if(!url || capStatus('voice_trainer')!=='ready'){
-    showGenomeSetup();
-    return;
-  }
+  // Never dump the operator on the classic green status page. Upgrade :8765 to
+  // Expansion Genome first, then open — or stay on the deck Genome surface.
   try{
-    const probe=await fetch(url,{mode:'no-cors',cache:'no-store'});
-    void probe;
+    await api('/api/expansion/voice-trainer/start',{}, 20000);
+    await loadCapabilities();
   }catch(_e){}
-  window.open(url,'_blank','noopener');
+  const url=(state.capabilities&&state.capabilities.voice_trainer_url)||'http://127.0.0.1:8765/';
+  try{
+    const st=await fetch(new URL('/api/train-status', url).href,{cache:'no-store'});
+    if(st.ok){
+      window.open(url,'_blank','noopener');
+      return;
+    }
+  }catch(_e){}
+  showGenomeSetup();
 }
 async function startVoiceTrainer(){
   try{
-    const r=await api('/api/expansion/voice-trainer/start',{});
+    const r=await api('/api/expansion/voice-trainer/start',{}, 20000);
     await loadCapabilities();
-    if(r&&r.ok&&(r.data&&r.data.ok)){
-      if(capStatus('voice_trainer')==='ready') openVoiceTrainer();
-      else if(r.data.action==='installing'){
-        showGenomeSetup();
-      }else{
-        alert('Genome start requested — wait a second and open Voice Trainer again.');
-      }
-    }else{
-      showGenomeSetup();
+    showGenomeSetup();
+    if(!(r&&r.ok&&(r.data&&(r.data.ok||r.data.action==='installing'||r.data.action==='already_installed')))){
+      const el=document.getElementById('genomeInstallStatus');
+      if(el) el.textContent=(r&&r.data&&(r.data.hint||r.data.error||r.data.action))||'Genome start needs attention — see status.';
     }
   }catch(e){
     showGenomeSetup();
   }
+}
+
+/** One-shot: reclaim Genome UI + kick Studio install when Expansion is entitled. */
+async function autoKickPremiumSurfaces(){
+  if(window.__premiumAutoKick) return;
+  const expOn=!!(state.expansion&&(state.expansion.enabled||state.expansion.expansion_entitled||state.expansion.surfaces_ready));
+  if(!expOn) return;
+  window.__premiumAutoKick=1;
+  try{
+    // Always upgrade classic VT status → Genome trainer when install exists / READY.
+    api('/api/expansion/voice-trainer/start',{}, 20000).catch(()=>{});
+  }catch(_e){}
+  try{
+    const video=capStatus('video');
+    if(video!=='ready'){
+      api('/api/expansion/video-studio/setup',{}, 20000).catch(()=>{});
+    }
+  }catch(_e){}
 }
 function btnHome(){
   return `<button type="button" class="hud-cta" onclick="showHome()">Home</button>`;
@@ -1387,8 +1406,8 @@ async function showGenomeSetup(){
     <button type="button" class="gn-widget" onclick="genomeOpenTrain()">
       <span class="k">Train</span><span class="v">${ready||offline?'OPEN FORM':'INSTALL FIRST'}</span>
     </button>
-    <button type="button" class="gn-widget" onclick="openVoiceTrainer()">
-      <span class="k">Console</span><span class="v">:8765</span>
+    <button type="button" class="gn-widget" onclick="otSfx('ok');startVoiceTrainer()">
+      <span class="k">Lab :8765</span><span class="v">${ready?'UPGRADE/OPEN':'START'}</span>
     </button>
   </div>
 
@@ -1442,6 +1461,11 @@ async function showGenomeSetup(){
   const detail=document.getElementById('gnStatusDetail');
   if(detail){
     detail.textContent=`status: ${st}\ngpu: ${gpuOk?'ok':'missing'}\npath: ${path}\nnote: ${note||'—'}\ndiscovery: ${JSON.stringify(disc||{},null,2)}`;
+  }
+  if((ready||offline||gpuOk) && !window.__genomeUiKick){
+    window.__genomeUiKick=true;
+    // Reclaim classic status page → Expansion Genome trainer on :8765
+    api('/api/expansion/voice-trainer/start',{}, 20000).then(()=>loadCapabilities()).catch(()=>{});
   }
   if(gpuOk && (st==='not_configured'||st==='offline') && !window.__genomeAutoKick){
     window.__genomeAutoKick=true;
@@ -1633,6 +1657,10 @@ async function showVideoStudioSetup(){
   <p class="home-foot">Otaconskeep Expansion · Studio</p>
 </div>`;
   if(setup.running) startStudioSetupPoll();
+  else if(!ready && !window.__studioAutoKick){
+    window.__studioAutoKick=true;
+    setTimeout(()=>{ startStudioSetup(); }, 500);
+  }
 }
 function renderStudioSetupProgress(setup){
   if(!setup) return;
@@ -2393,4 +2421,5 @@ async function showRexBoard(opts){
     if(kind) await showExpansionSurface(kind);
     else showHome();
   }
+  setTimeout(()=>{ autoKickPremiumSurfaces(); }, 1500);
 })();

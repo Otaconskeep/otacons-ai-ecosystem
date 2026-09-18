@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -125,8 +126,77 @@ def status_payload() -> dict[str, Any]:
     return base
 
 
+def _genome_api_live(port: int) -> bool:
+    """True when :port serves Expansion Genome /api/train-status (not classic status page)."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(
+            f'http://127.0.0.1:{port}/api/train-status', timeout=1.5,
+        ) as resp:
+            return int(resp.status) == 200
+    except Exception:
+        return False
+
+
+def _reclaim_classic_vt_port(port: int) -> dict[str, Any]:
+    """Stop Otacon-owned classic python -m http.server on VT ui/ so Genome can bind.
+
+    Safe: only kills PID file / http.server whose cwd is the Voice Trainer ui/.
+    Never kills unrelated listeners.
+    """
+    from expansion.capabilities.voice_trainer_status import (
+        _is_owned_server,
+        _pid_alive,
+        _read_pid,
+        resolve_install_dir,
+    )
+    ui_dir = resolve_install_dir() / 'ui'
+    stopped: list[int] = []
+    owned = _read_pid(ui_dir)
+    if owned and _pid_alive(owned) and _is_owned_server(owned, ui_dir):
+        try:
+            os.kill(owned, signal.SIGTERM)
+            stopped.append(owned)
+        except OSError:
+            pass
+    # Sweep lingering http.server with VT ui cwd (pid file missing / stale).
+    try:
+        for proc in Path('/proc').iterdir():
+            if not proc.name.isdigit():
+                continue
+            pid = int(proc.name)
+            try:
+                cmd = (proc / 'cmdline').read_bytes().replace(b'\x00', b' ').decode('utf-8', 'replace')
+            except OSError:
+                continue
+            if 'http.server' not in cmd and 'start_ui' not in cmd:
+                continue
+            try:
+                cwd = os.readlink(f'/proc/{pid}/cwd')
+            except OSError:
+                continue
+            if Path(cwd).resolve() != ui_dir.resolve():
+                continue
+            if pid in stopped:
+                continue
+            try:
+                os.kill(pid, signal.SIGTERM)
+                stopped.append(pid)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    if stopped:
+        time.sleep(0.45)
+    return {'stopped': stopped, 'ui_dir': str(ui_dir)}
+
+
 def ensure_genome_ui(port: int = DEFAULT_PORT) -> dict[str, Any]:
-    """Start the actionable Genome UI if not already listening."""
+    """Start the actionable Genome UI if not already listening.
+
+    Replaces the classic green "Voice Trainer ready" status http.server when it
+    owns :8765 — that page is not Genome (no train form /api).
+    """
     global _SERVER, _SERVER_THREAD
     from expansion.capabilities.voice_trainer_status import write_status_json
     try:
@@ -135,34 +205,37 @@ def ensure_genome_ui(port: int = DEFAULT_PORT) -> dict[str, Any]:
         pass
 
     if port_listening(port):
-        # Confirm it is our trainer (not the old static http.server page).
-        try:
-            import urllib.request
-            with urllib.request.urlopen(
-                f'http://127.0.0.1:{port}/api/train-status', timeout=1.5,
-            ) as resp:
-                if resp.status == 200:
-                    return {
-                        'ok': True,
-                        'action': 'already_listening',
-                        'url': f'http://127.0.0.1:{port}/',
-                    }
-        except Exception:
-            # Might be classic status UI — caller may repair status.json without killing.
+        if _genome_api_live(port):
+            return {
+                'ok': True,
+                'action': 'already_listening',
+                'url': f'http://127.0.0.1:{port}/',
+                'product': 'genome-trainer',
+            }
+        # Classic VT status UI (or stale listener) — reclaim if Otacon-owned.
+        reclaim = _reclaim_classic_vt_port(port)
+        if port_listening(port):
+            # Still busy after reclaim → foreign process; do not kill.
             return {
                 'ok': False,
                 'action': 'port_busy_foreign',
-                'error': f'Port {port} is in use by another process (not Expansion Genome trainer).',
-                'hint': (
-                    f'If it is the classic Voice Trainer status UI, status.json will be repaired '
-                    f'without killing it. Otherwise free :{port} and Start Genome again.'
-                ),
+                'error': f'Port {port} is in use by a non-Otacon process (not Genome trainer).',
+                'hint': f'Free :{port}, then Start Genome again.',
+                'reclaim': reclaim,
             }
+        # Port free — fall through to bind.
+        if reclaim.get('stopped'):
+            action_prefix = 'reclaimed_classic'
+        else:
+            action_prefix = 'port_freed'
+    else:
+        action_prefix = 'started'
+        reclaim = {'stopped': []}
 
     try:
         server = ThreadingHTTPServer(('127.0.0.1', port), _GenomeHandler)
     except OSError as exc:
-        return {'ok': False, 'action': 'bind_failed', 'error': str(exc)}
+        return {'ok': False, 'action': 'bind_failed', 'error': str(exc), 'reclaim': reclaim}
 
     _SERVER = server
 
@@ -175,12 +248,13 @@ def ensure_genome_ui(port: int = DEFAULT_PORT) -> dict[str, Any]:
     _SERVER_THREAD = threading.Thread(target=_serve, daemon=True, name='genome-ui')
     _SERVER_THREAD.start()
     time.sleep(0.35)
-    live = port_listening(port)
+    live = port_listening(port) and _genome_api_live(port)
     return {
         'ok': live,
-        'action': 'started' if live else 'start_pending',
+        'action': action_prefix if live else 'start_pending',
         'url': f'http://127.0.0.1:{port}/' if live else '',
         'product': 'genome-trainer',
+        'reclaim': reclaim,
     }
 
 
