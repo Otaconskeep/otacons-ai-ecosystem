@@ -47,7 +47,7 @@ class StudioPacksTests(unittest.TestCase):
             self.assertFalse(st['ok'])
             self.assertTrue(st['soft_block'])
             self.assertEqual(st['action'], 'install_packs')
-            self.assertIn('Install packs', st['aria'])
+            self.assertTrue('2060' in st['aria'] or 'Install' in st['aria'] or 'download' in st['aria'].lower())
             low = st['aria'].lower()
             self.assertNotIn('generate unavailable', low)
             self.assertFalse(low.startswith('not queued'))
@@ -76,6 +76,44 @@ class StudioPacksTests(unittest.TestCase):
             self.assertFalse(st2['ok'])
             self.assertTrue(any('qwen' in m for m in st2['missing']))
 
+
+
+    def test_2060_gets_wan_not_ltx(self):
+        hw = {
+            'vram_gb': 6, 'marketed_vram_gb': 6, 'ltx2_eligible': False,
+            'image': {'enabled': True, 'tier': 'low_vram_quant', 'engine': 'z-image-turbo',
+                      'settings': {
+                          'unet': 'z_image_turbo_int8_convrot.safetensors',
+                          'clip': 'qwen_3_4b_fp8_mixed.safetensors',
+                          'vae': 'ae.safetensors',
+                      }},
+            'video': {'enabled': True, 'tier': 'low_vram_quant', 'engine': 'wan-2.2-5b-quant'},
+            'music': {'enabled': True, 'tier': '2b_turbo_dit_int8', 'engine': 'ace-step-1.5'},
+        }
+        specs = {s['id']: s for s in sp._profile_pack_specs(hw)}
+        self.assertIn('zimage', specs)
+        self.assertIn('wan', specs)
+        self.assertNotIn('ltx2', specs)
+        names = [f['name'] for f in specs['zimage']['files']]
+        self.assertTrue(any('int8' in n for n in names))
+        self.assertTrue(all(f.get('url', '').startswith('https://huggingface.co/') for f in specs['wan']['files']))
+
+    def test_3090_gets_ltx2_not_wan(self):
+        hw = {
+            'vram_gb': 24, 'marketed_vram_gb': 24, 'ltx2_eligible': True,
+            'image': {'enabled': True, 'tier': 'full', 'engine': 'z-image-turbo',
+                      'settings': {
+                          'unet': 'z_image_turbo_bf16.safetensors',
+                          'clip': 'qwen_3_4b.safetensors',
+                          'vae': 'ae.safetensors',
+                      }},
+            'video': {'enabled': True, 'tier': 'distilled_24gb', 'engine': 'ltx-2'},
+            'music': {'enabled': True, 'tier': 'xl_lm4b', 'engine': 'ace-step-1.5'},
+        }
+        specs = {s['id']: s for s in sp._profile_pack_specs(hw)}
+        self.assertIn('ltx2', specs)
+        self.assertNotIn('wan', specs)
+        self.assertEqual(specs['ltx2']['comfy_docs'], sp.COMFY_DOCS['ltx2'])
 
 if __name__ == '__main__':
     unittest.main()

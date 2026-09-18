@@ -180,6 +180,8 @@ def _ram_tier(ram_gb: float) -> tuple[str, bool, list[str]]:
 
 
 def _zimage_path(vram_gb: float) -> CreativePath:
+    """Z-Image Turbo path — weights from Comfy-Org/z_image_turbo (official docs)."""
+    docs = 'https://docs.comfy.org/tutorials/image/z-image/z-image-turbo'
     if vram_gb < 6:
         return CreativePath(
             False, 'z-image', 'disabled',
@@ -189,26 +191,36 @@ def _zimage_path(vram_gb: float) -> CreativePath:
     if vram_gb < 8:
         return CreativePath(
             True, 'z-image-turbo', 'low_vram_quant',
-            '6–7 GB: Z-Image Turbo quantized / low-VRAM path only (slower).',
+            '6–7 GB: Z-Image Turbo INT8 / low-VRAM (RTX 2060 class).',
             {
                 'precision': 'int8_quant',
                 'low_vram': True,
                 'resolution': 512,
                 'steps': 4,
                 'cfg': 1.0,
+                'unet': 'z_image_turbo_int8_convrot.safetensors',
+                'clip': 'qwen_3_4b_fp8_mixed.safetensors',
+                'vae': 'ae.safetensors',
+                'comfy_docs': docs,
+                'hf_repo': 'Comfy-Org/z_image_turbo',
             },
             {'positive': _ZIMAGE_PROMPT, 'negative': _ZIMAGE_NEG},
         )
     if vram_gb < 10:
         return CreativePath(
             True, 'z-image-turbo', 'fp8_quant',
-            '8 GB minimum path: Z-Image Turbo FP8 / quantized.',
+            '8 GB minimum path: Z-Image Turbo FP8 text encoder + BF16 unet.',
             {
                 'precision': 'fp8',
                 'low_vram': True,
                 'resolution': 768,
                 'steps': 6,
                 'cfg': 1.0,
+                'unet': 'z_image_turbo_bf16.safetensors',
+                'clip': 'qwen_3_4b_fp8_mixed.safetensors',
+                'vae': 'ae.safetensors',
+                'comfy_docs': docs,
+                'hf_repo': 'Comfy-Org/z_image_turbo',
             },
             {'positive': _ZIMAGE_PROMPT, 'negative': _ZIMAGE_NEG},
         )
@@ -222,6 +234,11 @@ def _zimage_path(vram_gb: float) -> CreativePath:
                 'resolution': 1024,
                 'steps': 8,
                 'cfg': 1.0,
+                'unet': 'z_image_turbo_bf16.safetensors',
+                'clip': 'qwen_3_4b_fp8_mixed.safetensors',
+                'vae': 'ae.safetensors',
+                'comfy_docs': docs,
+                'hf_repo': 'Comfy-Org/z_image_turbo',
             },
             {'positive': _ZIMAGE_PROMPT, 'negative': _ZIMAGE_NEG},
         )
@@ -235,13 +252,24 @@ def _zimage_path(vram_gb: float) -> CreativePath:
             'steps': 8,
             'cfg': 1.0,
             'batch': 2 if vram_gb >= 24 else 1,
+            'unet': 'z_image_turbo_bf16.safetensors',
+            'clip': 'qwen_3_4b.safetensors',
+            'vae': 'ae.safetensors',
+            'comfy_docs': docs,
+            'hf_repo': 'Comfy-Org/z_image_turbo',
         },
         {'positive': _ZIMAGE_PROMPT, 'negative': _ZIMAGE_NEG},
     )
 
 
 def _video_path(vram_gb: float) -> tuple[CreativePath, bool, list[str]]:
-    """Return (video path, ltx2_eligible, warnings)."""
+    """Return (video path, ltx2_eligible, warnings).
+
+    ComfyUI docs: Wan 2.2 5B fits ~8 GB with native offload.
+    LTX-2 full/official templates target 32 GB+; distilled/fp8 consumer
+    path is auto-selected from 24 GB+ (e.g. RTX 3090) — never on 6–12 GB
+    cards like a 2060.
+    """
     warnings: list[str] = []
     ltx2 = False
     if vram_gb < 6:
@@ -253,62 +281,70 @@ def _video_path(vram_gb: float) -> tuple[CreativePath, bool, list[str]]:
     if vram_gb < 8:
         return CreativePath(
             True, 'wan-2.2-5b-quant', 'low_vram_quant',
-            '6–7 GB: very light / quantized video only.',
+            '6–7 GB: Wan 2.2 5B only (quant / offload). LTX-2 not installed.',
             {
                 'workflow': 'wan_2_2_5b_low_vram',
                 'width': 480, 'height': 272, 'frames': 33,
                 'fps': 8, 'steps': 4, 'offload': True,
+                'comfy_docs': 'https://docs.comfy.org/tutorials/video/wan/wan2_2',
             },
             {'positive': _WAN_PROMPT, 'negative': _WAN_NEG},
         ), False, warnings
     if vram_gb < 12:
         return CreativePath(
             True, 'wan-2.2-5b', 'standard',
-            '8–11 GB: Wan 2.2 5B (fits ~8 GB with native offload).',
+            '8–11 GB: Wan 2.2 5B (fits ~8 GB with native offload). LTX-2 not installed.',
             {
                 'workflow': 'wan_2_2_5b',
                 'width': 640, 'height': 352, 'frames': 49,
                 'fps': 12, 'steps': 6, 'offload': True,
+                'comfy_docs': 'https://docs.comfy.org/tutorials/video/wan/wan2_2',
             },
             {'positive': _WAN_PROMPT, 'negative': _WAN_NEG},
         ), False, warnings
     if vram_gb < 16:
         return CreativePath(
             True, 'wan-2.2-5b', 'high_quality',
-            '12–15 GB: Wan 2.2 5B high-quality profile.',
+            '12–15 GB: Wan 2.2 5B high-quality profile. LTX-2 not installed.',
             {
                 'workflow': 'wan_2_2_5b_hq',
                 'width': 832, 'height': 480, 'frames': 65,
                 'fps': 16, 'steps': 8, 'offload': False,
+                'comfy_docs': 'https://docs.comfy.org/tutorials/video/wan/wan2_2',
             },
             {'positive': _WAN_PROMPT, 'negative': _WAN_NEG},
         ), False, warnings
     if vram_gb < 24:
         return CreativePath(
             True, 'wan-2.2-5b', 'large_quant',
-            '16–23 GB: larger / high-quality Wan profile.',
+            '16–23 GB: larger Wan 2.2 5B profile. LTX-2 needs 24 GB+.',
             {
                 'workflow': 'wan_2_2_5b_large',
                 'width': 960, 'height': 544, 'frames': 81,
                 'fps': 16, 'steps': 10, 'offload': False,
+                'comfy_docs': 'https://docs.comfy.org/tutorials/video/wan/wan2_2',
             },
             {'positive': _WAN_PROMPT, 'negative': _WAN_NEG},
         ), False, warnings
     if vram_gb < 32:
+        # RTX 3090 / 4090 class — distilled LTX-2.3 (Ampere-safe mxfp8), not full 32 GB stack.
+        ltx2 = True
         warnings.append(
-            f'{vram_gb:.0f} GB VRAM is strong for consumer video but below '
-            'official LTX-2 ComfyUI requirement (32 GB+). Using high-end Wan profile.'
+            f'{vram_gb:.0f} GB VRAM: auto-installing LTX-2 distilled (consumer) path. '
+            'Official full LTX-2 Comfy templates prefer 32 GB+.'
         )
         return CreativePath(
-            True, 'wan-2.2-5b', 'high_end_consumer',
-            '24–31 GB: high-end consumer video (Wan). LTX-2 not auto-selected.',
+            True, 'ltx-2', 'distilled_24gb',
+            '24–31 GB: LTX-2 distilled auto-selected (Wan not pulled).',
             {
-                'workflow': 'wan_2_2_5b_high_end',
+                'workflow': 'ltx2_distilled',
                 'width': 1280, 'height': 704, 'frames': 97,
-                'fps': 24, 'steps': 12, 'offload': False,
+                'fps': 24, 'steps': 8, 'offload': False,
+                'disk_gb_required': DISK_LTX2_GB,
+                'comfy_docs': 'https://docs.comfy.org/tutorials/video/ltx/ltx-2',
             },
-            {'positive': _WAN_PROMPT, 'negative': _WAN_NEG},
-        ), False, warnings
+            {'positive': _LTX_PROMPT, 'negative': _WAN_NEG},
+        ), True, warnings
     ltx2 = True
     return CreativePath(
         True, 'ltx-2', 'official',
@@ -318,6 +354,7 @@ def _video_path(vram_gb: float) -> tuple[CreativePath, bool, list[str]]:
             'width': 1280, 'height': 704, 'frames': 121,
             'fps': 24, 'steps': 20, 'offload': False,
             'disk_gb_required': DISK_LTX2_GB,
+            'comfy_docs': 'https://docs.comfy.org/tutorials/video/ltx/ltx-2',
         },
         {'positive': _LTX_PROMPT, 'negative': _WAN_NEG},
     ), True, warnings
@@ -445,9 +482,11 @@ def _profile_id(vram_gb: float, model: str, ltx2: bool) -> str:
         return 'LOW_VRAM'
     fast = _is_fast_sku(model)
     gen = _gpu_generation(model)
-    if vram_gb >= 32 or ltx2:
+    if vram_gb >= 32:
         return '32GB_LTX2'
     if vram_gb >= 24:
+        if ltx2:
+            return '24GB_LTX2_DISTILLED' if not (fast or gen in ('Ada', 'Blackwell')) else '24GB_FAST_LTX2'
         return '24GB_FAST' if fast or gen in ('Ada', 'Blackwell') else '24GB'
     if vram_gb >= 16:
         if '5080' in (model or '').lower():
@@ -716,8 +755,13 @@ def detect_studio_profile(hw: Any = None) -> StudioHardwareProfile:
 
 
 def profile_asset_manifest(profile: StudioHardwareProfile) -> list[dict[str, str]]:
-    """Declarative packs the installer / Studio setup should pull for this host."""
+    """Declarative packs the installer / Studio setup should pull for this host.
+
+    Sources are official ComfyUI docs → Comfy-Org Hugging Face repacks.
+    """
     assets: list[dict[str, str]] = []
+    img_opts = profile.image.settings if isinstance(profile.image.settings, dict) else {}
+    vid_opts = profile.video.settings if isinstance(profile.video.settings, dict) else {}
     if profile.image.enabled:
         assets.append({
             'id': f"zimage:{profile.image.tier}",
@@ -725,15 +769,42 @@ def profile_asset_manifest(profile: StudioHardwareProfile) -> list[dict[str, str
             'engine': profile.image.engine,
             'tier': profile.image.tier,
             'disk_gb': str(DISK_ZIMAGE_GB),
+            'hf_repo': str(img_opts.get('hf_repo') or 'Comfy-Org/z_image_turbo'),
+            'comfy_docs': str(img_opts.get('comfy_docs') or (
+                'https://docs.comfy.org/tutorials/image/z-image/z-image-turbo'
+            )),
+            'unet': str(img_opts.get('unet') or 'z_image_turbo_bf16.safetensors'),
+            'clip': str(img_opts.get('clip') or 'qwen_3_4b.safetensors'),
+            'vae': str(img_opts.get('vae') or 'ae.safetensors'),
         })
     if profile.video.enabled:
-        assets.append({
-            'id': f"video:{profile.video.engine}:{profile.video.tier}",
-            'kind': 'video',
-            'engine': profile.video.engine,
-            'tier': profile.video.tier,
-            'disk_gb': str(DISK_LTX2_GB if profile.ltx2_eligible else DISK_WAN_GB),
-        })
+        if profile.ltx2_eligible:
+            assets.append({
+                'id': f"video:ltx-2:{profile.video.tier}",
+                'kind': 'video',
+                'engine': profile.video.engine,
+                'tier': profile.video.tier,
+                'disk_gb': str(DISK_LTX2_GB),
+                'hf_repo': 'Kijai/LTX2.3_comfy+Comfy-Org/ltx-2',
+                'comfy_docs': str(vid_opts.get('comfy_docs') or (
+                    'https://docs.comfy.org/tutorials/video/ltx/ltx-2'
+                )),
+            })
+        else:
+            assets.append({
+                'id': f"video:wan-2.2-5b:{profile.video.tier}",
+                'kind': 'video',
+                'engine': profile.video.engine,
+                'tier': profile.video.tier,
+                'disk_gb': str(DISK_WAN_GB),
+                'hf_repo': 'Comfy-Org/Wan_2.2_ComfyUI_Repackaged',
+                'comfy_docs': str(vid_opts.get('comfy_docs') or (
+                    'https://docs.comfy.org/tutorials/video/wan/wan2_2'
+                )),
+                'unet': 'wan2.2_ti2v_5B_fp16.safetensors',
+                'clip': 'umt5_xxl_fp8_e4m3fn_scaled.safetensors',
+                'vae': 'wan2.2_vae.safetensors',
+            })
     if profile.music.enabled and profile.music.tier != 'deferred':
         assets.append({
             'id': f"music:{profile.music.tier}",
@@ -741,6 +812,9 @@ def profile_asset_manifest(profile: StudioHardwareProfile) -> list[dict[str, str
             'engine': profile.music.engine,
             'tier': profile.music.tier,
             'disk_gb': str(DISK_ACESTEP_GB),
+            'hf_repo': 'Comfy-Org/ace_step_1.5_ComfyUI_files',
+            'comfy_docs': 'https://docs.comfy.org/tutorials/audio/ace-step/ace-step-v1-5',
+            'checkpoint': 'ace_step_1.5_turbo_aio.safetensors',
         })
     return assets
 

@@ -122,8 +122,13 @@ def handle_expansion_get(path: str, send_json) -> bool:
         )
         workflow = image_workflow_status(endpoint or None)
         try:
-            from expansion.capabilities.studio_packs import packs_status
+            from expansion.capabilities.studio_packs import packs_status, ensure_auto_install
             packs = packs_status(layout=layout, endpoint=endpoint or None, hw=hw)
+            if vs.state == 'READY' and packs.get('soft_block') and not packs.get('running'):
+                auto = ensure_auto_install(layout=layout, hw=hw, studio_ready=True)
+                if auto.get('auto_started') or auto.get('running'):
+                    packs = packs_status(layout=layout, endpoint=endpoint or None, hw=hw)
+                    packs['auto_started'] = True
         except Exception as exc:  # noqa: BLE001
             packs = {
                 'ok': False,

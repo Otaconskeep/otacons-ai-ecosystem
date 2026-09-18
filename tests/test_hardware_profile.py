@@ -54,15 +54,30 @@ class HardwareProfileMatrixTests(unittest.TestCase):
         self.assertEqual(p.image.tier, 'recommended')
         self.assertEqual(p.video.tier, 'high_quality')
 
-    def test_24gb_warns_ltx2_below_official(self):
+    def test_24gb_auto_selects_ltx2_distilled(self):
         p = classify_studio_profile(
             vram_gb=24, ram_gb=64, free_disk_gb=200,
-            gpu_model='NVIDIA GeForce RTX 4090', cuda_available=True,
+            gpu_model='NVIDIA GeForce RTX 3090', cuda_available=True,
         )
         self.assertTrue(p.profile_id.startswith('24GB'))
-        self.assertFalse(p.ltx2_eligible)
-        self.assertTrue(any('LTX-2' in w or '32 GB' in w for w in p.warnings))
+        self.assertTrue(p.ltx2_eligible)
+        self.assertEqual(p.video.engine, 'ltx-2')
+        self.assertEqual(p.video.tier, 'distilled_24gb')
         self.assertEqual(p.music.tier, 'xl_lm4b')
+
+    def test_2060_never_gets_ltx2(self):
+        p = classify_studio_profile(
+            vram_gb=6, ram_gb=32, free_disk_gb=200,
+            gpu_model='NVIDIA GeForce RTX 2060', cuda_available=True,
+        )
+        self.assertFalse(p.ltx2_eligible)
+        self.assertIn('wan', p.video.engine)
+        man = profile_asset_manifest(p)
+        kinds = {a['kind']: a for a in man}
+        self.assertIn('image', kinds)
+        self.assertIn('video', kinds)
+        self.assertNotIn('ltx-2', kinds['video']['engine'])
+        self.assertIn('Wan_2.2', kinds['video'].get('hf_repo', ''))
 
     def test_32gb_ltx2_eligible(self):
         p = classify_studio_profile(

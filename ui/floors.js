@@ -1627,8 +1627,14 @@
           ' packs are not ready yet — install creative packs first.')
         : (packs.aria || (studio.workflow && studio.workflow.detail) ||
           'Creative packs are not installed yet. Tap Install packs — Generate stays quiet until packs are ready.'));
-    var canGenerate = genOk && FL_STUDIO.modality === 'image';
     var showInstallPacks = !canGenerate && ready;
+    if (showInstallPacks && packsRunning && !window._flPacksPoll) {
+      window._flPacksPoll = setInterval(function () { renderCreativeFloor(); }, 5000);
+    }
+    if (canGenerate && window._flPacksPoll) {
+      clearInterval(window._flPacksPoll);
+      window._flPacksPoll = null;
+    }
 
     if (needsSetup) {
       floorShell('The Workshop', 'Muse · Video Studio',

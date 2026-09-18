@@ -75,12 +75,30 @@ def image_workflow_status(endpoint: Optional[str] = None) -> dict[str, Any]:
     clips = list_models(ep, 'text_encoders') or list_models(ep, 'clip')
     vaes = list_models(ep, 'vae')
     unet = next((u for u in unets if 'z_image' in u.lower()), '')
-    clip = next((c for c in clips if c == _DEFAULT_CLIP or 'qwen_3_4b' in c.lower()), '')
+    clip = next((
+        c for c in clips
+        if c == _DEFAULT_CLIP
+        or 'qwen_3_4b' in c.lower()
+    ), '')
     vae = next((v for v in vaes if v == _DEFAULT_VAE or v.endswith('/ae.safetensors') or v == 'ae.safetensors'), '')
-    if not unet and _DEFAULT_UNET in unets:
-        unet = _DEFAULT_UNET
-    if not clip and _DEFAULT_CLIP in clips:
-        clip = _DEFAULT_CLIP
+    if not unet:
+        for candidate in (
+            _DEFAULT_UNET,
+            'z_image_turbo_int8_convrot.safetensors',
+            'z_image_turbo_nvfp4.safetensors',
+        ):
+            if candidate in unets:
+                unet = candidate
+                break
+    if not clip:
+        for candidate in (
+            _DEFAULT_CLIP,
+            'qwen_3_4b_fp8_mixed.safetensors',
+            'qwen_3_4b_fp4_mixed.safetensors',
+        ):
+            if candidate in clips:
+                clip = candidate
+                break
     if not vae and _DEFAULT_VAE in vaes:
         vae = _DEFAULT_VAE
     ready = bool(unet and clip and vae)
@@ -88,7 +106,7 @@ def image_workflow_status(endpoint: Optional[str] = None) -> dict[str, Any]:
     if not unet:
         missing.append('diffusion_models/z_image_turbo_*.safetensors')
     if not clip:
-        missing.append('text_encoders/qwen_3_4b.safetensors')
+        missing.append('text_encoders/qwen_3_4b*.safetensors')
     if not vae:
         missing.append('vae/ae.safetensors')
     return {

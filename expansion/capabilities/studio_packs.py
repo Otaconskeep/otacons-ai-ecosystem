@@ -23,96 +23,96 @@ from typing import Any, Optional
 from expansion.persist import atomic_write_json
 from expansion.state_layout import StateLayout, resolve_layout
 
-# Official Comfy-Org template assets (same sources as Keep Workshop downloaders).
-ZIMAGE_FILES = [
-    {
-        'repo': 'Comfy-Org/z_image_turbo',
-        'remote': 'split_files/diffusion_models/z_image_turbo_bf16.safetensors',
-        'subdir': 'diffusion_models',
-        'name': 'z_image_turbo_bf16.safetensors',
-        'min_bytes': 1_000_000_000,
-    },
-    {
-        'repo': 'Comfy-Org/z_image_turbo',
-        'remote': 'split_files/text_encoders/qwen_3_4b.safetensors',
-        'subdir': 'text_encoders',
-        'name': 'qwen_3_4b.safetensors',
-        'min_bytes': 100_000_000,
-    },
-    {
-        'repo': 'Comfy-Org/z_image_turbo',
-        'remote': 'split_files/vae/ae.safetensors',
-        'subdir': 'vae',
-        'name': 'ae.safetensors',
-        'min_bytes': 100_000,
-    },
-]
+# ---------------------------------------------------------------------------
+# Official ComfyUI docs → Comfy-Org Hugging Face download catalog.
+# Docs:
+#   Z-Image: https://docs.comfy.org/tutorials/image/z-image/z-image-turbo
+#   Wan 2.2: https://docs.comfy.org/tutorials/video/wan/wan2_2
+#   LTX-2:   https://docs.comfy.org/tutorials/video/ltx/ltx-2
+#   ACE:     https://docs.comfy.org/tutorials/audio/ace-step/ace-step-v1-5
+# ---------------------------------------------------------------------------
 
+def _f(repo: str, remote: str, subdir: str, name: str, min_bytes: int = 1_000_000) -> dict:
+    return {
+        'repo': repo,
+        'remote': remote,
+        'subdir': subdir,
+        'name': name,
+        'min_bytes': min_bytes,
+        'url': f'https://huggingface.co/{repo}/resolve/main/{remote}',
+    }
+
+
+# Z-Image Turbo — Comfy-Org/z_image_turbo (official template files).
+ZIMAGE_BF16 = [
+    _f('Comfy-Org/z_image_turbo', 'split_files/diffusion_models/z_image_turbo_bf16.safetensors',
+       'diffusion_models', 'z_image_turbo_bf16.safetensors', 1_000_000_000),
+    _f('Comfy-Org/z_image_turbo', 'split_files/text_encoders/qwen_3_4b.safetensors',
+       'text_encoders', 'qwen_3_4b.safetensors', 100_000_000),
+    _f('Comfy-Org/z_image_turbo', 'split_files/vae/ae.safetensors',
+       'vae', 'ae.safetensors', 100_000),
+]
+ZIMAGE_FP8 = [
+    _f('Comfy-Org/z_image_turbo', 'split_files/diffusion_models/z_image_turbo_bf16.safetensors',
+       'diffusion_models', 'z_image_turbo_bf16.safetensors', 1_000_000_000),
+    _f('Comfy-Org/z_image_turbo', 'split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors',
+       'text_encoders', 'qwen_3_4b_fp8_mixed.safetensors', 100_000_000),
+    _f('Comfy-Org/z_image_turbo', 'split_files/vae/ae.safetensors',
+       'vae', 'ae.safetensors', 100_000),
+]
+ZIMAGE_INT8 = [
+    _f('Comfy-Org/z_image_turbo', 'split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors',
+       'diffusion_models', 'z_image_turbo_int8_convrot.safetensors', 500_000_000),
+    _f('Comfy-Org/z_image_turbo', 'split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors',
+       'text_encoders', 'qwen_3_4b_fp8_mixed.safetensors', 100_000_000),
+    _f('Comfy-Org/z_image_turbo', 'split_files/vae/ae.safetensors',
+       'vae', 'ae.safetensors', 100_000),
+]
+# Back-compat alias used by unit tests / callers expecting ZIMAGE_FILES.
+ZIMAGE_FILES = ZIMAGE_BF16
+
+# Wan 2.2 TI2V 5B — official Comfy docs (fits ~8 GB with offload). Never LTX on these hosts.
 WAN_FILES = [
-    {
-        'repo': 'Comfy-Org/Wan_2.2_ComfyUI_Repackaged',
-        'remote': 'split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors',
-        'subdir': 'diffusion_models',
-        'name': 'wan2.2_ti2v_5B_fp16.safetensors',
-        'min_bytes': 1_000_000_000,
-    },
-    {
-        'repo': 'Comfy-Org/Wan_2.2_ComfyUI_Repackaged',
-        'remote': 'split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors',
-        'subdir': 'text_encoders',
-        'name': 'umt5_xxl_fp8_e4m3fn_scaled.safetensors',
-        'min_bytes': 100_000_000,
-    },
-    {
-        'repo': 'Comfy-Org/Wan_2.2_ComfyUI_Repackaged',
-        'remote': 'split_files/vae/wan2.2_vae.safetensors',
-        'subdir': 'vae',
-        'name': 'wan2.2_vae.safetensors',
-        'min_bytes': 100_000,
-    },
+    _f('Comfy-Org/Wan_2.2_ComfyUI_Repackaged',
+       'split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors',
+       'diffusion_models', 'wan2.2_ti2v_5B_fp16.safetensors', 1_000_000_000),
+    _f('Comfy-Org/Wan_2.2_ComfyUI_Repackaged',
+       'split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors',
+       'text_encoders', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors', 100_000_000),
+    _f('Comfy-Org/Wan_2.2_ComfyUI_Repackaged',
+       'split_files/vae/wan2.2_vae.safetensors',
+       'vae', 'wan2.2_vae.safetensors', 100_000),
 ]
 
-# Distilled LTX-2.3 path used on high-VRAM Keep hosts (Keep downloader parity).
+# LTX-2 distilled consumer path (24 GB+ / 3090 class). Official Comfy LTX-2 docs +
+# Keep's Ampere-safe mxfp8 transformer (Kijai) + Comfy-Org Gemma text encoder.
 LTX2_FILES = [
-    {
-        'repo': 'Kijai/LTX2.3_comfy',
-        'remote': 'diffusion_models/ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors',
-        'subdir': 'diffusion_models',
-        'name': 'ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors',
-        'min_bytes': 1_000_000_000,
-    },
-    {
-        'repo': 'Kijai/LTX2.3_comfy',
-        'remote': 'vae/taeltx2_3.safetensors',
-        'subdir': 'vae',
-        'name': 'taeltx2_3.safetensors',
-        'min_bytes': 100_000,
-    },
-    {
-        'repo': 'Kijai/LTX2.3_comfy',
-        'remote': 'text_encoders/ltx-2.3_text_projection_bf16.safetensors',
-        'subdir': 'checkpoints',
-        'name': 'ltx-2.3_text_projection_bf16.safetensors',
-        'min_bytes': 1_000_000,
-    },
-    {
-        'repo': 'Comfy-Org/ltx-2',
-        'remote': 'split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors',
-        'subdir': 'text_encoders',
-        'name': 'gemma_3_12B_it_fp4_mixed.safetensors',
-        'min_bytes': 100_000_000,
-    },
+    _f('Kijai/LTX2.3_comfy',
+       'diffusion_models/ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors',
+       'diffusion_models',
+       'ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors',
+       1_000_000_000),
+    _f('Kijai/LTX2.3_comfy', 'vae/taeltx2_3.safetensors',
+       'vae', 'taeltx2_3.safetensors', 100_000),
+    _f('Kijai/LTX2.3_comfy', 'text_encoders/ltx-2.3_text_projection_bf16.safetensors',
+       'checkpoints', 'ltx-2.3_text_projection_bf16.safetensors', 1_000_000),
+    _f('Comfy-Org/ltx-2', 'split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors',
+       'text_encoders', 'gemma_3_12B_it_fp4_mixed.safetensors', 100_000_000),
 ]
 
+# ACE-Step 1.5 AIO — official Comfy recommended checkpoint.
 ACE_FILES = [
-    {
-        'repo': 'Comfy-Org/ace_step_1.5_ComfyUI_files',
-        'remote': 'checkpoints/ace_step_1.5_turbo_aio.safetensors',
-        'subdir': 'checkpoints',
-        'name': 'ace_step_1.5_turbo_aio.safetensors',
-        'min_bytes': 100_000_000,
-    },
+    _f('Comfy-Org/ace_step_1.5_ComfyUI_files',
+       'checkpoints/ace_step_1.5_turbo_aio.safetensors',
+       'checkpoints', 'ace_step_1.5_turbo_aio.safetensors', 100_000_000),
 ]
+
+COMFY_DOCS = {
+    'zimage': 'https://docs.comfy.org/tutorials/image/z-image/z-image-turbo',
+    'wan': 'https://docs.comfy.org/tutorials/video/wan/wan2_2',
+    'ltx2': 'https://docs.comfy.org/tutorials/video/ltx/ltx-2',
+    'ace_step': 'https://docs.comfy.org/tutorials/audio/ace-step/ace-step-v1-5',
+}
 
 _INSTALL_LOCK = threading.Lock()
 _INSTALL_THREAD: Optional[threading.Thread] = None
@@ -239,8 +239,17 @@ def _pack_files_status(files: list[dict[str, Any]], root: Path) -> dict[str, Any
     }
 
 
+def _zimage_files_for_tier(tier: str) -> list[dict[str, Any]]:
+    t = (tier or '').lower()
+    if t in ('low_vram_quant', 'int8', 'int8_quant'):
+        return ZIMAGE_INT8
+    if t in ('fp8_quant', 'fp8', 'recommended'):
+        return ZIMAGE_FP8
+    return ZIMAGE_BF16
+
+
 def _profile_pack_specs(hw: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
-    """Which packs this host should install (hardware_profile driven)."""
+    """Pick packs from live hardware_profile — user never chooses models."""
     if hw is None:
         try:
             from expansion.capabilities.studio_setup import studio_hardware_snapshot
@@ -250,62 +259,86 @@ def _profile_pack_specs(hw: Optional[dict[str, Any]] = None) -> list[dict[str, A
     img = hw.get('image') if isinstance(hw.get('image'), dict) else {}
     vid = hw.get('video') if isinstance(hw.get('video'), dict) else {}
     mus = hw.get('music') if isinstance(hw.get('music'), dict) else {}
+    img_settings = img.get('settings') if isinstance(img.get('settings'), dict) else {}
+    vram = float(hw.get('marketed_vram_gb') or hw.get('vram_gb') or 0)
+    ltx2 = bool(hw.get('ltx2_eligible'))
+    # Hard safety: never pull LTX under 24 GB even if a stale profile claims eligible.
+    if vram and vram < 24:
+        ltx2 = False
+
     specs: list[dict[str, Any]] = []
     if img.get('enabled', True):
+        tier = str(img.get('tier') or img_settings.get('precision') or 'full')
+        files = _zimage_files_for_tier(tier)
+        # Prefer explicit filenames from hardware_profile settings when present.
+        unet = str(img_settings.get('unet') or '')
+        clip = str(img_settings.get('clip') or '')
+        vae = str(img_settings.get('vae') or '')
+        if unet and clip and vae:
+            files = [
+                _f('Comfy-Org/z_image_turbo', f'split_files/diffusion_models/{unet}',
+                   'diffusion_models', unet, 500_000_000),
+                _f('Comfy-Org/z_image_turbo', f'split_files/text_encoders/{clip}',
+                   'text_encoders', clip, 100_000_000),
+                _f('Comfy-Org/z_image_turbo', f'split_files/vae/{vae}',
+                   'vae', vae, 100_000),
+            ]
         specs.append({
             'id': 'zimage',
             'kind': 'image',
-            'label': 'Z-Image Turbo',
+            'label': f"Z-Image Turbo ({tier})",
             'engine': img.get('engine') or 'z-image-turbo',
-            'files': ZIMAGE_FILES,
+            'tier': tier,
+            'files': files,
             'disk_gb': 25,
             'priority': 1,
+            'comfy_docs': COMFY_DOCS['zimage'],
+            'hf_repo': 'Comfy-Org/z_image_turbo',
         })
+
     if vid.get('enabled', True):
-        ltx2 = bool(hw.get('ltx2_eligible'))
         if ltx2:
             specs.append({
                 'id': 'ltx2',
                 'kind': 'video',
-                'label': 'LTX-2',
+                'label': f"LTX-2 ({vid.get('tier') or 'distilled'})",
                 'engine': vid.get('engine') or 'ltx-2',
+                'tier': vid.get('tier') or 'distilled_24gb',
                 'files': LTX2_FILES,
                 'disk_gb': 100,
                 'priority': 2,
-                'note': 'High-VRAM LTX-2 distilled weights',
+                'comfy_docs': COMFY_DOCS['ltx2'],
+                'note': '24 GB+ auto path (3090/4090 class). Not installed under 24 GB.',
             })
         else:
             specs.append({
                 'id': 'wan',
                 'kind': 'video',
-                'label': 'Wan 2.2 5B',
+                'label': f"Wan 2.2 5B ({vid.get('tier') or 'standard'})",
                 'engine': vid.get('engine') or 'wan-2.2-5b',
+                'tier': vid.get('tier') or 'standard',
                 'files': WAN_FILES,
                 'disk_gb': 45,
                 'priority': 2,
+                'comfy_docs': COMFY_DOCS['wan'],
+                'hf_repo': 'Comfy-Org/Wan_2.2_ComfyUI_Repackaged',
+                'note': 'Official Wan 2.2 5B — LTX-2 skipped on this VRAM.',
             })
-    if mus.get('enabled') and mus.get('tier') != 'deferred':
+
+    music_ok = bool(mus.get('enabled')) and mus.get('tier') != 'deferred'
+    if music_ok or not mus:
         specs.append({
             'id': 'ace_step',
             'kind': 'music',
-            'label': 'ACE-Step 1.5',
-            'engine': mus.get('engine') or 'ace-step',
+            'label': 'ACE-Step 1.5 AIO',
+            'engine': mus.get('engine') or 'ace-step-1.5',
+            'tier': mus.get('tier') or 'aio',
             'files': ACE_FILES,
             'disk_gb': 12,
             'priority': 3,
+            'comfy_docs': COMFY_DOCS['ace_step'],
+            'hf_repo': 'Comfy-Org/ace_step_1.5_ComfyUI_files',
         })
-    elif not mus or mus.get('enabled', True):
-        # Default: still offer ACE when profile silent (friends expect music pack).
-        if not any(s['id'] == 'ace_step' for s in specs):
-            specs.append({
-                'id': 'ace_step',
-                'kind': 'music',
-                'label': 'ACE-Step 1.5',
-                'engine': 'ace-step',
-                'files': ACE_FILES,
-                'disk_gb': 12,
-                'priority': 3,
-            })
     specs.sort(key=lambda s: int(s.get('priority') or 99))
     return specs
 
@@ -422,21 +455,21 @@ def packs_status(
         phase = state.get('phase') or 'DOWNLOADING'
     if image_ok and not all_ok:
         aria = (
-            'Z-Image is ready. Video / music packs are still optional — '
-            'tap Install packs if you want those too.'
+            'Z-Image is ready for this GPU. Optional video/music packs are still '
+            'installing or pending — Generate is unlocked.'
         )
     elif image_ok and all_ok:
-        aria = 'Creative packs are installed. Generate is ready when Studio is LIVE.'
+        aria = 'Creative packs for this PC are installed. Generate is ready when Studio is LIVE.'
     elif running:
         aria = state.get('aria') or (
-            'Downloading creative packs now — Z-Image first, then video and music. '
-            'Generate will unlock when Z-Image finishes.'
+            'Downloading the ComfyUI models matched to this GPU — Z-Image first, '
+            'then the right video pack (Wan on mid-VRAM, LTX-2 only on 24 GB+).'
         )
     else:
         aria = (
-            'Creative model packs are not installed yet. Tap Install packs — '
-            'I will download Z-Image (and video / music for this PC). '
-            'Generate stays quiet until packs are ready; nothing is queued.'
+            'Creative models are not on this PC yet. Otacon will download the official '
+            'ComfyUI weights for this VRAM profile automatically — a 2060 gets Wan + '
+            'Z-Image INT8; a 3090 gets LTX-2 distilled. Generate stays quiet until ready.'
         )
     return {
         'ok': all_ok,
@@ -771,6 +804,31 @@ def start_pack_install(
     }
 
 
+def ensure_auto_install(
+    *,
+    layout: Optional[StateLayout] = None,
+    hw: Optional[dict[str, Any]] = None,
+    studio_ready: bool = False,
+) -> dict[str, Any]:
+    """If Studio is READY and packs missing, kick hardware-matched downloads (no UI pick)."""
+    layout = layout or resolve_layout()
+    status = packs_status(layout=layout, hw=hw)
+    if status.get('ok') or status.get('image_ready'):
+        return {**status, 'auto_started': False, 'detail': 'packs already ready'}
+    if status.get('running'):
+        return {**status, 'auto_started': False, 'detail': 'already downloading'}
+    if not studio_ready:
+        return {**status, 'auto_started': False, 'detail': 'studio not READY'}
+    st = load_packs_state(layout)
+    if st.get('auto_kicked') and st.get('phase') not in ('FAILED', 'NOT_STARTED', '', None):
+        return {**status, 'auto_started': False, 'detail': 'auto already attempted'}
+    out = start_pack_install(layout=layout, hw=hw)
+    st = load_packs_state(layout)
+    st['auto_kicked'] = True
+    save_packs_state(st, layout)
+    return {**out, 'auto_started': bool(out.get('started') or out.get('running'))}
+
+
 def soft_block_payload(status: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """API-shaped soft block when Generate is refused for missing packs."""
     st = status or packs_status()
@@ -781,8 +839,8 @@ def soft_block_payload(status: Optional[dict[str, Any]] = None) -> dict[str, Any
         'action': 'install_packs',
         'error': 'creative_packs_needed',
         'detail': st.get('aria') or (
-            'Creative packs are not installed yet. Tap Install packs — '
-            'Generate stays quiet until packs are ready.'
+            'Creative packs are not installed yet — matching this PC\'s VRAM profile '
+            'and downloading from official ComfyUI sources. Generate stays quiet until ready.'
         ),
         'packs': st.get('packs') or {},
         'needed': st.get('needed') or [],
