@@ -1467,8 +1467,8 @@ async function showVideoStudioSetup(){
   const st=capStatus('video');
   const ready=st==='ready'||setup.phase==='READY'||setup.ok;
   const aria=setup.aria||(ready
-    ?'Done. Video Studio is connected and ready.'
-    :"Video Studio isn't running yet. I can set it up for you — the first start may take a few minutes while I download what it needs.");
+    ?'Done — Video Studio is ready. Tap Open Video Studio and you\'re in the Muse workshop.'
+    :"Video Studio isn't running yet. Tap the big button — I'll download and start what it needs. You don't need Docker skills or command lines. First time can take a few minutes.");
   const steps=Array.isArray(setup.steps)?setup.steps:[];
   const stepHtml=steps.length
     ?`<ul class="guide-steps" id="studioSetupSteps" style="list-style:none;padding-left:0">${steps.map(s=>
@@ -1862,10 +1862,18 @@ async function showExpansionSurface(kind){
   otSfx('click');
   state.view='expansion';
   setBodyMode('home');
+  // Keep / OtaconsKeep aliases — video-studio is Muse Creative
+  const aliases={
+    'video-studio':'creative','videostudio':'creative','studio':'creative',
+    'muse':'creative','ha':'ops','home-assistant':'ops','home_assistant':'ops',
+    'n8n':'ops','discord':'ops','emotions':'emotion','pages':'page-builder',
+    'pagebuilder':'page-builder','command_center':'command-center'
+  };
+  kind=aliases[String(kind||'').toLowerCase()]||kind;
   try{
     const pathMap={
       'war-room':'/war-room','dashboard':'/dashboard','intel':'/intel',
-      'video-studio':'/video-studio','ha':'/ha','rex':'/rex','learning':'/learning',
+      'video-studio':'/creative','ha':'/ops','rex':'/rex','learning':'/learning',
       'creative':'/creative','ops':'/ops','reports':'/reports','dossiers':'/dossiers',
       'journal':'/journal','diary':'/diary','page-builder':'/page-builder','rooms':'/rooms',
       'relationships':'/relationships','emotion':'/emotion','command':'/command',

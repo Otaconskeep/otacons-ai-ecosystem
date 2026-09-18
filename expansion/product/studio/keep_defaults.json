@@ -21,9 +21,54 @@
     "ace-step-1.5": {
       "role": "default local music engine",
       "default_positive": "instrumental bed, clean mix, no vocals unless requested, loop-friendly structure, emotional but controlled",
+      "default_negative": "distorted, clipping, muddy low-end, random noise bursts",
       "disk_gb_core": 10
     }
   },
+  "optimal_prompts": {
+    "image": [
+      {"id": "portrait", "label": "Portrait", "text": "identity-preserving portrait, soft key light, sharp eyes, natural skin, clean bokeh background"},
+      {"id": "product", "label": "Product", "text": "studio product shot, softbox lighting, reflective table, crisp edges, commercial catalog look"},
+      {"id": "env", "label": "Environment", "text": "wide establishing shot, atmospheric depth, coherent architecture, cinematic color grade"}
+    ],
+    "video": [
+      {"id": "walk", "label": "Walk cycle", "text": "subject walking toward camera, stable identity, natural gait, smooth camera push-in"},
+      {"id": "orbit", "label": "Orbit", "text": "slow orbit around subject, cinematic lighting, coherent motion, no morphing"},
+      {"id": "dialogue", "label": "Dialogue beat", "text": "two-shot conversation, subtle head motion, lip sync friendly, filmic framing"}
+    ],
+    "music": [
+      {"id": "bed", "label": "Score bed", "text": "warm instrumental bed, soft pads, gentle pulse, loopable 8-bar phrase, no vocals"},
+      {"id": "tension", "label": "Tension", "text": "low drones, rising strings, sparse percussion, cinematic tension without climax"},
+      {"id": "uplift", "label": "Uplift", "text": "bright piano motif, light percussion, hopeful major key, clean mix"}
+    ]
+  },
+  "actors": [
+    {"id": "muse_self", "label": "Muse", "tag": "creator", "note": "Default Muse identity — no extra cast"},
+    {"id": "aria_cameo", "label": "Aria", "tag": "guide", "note": "Optional cameo for explainers"},
+    {"id": "custom_a", "label": "Actor A", "tag": "slot", "note": "Drop a face / style reference later"},
+    {"id": "custom_b", "label": "Actor B", "tag": "slot", "note": "Second cast slot"},
+    {"id": "custom_c", "label": "Actor C", "tag": "slot", "note": "Third cast slot"}
+  ],
+  "styles": [
+    {"id": "keep_film", "label": "Keep Film"},
+    {"id": "noir", "label": "Noir"},
+    {"id": "anime_soft", "label": "Soft anime"},
+    {"id": "docu", "label": "Documentary"},
+    {"id": "neon", "label": "Neon night"}
+  ],
+  "music_advanced": {
+    "bpm": 90,
+    "key": "Am",
+    "bars": 8,
+    "vocals": false,
+    "stem_split": false,
+    "moods": ["calm", "tense", "hopeful", "dark", "playful"]
+  },
+  "image_widgets": [
+    {"id": "aspect", "label": "Aspect", "options": ["1:1", "16:9", "9:16", "4:3"]},
+    {"id": "ref_strength", "label": "Identity lock", "options": ["soft", "medium", "hard"]},
+    {"id": "batch", "label": "Batch", "options": ["1", "2", "4"]}
+  ],
   "selection_policy": {
     "priority": ["vram", "system_ram", "gpu_generation", "free_disk", "cuda"],
     "default_video_under_32gb": "wan-2.2-5b",

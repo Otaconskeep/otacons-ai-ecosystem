@@ -139,6 +139,11 @@ def handle_expansion_get(path: str, send_json) -> bool:
                 'hardware': hw,
                 'settings': creative_settings,
                 'engines': (defaults.get('engines') or {}),
+                'optimal_prompts': (defaults.get('optimal_prompts') or {}),
+                'actors': (defaults.get('actors') or []),
+                'styles': (defaults.get('styles') or []),
+                'music_advanced': (defaults.get('music_advanced') or {}),
+                'image_widgets': (defaults.get('image_widgets') or []),
                 'modalities': [
                     {
                         'id': 'image',
@@ -649,9 +654,15 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             request += f' | negative: {negative[:240]}'
         if isinstance(tuning, dict) and tuning:
             bits = []
-            for k in ('steps', 'cfg', 'duration', 'fps', 'resolution', 'seed', 'quality'):
+            for k in (
+                'steps', 'cfg', 'duration', 'fps', 'resolution', 'seed', 'quality',
+                'bpm', 'key', 'bars', 'aspect', 'identity_lock', 'batch', 'style',
+            ):
                 if tuning.get(k) not in (None, ''):
                     bits.append(f'{k}={tuning.get(k)}')
+            actors = tuning.get('actors')
+            if isinstance(actors, list) and actors:
+                bits.append('actors=' + ','.join(str(a) for a in actors[:8]))
             if bits:
                 request += ' | ' + ', '.join(bits)
         pipe = LivingPipeline()

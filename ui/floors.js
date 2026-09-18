@@ -432,6 +432,19 @@
     }
   }
 
+  function ariaGuideCard(who, text) {
+    var id = String(who || 'aria').toLowerCase();
+    if (id !== 'muse' && id !== 'aria') id = 'aria';
+    var label = id === 'muse' ? 'Muse // guiding' : 'Aria // guiding';
+    var src = agentAsset(id, id + '.webp');
+    var fallback = agentAsset('aria', 'aria.webp');
+    return '<div class="fl-aria-guide">' +
+      '<img src="' + src + '" alt="" width="72" height="72" ' +
+      'onerror="this.onerror=null;this.src=\'' + fallback.replace(/'/g, '') + '\'">' +
+      '<div><p class="fl-aria-kicker">' + esc(label) + '</p>' +
+      '<p class="fl-aria-copy">' + esc(text || '') + '</p></div></div>';
+  }
+
   /* —— Dossiers —— */
   function renderVulnGroups(byKind) {
     var bk = byKind || {};
@@ -1098,8 +1111,44 @@
     if (role) role.textContent = d.role || '';
     var tuneVideo = document.getElementById('fl-tune-video');
     var tuneImage = document.getElementById('fl-tune-image');
+    var tuneMusic = document.getElementById('fl-tune-music');
+    var imgWidgets = document.getElementById('fl-studio-image-widgets');
+    var optBox = document.getElementById('fl-studio-optimal');
     if (tuneVideo) tuneVideo.hidden = FL_STUDIO.modality !== 'video';
     if (tuneImage) tuneImage.hidden = FL_STUDIO.modality === 'music';
+    if (tuneMusic) tuneMusic.hidden = FL_STUDIO.modality !== 'music';
+    if (imgWidgets) imgWidgets.hidden = FL_STUDIO.modality !== 'image';
+    if (optBox) {
+      var packs = (FL_STUDIO._optimal && FL_STUDIO._optimal[FL_STUDIO.modality]) || [];
+      optBox.innerHTML = packs.length
+        ? packs.map(function (p) {
+            return '<button type="button" class="fl-tab" title="' + esc(p.note || p.text || '') +
+              '" onclick=\'floorStudioApplyOptimal(' + JSON.stringify(p.text || '') + ')\'>' +
+              esc(p.label || p.id) + '</button>';
+          }).join('')
+        : '<span class="muted">No optimal packs for this mode yet.</span>';
+    }
+  }
+
+  function floorStudioApplyOptimal(text) {
+    var prompt = document.getElementById('fl-studio-prompt');
+    if (!prompt) return;
+    prompt.value = String(text || '');
+    prompt.dataset.dirty = '1';
+  }
+
+  function floorStudioToggleActor(id) {
+    FL_STUDIO.actors = FL_STUDIO.actors || {};
+    FL_STUDIO.actors[id] = !FL_STUDIO.actors[id];
+    var el = document.querySelector('[data-actor="' + id + '"]');
+    if (el) el.classList.toggle('on', !!FL_STUDIO.actors[id]);
+  }
+
+  function floorStudioPickStyle(id) {
+    FL_STUDIO.style = id;
+    document.querySelectorAll('[data-style]').forEach(function (el) {
+      el.classList.toggle('on', el.getAttribute('data-style') === id);
+    });
   }
 
   async function floorStudioGenerate() {
@@ -1118,7 +1167,15 @@
       seed: (document.getElementById('fl-tune-seed') || {}).value,
       duration: (document.getElementById('fl-tune-dur') || {}).value,
       fps: (document.getElementById('fl-tune-fps') || {}).value,
-      quality: (document.getElementById('fl-tune-quality') || {}).value
+      quality: (document.getElementById('fl-tune-quality') || {}).value,
+      bpm: (document.getElementById('fl-tune-bpm') || {}).value,
+      key: (document.getElementById('fl-tune-key') || {}).value,
+      bars: (document.getElementById('fl-tune-bars') || {}).value,
+      aspect: (document.getElementById('fl-img-aspect') || {}).value,
+      identity_lock: (document.getElementById('fl-img-lock') || {}).value,
+      batch: (document.getElementById('fl-img-batch') || {}).value,
+      style: FL_STUDIO.style || '',
+      actors: Object.keys(FL_STUDIO.actors || {}).filter(function (k) { return FL_STUDIO.actors[k]; })
     };
     say('Queuing for Muse…');
     try {
@@ -1198,10 +1255,13 @@
 
     if (needsSetup) {
       floorShell('Muse Creative Studio', 'Expansion premium — Video Studio',
+        ariaGuideCard(
+          'Aria',
+          'Video Studio isn\'t set up yet. Tap Set Up — I\'ll install what\'s needed. You don\'t have to touch Docker or type any commands.'
+        ) +
         statusStrip + actions +
         '<div class="fl-panel fl-studio-hero"><h3 class="fl-h">Workshop</h3>' +
-        '<p class="fl-guide">Otacon can provision ComfyUI for you. After READY, this floor becomes the Muse production deck — prompt, tune, and queue — not a diagnostics dump.</p>' +
-        '<p class="muted">' + esc(d.note || '') + '</p></div>');
+        '<p class="fl-guide">After it says LIVE, you\'ll get Image / Video / Music, optimal prompts, actors, and tuning — like OtaconsKeep Production Studio.</p></div>');
       return;
     }
 
@@ -1211,8 +1271,9 @@
       { id: 'music', label: 'Music' }
     ];
     if (!FL_STUDIO.modality) FL_STUDIO.modality = 'image';
+    FL_STUDIO._optimal = studio.optimal_prompts || {};
+    FL_STUDIO.actors = FL_STUDIO.actors || {};
     var defs = studioPromptDefaults(engines, FL_STUDIO.modality);
-    // Prefer engine from modality card
     mods.forEach(function (m) {
       if (m.id === FL_STUDIO.modality && m.engine) defs.engine = m.engine;
     });
@@ -1221,6 +1282,56 @@
       'identity-preserving', 'cinematic lighting', 'stable subject',
       'natural motion', 'clean background', 'film grain'
     ];
+    var optPacks = (studio.optimal_prompts && studio.optimal_prompts[FL_STUDIO.modality]) || [];
+    var actors = studio.actors || [];
+    var styles = studio.styles || [];
+    var musicAdv = studio.music_advanced || {};
+    var imgWidgets = studio.image_widgets || [];
+
+    var ariaLive = ariaGuideCard(
+      'Muse',
+      'Pick Image, Video, or Music. Tap an Optimal Prompt if you\'re unsure what to write. Choose actors/styles, tweak Tuning, then Generate — I queue the job. Advanced diagnostics stay collapsed.'
+    );
+
+    var optimal =
+      '<div class="fl-panel"><h3 class="fl-h">Optimal prompts</h3>' +
+      '<p class="muted">One-tap starters for non-experts — replaces guessing.</p>' +
+      '<div class="fl-rail" id="fl-studio-optimal">' +
+      (optPacks.map(function (p) {
+        return '<button type="button" class="fl-tab" onclick=\'floorStudioApplyOptimal(' +
+          JSON.stringify(p.text || '') + ')\'>' + esc(p.label || p.id) + '</button>';
+      }).join('') || '<span class="muted">—</span>') +
+      '</div></div>';
+
+    var cast =
+      '<div class="fl-panel"><h3 class="fl-h">Actors</h3>' +
+      '<div class="fl-rail">' + actors.map(function (a) {
+        return '<button type="button" class="fl-tab" data-actor="' + esc(a.id) +
+          '" onclick="floorStudioToggleActor(\'' + esc(a.id) + '\')">' +
+          esc(a.label || a.id) + '</button>';
+      }).join('') + '</div>' +
+      '<p class="muted" style="margin-top:6px">Toggle who appears. Custom slots fill when you add face packs later.</p></div>';
+
+    var styleBox =
+      '<div class="fl-panel"><h3 class="fl-h">Styles</h3>' +
+      '<div class="fl-rail">' + styles.map(function (s) {
+        return '<button type="button" class="fl-tab" data-style="' + esc(s.id) +
+          '" onclick="floorStudioPickStyle(\'' + esc(s.id) + '\')">' +
+          esc(s.label || s.id) + '</button>';
+      }).join('') + '</div></div>';
+
+    var imgBox =
+      '<div class="fl-panel" id="fl-studio-image-widgets"' +
+      (FL_STUDIO.modality === 'image' ? '' : ' hidden') + '>' +
+      '<h3 class="fl-h">Image widgets</h3><div class="fl-form">' +
+      imgWidgets.map(function (w) {
+        var opts = (w.options || []).map(function (o) {
+          return '<option>' + esc(o) + '</option>';
+        }).join('');
+        var id = w.id === 'aspect' ? 'fl-img-aspect'
+          : (w.id === 'ref_strength' ? 'fl-img-lock' : (w.id === 'batch' ? 'fl-img-batch' : ('fl-img-' + w.id)));
+        return '<label>' + esc(w.label || w.id) + '<select id="' + id + '">' + opts + '</select></label>';
+      }).join('') + '</div></div>';
 
     var entry =
       '<div class="fl-panel fl-studio-entry">' +
@@ -1244,7 +1355,7 @@
       esc(defs.negative || '') + '</textarea></label>' +
       '<div class="fl-rail" style="margin-top:10px">' +
       btn('Generate', 'floorStudioGenerate()', false) +
-      btn('Optimal defaults', "FL_STUDIO._defaults&&floorStudioSetModality(FL_STUDIO.modality);var p=document.getElementById('fl-studio-prompt');if(p)delete p.dataset.dirty;floorStudioSetModality(FL_STUDIO.modality)", true) +
+      btn('Optimal defaults', "var p=document.getElementById('fl-studio-prompt');var n=document.getElementById('fl-studio-negative');if(p)delete p.dataset.dirty;if(n)delete n.dataset.dirty;floorStudioSetModality(FL_STUDIO.modality)", true) +
       '</div>' +
       '<p id="fl-studio-msg" class="muted" style="margin-top:8px"></p></div>';
 
@@ -1261,7 +1372,21 @@
       '<label>Duration (s)<input id="fl-tune-dur" type="number" value="4" min="1" max="30"></label>' +
       '<label>FPS<input id="fl-tune-fps" type="number" value="24" min="8" max="60"></label>' +
       '</div>' +
-      '<p class="muted" style="margin-top:8px">Real knobs for the job — not a JSON dump. Engine packs continue to land with Studio deps.</p></div>';
+      '<div class="fl-form" id="fl-tune-music" hidden>' +
+      '<label>BPM<input id="fl-tune-bpm" type="number" value="' + esc(String(musicAdv.bpm || 90)) + '" min="40" max="200"></label>' +
+      '<label>Key<input id="fl-tune-key" type="text" value="' + esc(musicAdv.key || 'Am') + '"></label>' +
+      '<label>Bars<input id="fl-tune-bars" type="number" value="' + esc(String(musicAdv.bars || 8)) + '" min="4" max="64"></label>' +
+      '<label>Vocals<select id="fl-tune-vocals"><option value="0">Instrumental</option><option value="1">Allow vocals</option></select></label>' +
+      '<label>Mood<select id="fl-tune-mood">' +
+      ((musicAdv.moods || ['calm']).map(function (m) {
+        return '<option>' + esc(m) + '</option>';
+      }).join('')) + '</select></label>' +
+      '</div>' +
+      '<details class="fl-studio-music-adv" id="fl-music-advanced" style="margin-top:10px"><summary>Music advanced</summary>' +
+      '<p class="muted">Stem split and longer forms land with Studio music packs. Mood + BPM above already shape the queue.</p>' +
+      '<label class="chk" style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
+      '<input type="checkbox" id="fl-tune-stems"> Prefer stem-friendly mix</label></details>' +
+      '<p class="muted" style="margin-top:8px">Knobs for the job — not a JSON dump.</p></div>';
 
     var queueBody =
       '<div class="fl-two">' +
@@ -1280,7 +1405,9 @@
       '</details>';
 
     floorShell('Muse Creative Studio', 'Expansion premium — Video Studio',
-      statusStrip + actions +
+      ariaLive + statusStrip + actions +
+      '<div class="fl-two">' + optimal + cast + '</div>' +
+      styleBox + imgBox +
       '<div class="fl-two fl-studio-work">' + entry + tuning + '</div>' +
       queueBody + advanced);
 
@@ -1293,37 +1420,48 @@
     function say(t) { if (msg) msg.textContent = t; }
     try {
       if (which === 'discord') {
-        say('[OTACON] I\'ll set up the bot service for you…');
+        say('Aria: I\'ll set up Discord for you. Just paste the bot token when asked — nothing else.');
         var prep = await api('/api/expansion/discord/setup', {});
         var tokenEl = document.getElementById('fl-discord-token');
         var token = tokenEl ? String(tokenEl.value || '').trim() : '';
+        if (!token && !(prep.data && prep.data.discovery && prep.data.discovery.bot_configured)) {
+          say('Aria: I need one thing — paste your Discord bot token in the box, then tap Configure again.');
+          return;
+        }
         if (token) {
-          say('[OTACON] Storing token securely…');
+          say('Aria: Saving your token privately…');
           prep = await api('/api/expansion/discord/setup', { token: token });
           if (tokenEl) tokenEl.value = '';
         }
         var inv = (prep.data && (prep.data.invite_url || (prep.data.invite && prep.data.invite.invite_url))) || '';
         if (!inv && prep.data && prep.data.discovery) inv = prep.data.discovery.invite_url || '';
         if (inv) {
-          say('[OTACON] Authorize the bot in your Discord server…');
+          say('Aria: Almost done — a Discord window will open. Click Authorize on your server.');
           try { window.open(inv, '_blank', 'noopener'); } catch (e) {}
         }
-        say('[OTACON] Discord: ' + ((prep.data && prep.data.state) || (prep.ok ? 'ok' : 'check token')));
+        say('Aria: Discord status → ' + ((prep.data && prep.data.state) || (prep.ok ? 'ok' : 'check token')));
       } else if (which === 'home_assistant' || which === 'ha') {
         var urlEl = document.getElementById('fl-ha-url');
         var tokEl = document.getElementById('fl-ha-token');
         var url = urlEl ? String(urlEl.value || '').trim() : '';
         var tok = tokEl ? String(tokEl.value || '').trim() : '';
-        if (!url || !tok) { say('[OTACON] I need your HA URL and long-lived access token.'); return; }
-        say('[OTACON] Verifying Home Assistant…');
+        if (!url || !tok) {
+          say('Aria: Two boxes — your Home Assistant address (like http://homeassistant.local:8123) and a long-lived token from HA → Profile → Long-Lived Access Tokens.');
+          return;
+        }
+        say('Aria: Checking the connection…');
         var ha = await api('/api/expansion/home-assistant/config', { url: url, token: tok, verify: true });
         if (tokEl) tokEl.value = '';
         var n = (ha.data && ha.data.verify && ha.data.verify.entity_count) || 0;
-        say('[OTACON] HA: ' + ((ha.data && ha.data.state) || '') + (n ? (' · ' + n + ' entities') : ''));
+        say('Aria: Home Assistant → ' + ((ha.data && ha.data.state) || '') + (n ? (' · found ' + n + ' devices/entities') : ''));
       } else if (which === 'n8n') {
-        say('[OTACON] Deploying local n8n…');
+        say('Aria: Installing n8n with Docker for you — no password needed for the base service.');
         var n8 = await api('/api/expansion/n8n/setup', {});
-        say('[OTACON] n8n: ' + ((n8.data && n8.data.state) || (n8.ok ? 'ok' : 'failed')) +
+        if (!n8.ok && n8.status === 404) {
+          say('Aria: Server needs a restart to pick up the n8n installer route. Soft-update again, then retry.');
+          return;
+        }
+        say('Aria: n8n → ' + ((n8.data && n8.data.state) || (n8.ok ? 'READY' : 'failed')) +
           (n8.data && n8.data.deploy && n8.data.deploy.endpoint ? (' · ' + n8.data.deploy.endpoint) : ''));
       }
       setTimeout(function () { renderOpsFloor(); }, 500);
@@ -1342,22 +1480,22 @@
       pill(st) +
       '<p class="muted">' + esc(v.detail || v.note || v.message || '') + '</p>';
     if (id === 'discord' && needs) {
-      body += '<p class="fl-note">[OTACON] I can handle this. Configure now?</p>' +
-        '<label>Bot token<input id="fl-discord-token" type="password" autocomplete="off" placeholder="paste token"></label>' +
+      body += '<p class="fl-note">Aria: Paste your Discord bot token below. I install the rest. Then authorize once in your server.</p>' +
+        '<label>Bot token<input id="fl-discord-token" type="password" autocomplete="off" placeholder="paste token — never shared"></label>' +
         '<div class="fl-rail" style="margin-top:8px">' +
         btn('Configure Discord', "floorConfigureIntegration('discord')", false) +
         (disc.invite_url
           ? btn('Open authorize', "window.open(" + JSON.stringify(disc.invite_url) + ",'_blank','noopener')", true)
           : '') + '</div>';
     } else if (id === 'home_assistant' && needs) {
-      body += '<p class="fl-note">[OTACON] I found Home Assistant support, but it isn\'t connected.</p>' +
+      body += '<p class="fl-note">Aria: Two fields only — the address of Home Assistant, and a long-lived token from HA Profile.</p>' +
         '<label>HA URL<input id="fl-ha-url" placeholder="http://homeassistant.local:8123" value="' +
         esc(disc.url || 'http://homeassistant.local:8123') + '"></label>' +
-        '<label>Long-lived token<input id="fl-ha-token" type="password" autocomplete="off"></label>' +
+        '<label>Long-lived token<input id="fl-ha-token" type="password" autocomplete="off" placeholder="from HA → Profile → Long-Lived Access Tokens"></label>' +
         '<div class="fl-rail" style="margin-top:8px">' +
         btn('Connect HA', "floorConfigureIntegration('ha')", false) + '</div>';
     } else if (id === 'n8n' && needs) {
-      body += '<p class="fl-note">[OTACON] I can deploy local n8n with Docker — no credential required for the base service.</p>' +
+      body += '<p class="fl-note">Aria: One click. I deploy n8n with Docker. No account needed for the base service.</p>' +
         '<div class="fl-rail" style="margin-top:8px">' +
         btn('Install n8n', "floorConfigureIntegration('n8n')", false) + '</div>';
     }
@@ -1379,6 +1517,10 @@
     });
     var checklist = recommended.length
       ? '<div class="fl-panel"><h3 class="fl-h">Recommended integrations</h3>' +
+        ariaGuideCard(
+          'Aria',
+          'These are optional. Tap Configure — I do the hard parts. You only paste a secret when Discord or Home Assistant asks. n8n needs no password for the basic install.'
+        ) +
         '<p class="fl-note">' + esc(integ.aria || 'Otacon installs what it can; credentials only when required.') + '</p>' +
         '<div class="fl-grid">' + recommended.map(function (it) {
           return '<div class="fl-card"><b>' + esc(it.label || it.id) + '</b> ' +
@@ -1391,6 +1533,10 @@
         }).join('') + '</div></div>'
       : '';
     floorShell('Sentry Operations', 'Security / monitoring',
+      ariaGuideCard(
+        'Aria',
+        'Ops is where optional extras live. Discord, Home Assistant, and n8n are not required for chat. When you want one, use Configure — I walk you through it in plain language.'
+      ) +
       '<p class="fl-note">' + esc(d.note || 'Home Assistant remains optional.') + '</p>' +
       checklist +
       panel('Active incidents', listCards(d.active_incidents || [], jobCard, 'No active incidents.')) +
@@ -1607,7 +1753,13 @@
     intel: renderIntelFloor,
     reports: renderReportsFloor,
     creative: renderCreativeFloor,
+    'video-studio': renderCreativeFloor,
+    videostudio: renderCreativeFloor,
+    studio: renderCreativeFloor,
+    muse: renderCreativeFloor,
     ops: renderOpsFloor,
+    ha: renderOpsFloor,
+    'home-assistant': renderOpsFloor,
     rooms: renderPageBuilderFloor,
     'page-builder': renderPageBuilderFloor,
     dashboard: renderCommandCenterFloor,
@@ -1632,6 +1784,9 @@
     floorStudioSetModality: floorStudioSetModality,
     floorStudioGenerate: floorStudioGenerate,
     floorStudioApplyChip: floorStudioApplyChip,
+    floorStudioApplyOptimal: floorStudioApplyOptimal,
+    floorStudioToggleActor: floorStudioToggleActor,
+    floorStudioPickStyle: floorStudioPickStyle,
     renderDossiersFloor: renderDossiersFloor,
     renderJournalFloor: renderJournalFloor,
     renderDiaryFloor: renderDiaryFloor,

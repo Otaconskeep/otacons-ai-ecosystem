@@ -511,7 +511,20 @@ def probe_n8n(layout: Optional[StateLayout] = None) -> CapabilityReport:
     )
     installed = bool(raw.get('managed') or raw.get('installed'))
     healthy = False
-    if url:
+    # Auto-detect local managed n8n even before prefs exist (Ops Configure / manual compose).
+    if not url:
+        try:
+            from expansion.capabilities.n8n_sidecar import n8n_endpoint_healthy, DEFAULT_ENDPOINT
+            ok, _ = n8n_endpoint_healthy(DEFAULT_ENDPOINT)
+            if ok:
+                url = DEFAULT_ENDPOINT
+                save_n8n_config(url=url, layout=layout, managed=True)
+                raw = read_json(_n8n_path(layout), default={}) or {}
+                installed = True
+                healthy = True
+        except Exception:
+            pass
+    if url and not healthy:
         try:
             from expansion.capabilities.n8n_sidecar import n8n_endpoint_healthy
             healthy, _ = n8n_endpoint_healthy(url)

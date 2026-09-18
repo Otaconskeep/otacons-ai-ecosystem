@@ -81,3 +81,18 @@
 .fl-studio-advanced>summary{cursor:pointer;color:var(--ot-muted,#9a95b0);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
 .fl-studio-advanced[open]>summary{margin-bottom:.65rem;color:var(--ot-lilac,#979fec)}
 .fl-studio-hero{margin-top:.25rem}
+.fl-aria-guide{
+  display:grid;grid-template-columns:72px 1fr;gap:14px;align-items:start;
+  padding:.9rem 1rem;margin:0 0 .85rem;
+  border:1px solid rgba(46,230,214,.28);
+  background:linear-gradient(165deg,rgba(10,21,32,.95),rgba(3,7,10,.98));
+  clip-path:polygon(10px 0,calc(100% - 12px) 0,100% 10px,100% calc(100% - 10px),calc(100% - 10px) 100%,10px 100%,0 calc(100% - 10px),0 10px);
+}
+.fl-aria-guide img{
+  width:72px;height:72px;object-fit:contain;object-position:center top;
+  border:1px solid rgba(46,230,214,.35);background:#020508;
+}
+.fl-aria-kicker{margin:0 0 6px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ot-cyan,#2ee6d6)}
+.fl-aria-copy{margin:0;font-size:.92rem;line-height:1.5;color:var(--ot-text,#e8e6f2)}
+.fl-studio-music-adv{border-top:1px dashed rgba(151,159,236,.2);padding-top:8px}
+.fl-studio-music-adv>summary{cursor:pointer;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ot-muted,#9a95b0)}
