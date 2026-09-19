@@ -53,6 +53,11 @@ def main() -> int:
          "JOSH: repair does not mash script exit into transport", fails)
     must("exit 8" in repair and "E2E_HEALTH_FAIL" in repair,
          "JOSH: exit 8 remains E2E health in Linux script", fails)
+    must("capabilities chat=ready (wait)" in repair or "CHAT_CAP_WAIT" in repair,
+         "JOSH: E2E waits for chat=ready (not single 12s curl)", fails)
+    must("LastOtaconCoreRepairExit" in
+         (ROOT / "deploy" / "windows-setup-assistant.ps1").read_text(encoding="utf-8-sig"),
+         "JOSH: Setup surfaces exit 8 as E2E not revision-mismatch", fails)
     # Ensure mislabel path only triggers for transport/syntax classes
     idx = repair.find("UPDATE FAILED: WSL bash file transport/syntax")
     must(idx > 0, "JOSH: transport/syntax user message still exists for true transport fails", fails)

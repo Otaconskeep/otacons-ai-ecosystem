@@ -63,6 +63,15 @@ def main() -> int:
     must("Linux application revision not proven" in assistant
          or "Linux Otacon application did not update" in assistant,
          "READY path fails when Linux app not updated", fails)
+    must("LastOtaconCoreRepairExit" in assistant,
+         "JOSH: assistant records repair exit code for UI", fails)
+    must("end-to-end health probes failed" in assistant
+         or "health probes (branding/chat)" in assistant,
+         "JOSH: exit 8 READY box is E2E health not revision", fails)
+    must("CHAT_CAP_WAIT" in repair or "capabilities chat=ready (wait)" in repair,
+         "JOSH: repair retries capabilities after cold start", fails)
+    must("branding (wait)" in repair,
+         "JOSH: repair retries branding after cold start", fails)
     must('"$RawBase/deploy/repair-otacon-core.ps1"' not in assistant,
          "broken branchless RawBase repair URL removed", fails)
     must("Get-OtaconRawFileUrl" in assistant, "assistant builds raw URLs via Get-OtaconRawFileUrl", fails)

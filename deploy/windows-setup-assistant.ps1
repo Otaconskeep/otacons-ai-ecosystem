@@ -42,6 +42,7 @@ $PreferredDistroAliases = @("Ubuntu-Otacon", "OtaconsKeep")
 $script:ForceInstall = [bool]($Force -or $Repair -or $Reinstall)
 $script:ChosenDistroMode = ""   # dedicated | reuse | ""
 $script:ReinstallRequested = [bool]$Reinstall
+$script:LastOtaconCoreRepairExit = -1
 # Last base URL that answered /api/branding (localhost or WSL IP).
 $script:OtaconOpenBase = "http://127.0.0.1:$Port"
 # AutoPilot: no I/R/C menus on the happy path - Otacon runs the install.
@@ -847,6 +848,7 @@ function Invoke-OtaconCoreRepair {
     $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -Wait -PassThru -NoNewWindow
     $code = 1
     if ($null -ne $proc -and $null -ne $proc.ExitCode) { $code = [int]$proc.ExitCode }
+    $script:LastOtaconCoreRepairExit = $code
     $ok = ($code -eq 0)
     Write-KeepLog "repair-otacon-core.ps1 exit=$code ok=$ok" -Stage "REPAIR"
     if ($ok) {
@@ -3494,17 +3496,38 @@ function Start-GuidedSetup {
                 $updated = [bool](Invoke-OtaconCoreRepair -Name $ubuntuOpen -Codec)
             }
             if (-not $updated) {
-                Write-KeepLog "READY path: Linux app update failed - not reporting success" -Level "ERROR" -Stage "REPAIR"
-                Write-OtaconSay "Installer scripts were present, but the Linux Otacon application did not update. That is a failed update - not READY." -Mood "alert"
-                Show-Box "UPDATE FAILED" @(
-                    "Windows Setup files may be new,",
-                    "but the Linux Otacon app revision did not change.",
-                    "",
-                    "Download Fix-Otacon-GPU.bat or Reinstall-Otacon.bat",
-                    "from the Otaconskeep website, then try again.",
-                    "",
-                    "Log: $LogFile"
-                ) -Color Red
+                $repairExit = 1
+                try { $repairExit = [int]$script:LastOtaconCoreRepairExit } catch { $repairExit = 1 }
+                Write-KeepLog ("READY path: Linux app update failed exit={0} - not reporting success" -f $repairExit) -Level "ERROR" -Stage "REPAIR"
+                # Exit 8 = E2E branding/chat after a successful revision sync - do NOT
+                # tell Josh the Linux app "did not update" (that message is for exit 4).
+                if ($repairExit -eq 8) {
+                    Write-OtaconSay "The Linux Otacon app did update, but health probes (branding/chat) did not pass. That is a failed update - not READY." -Mood "alert"
+                    Show-Box "UPDATE FAILED" @(
+                        "Linux app revision synced,",
+                        "but end-to-end health probes failed (branding/chat).",
+                        "",
+                        "Check repair-otacon-core.log for BRANDING_FAIL,",
+                        "CHAT_CAP_WARN, MODEL_PRESENT, or CHAT_*_FAIL.",
+                        "",
+                        "Re-run OtaconsKeep-Setup.bat once Otacon/Ollama",
+                        "have finished starting, or use Fix-Otacon-GPU.bat.",
+                        "",
+                        "Log: $LogFile",
+                        "Repair: $KeepDir\Logs\repair-otacon-core.log"
+                    ) -Color Red
+                } else {
+                    Write-OtaconSay "Installer scripts were present, but the Linux Otacon application did not update. That is a failed update - not READY." -Mood "alert"
+                    Show-Box "UPDATE FAILED" @(
+                        "Windows Setup files may be new,",
+                        "but the Linux Otacon app revision did not change.",
+                        "",
+                        "Download Fix-Otacon-GPU.bat or Reinstall-Otacon.bat",
+                        "from the Otaconskeep website, then try again.",
+                        "",
+                        "Log: $LogFile"
+                    ) -Color Red
+                }
                 return 1
             }
             Save-InstallerComplete

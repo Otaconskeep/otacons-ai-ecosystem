@@ -465,7 +465,8 @@ systemctl enable otacon.service 2>/dev/null || true
 systemctl enable otacon-tts.service 2>/dev/null || true
 systemctl restart otacon-tts.service 2>/dev/null || systemctl start otacon-tts.service 2>/dev/null || true
 systemctl restart otacon.service 2>/dev/null || systemctl start otacon.service 2>/dev/null || true
-sleep 2
+# Brief settle; e2e-health stage retries branding/capabilities for cold start.
+sleep 3
 
 ACTIVE="$(systemctl is-active otacon.service 2>/dev/null || echo inactive)"
 ENABLED="$(systemctl is-enabled otacon.service 2>/dev/null || echo disabled)"
@@ -486,13 +487,28 @@ esac
 
 echo "stage=e2e-health"
 E2E_OK=1
-brand="$(curl -fsS --max-time 8 "http://127.0.0.1:${PORT}/api/branding" 2>/dev/null || true)"
-echo "=== branding ==="
-echo "$brand"
-case "$brand" in
-  *'"product_name": "Otacon"'*|*"\"product_name\":\"Otacon\""*) echo "BRANDING_OK=1" ;;
-  *) echo "BRANDING_FAIL"; E2E_OK=0 ;;
-esac
+# Cold start after git reset + systemd restart: branding/capabilities often need
+# more than a single 8s/12s curl (first Ollama chat probe can take 30-90s).
+# Retry - do not fail Josh on a race while the app is still coming up.
+echo "=== branding (wait) ==="
+brand=""
+BRANDING_OK=0
+for i in $(seq 1 45); do
+  brand="$(curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/api/branding" 2>/dev/null || true)"
+  case "$brand" in
+    *'"product_name": "Otacon"'*|*"\"product_name\":\"Otacon\""*)
+      echo "BRANDING_OK=1 attempt=$i"
+      BRANDING_OK=1
+      break
+      ;;
+  esac
+  sleep 2
+done
+echo "$brand" | head -c 400; echo
+if [ "$BRANDING_OK" -ne 1 ]; then
+  echo "BRANDING_FAIL"
+  E2E_OK=0
+fi
 
 scan="$(curl -fsS --max-time 20 "http://127.0.0.1:${PORT}/api/scan" 2>/dev/null || true)"
 echo "=== scan (gpu) ==="
@@ -522,44 +538,69 @@ if grep -q 'OTACON_SKIP_NVIDIA_SMI=1' "$UNIT" 2>/dev/null; then
   E2E_OK=0
 fi
 
-caps="$(curl -fsS --max-time 12 "http://127.0.0.1:${PORT}/api/capabilities" 2>/dev/null || true)"
-echo "=== capabilities ==="
+echo "=== capabilities chat=ready (wait) ==="
+caps=""
+CHAT_CAP_OK=0
+for i in $(seq 1 45); do
+  # Long per-attempt timeout: /api/capabilities runs a real chat probe on first hit.
+  caps="$(curl -fsS --max-time 90 "http://127.0.0.1:${PORT}/api/capabilities" 2>/dev/null || true)"
+  case "$caps" in
+    *"\"chat\": \"ready\""*|*"\"chat\":\"ready\""*)
+      echo "CHAT_CAP_OK=1 attempt=$i"
+      CHAT_CAP_OK=1
+      break
+      ;;
+  esac
+  echo "CHAT_CAP_WAIT attempt=$i"
+  sleep 2
+done
 echo "$caps" | head -c 800; echo
-case "$caps" in
-  *"\"chat\": \"ready\""*|*"\"chat\":\"ready\""*) echo "CHAT_CAP_OK=1" ;;
-  *) echo "CHAT_CAP_WARN"; E2E_OK=0 ;;
-esac
+if [ "$CHAT_CAP_OK" -ne 1 ]; then
+  echo "CHAT_CAP_WARN"
+  E2E_OK=0
+fi
 
 # Model presence (configured model must exist in Ollama when Default Model path is live).
-MODEL_OK=1
+MODEL_OK=0
 WANT_MODEL="$(grep -E '^Environment=OTACON_LLM_MODEL=' "$UNIT" 2>/dev/null | head -1 | cut -d= -f3 || true)"
 WANT_MODEL="${WANT_MODEL:-qwen2.5:7b}"
 echo "WANT_MODEL=$WANT_MODEL"
-if command -v curl >/dev/null 2>&1; then
+for i in $(seq 1 15); do
   tags="$(curl -fsS --max-time 5 http://127.0.0.1:11434/api/tags 2>/dev/null || true)"
   if [ -n "$tags" ]; then
-    if echo "$tags" | grep -q "$WANT_MODEL"; then
-      echo "MODEL_PRESENT=1"
-    else
-      echo "MODEL_PRESENT=0"
-      MODEL_OK=0
+    if echo "$tags" | grep -Fq "$WANT_MODEL"; then
+      echo "MODEL_PRESENT=1 attempt=$i"
+      MODEL_OK=1
+      break
     fi
+    echo "MODEL_PRESENT=0 attempt=$i"
   else
-    echo "MODEL_TAGS_UNREACHABLE=1"
-    MODEL_OK=0
+    echo "MODEL_TAGS_UNREACHABLE=1 attempt=$i"
   fi
-fi
+  sleep 2
+done
 if [ "$MODEL_OK" -ne 1 ]; then E2E_OK=0; fi
 
-# Memory path probe (create conversation via API).
+# Memory path probe (create conversation via API) - retry briefly after restart.
+MEMORY_OK=0
 mem_body='{"agent_id":"agent_001","user_id":"repair-probe","title":"repair-mem"}'
-mem_resp="$(curl -fsS --max-time 20 -X POST "http://127.0.0.1:${PORT}/api/conversation" \
-  -H 'Content-Type: application/json' -d "$mem_body" 2>/dev/null || true)"
+for i in $(seq 1 10); do
+  mem_resp="$(curl -fsS --max-time 20 -X POST "http://127.0.0.1:${PORT}/api/conversation" \
+    -H 'Content-Type: application/json' -d "$mem_body" 2>/dev/null || true)"
+  case "$mem_resp" in
+    *'"id":'*|*"\"id\":"*)
+      echo "MEMORY_OK=1 attempt=$i"
+      MEMORY_OK=1
+      break
+      ;;
+  esac
+  sleep 2
+done
 echo "MEMORY_PROBE_RAW=${mem_resp}" | head -c 300; echo
-case "$mem_resp" in
-  *'"id":'*|*"\"id\":"*) echo "MEMORY_OK=1" ;;
-  *) echo "MEMORY_FAIL"; E2E_OK=0 ;;
-esac
+if [ "$MEMORY_OK" -ne 1 ]; then
+  echo "MEMORY_FAIL"
+  E2E_OK=0
+fi
 
 # Memory + Aria chat twice (honest probes; not bare HTTP 200).
 chat_once() {
