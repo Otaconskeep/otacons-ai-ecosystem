@@ -1295,6 +1295,23 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+# Avoid printing the full token into every log line; show a short hint only.
+TOKEN_HINT = '(see ~/.config/otacon/lan_token)'
+
+
+class OtaconHTTPServer(ThreadingHTTPServer):
+    """Workshop UI opens one connection per completed preview + /jobs poll.
+
+    With ~9 completed jobs that is ~10 simultaneous SYNs; default listen(5)
+    overflows (TcpExtListenOverflows) and Firefox shows dead images for healthy
+    PNGs. Class-level request_queue_size is applied before bind/listen —
+    assigning on the instance after ThreadingHTTPServer(...) is a no-op.
+    """
+
+    daemon_threads = True
+    request_queue_size = 128
+
+
 def main():
     global BIND_HOST, BIND_MODE, LAN_TOKEN
     BIND_HOST, BIND_MODE = resolve_bind_host()
@@ -1310,14 +1327,8 @@ def main():
         LAN_TOKEN = load_lan_token()
         print(f'Otacon local mode: http://127.0.0.1:{port} (not reachable from LAN)')
     # Threading so a hung GPU probe (WSL nvidia-smi D-state) cannot freeze Codec/UI.
-    # Larger accept backlog — preview polls + concurrent PNG proxies under burst.
-    httpd = ThreadingHTTPServer((BIND_HOST, port), Handler)
-    httpd.request_queue_size = 128
+    httpd = OtaconHTTPServer((BIND_HOST, port), Handler)
     httpd.serve_forever()
-
-
-# Avoid printing the full token into every log line; show a short hint only.
-TOKEN_HINT = '(see ~/.config/otacon/lan_token)'
 
 
 if __name__ == '__main__':
