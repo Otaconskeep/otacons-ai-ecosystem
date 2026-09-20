@@ -12,6 +12,8 @@
 
 ## Install Otacon Core (no experience required)
 
+**Watch the one-click install:** [Install Your Own Self Hosted AI With One Installer OtaconsKeep Lite](https://youtu.be/OitYjPlbTng)
+
 **You do not need to know Linux, Python, Docker, Rust, or WSL to do this.**
 Pick your OS:
 
