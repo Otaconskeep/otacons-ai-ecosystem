@@ -380,7 +380,7 @@ if not errorlevel 1 (
 )
 findstr /C:"git_as_owner" "%SCRIPT_DIR%deploy\repair-otacon-core.ps1" >nul
 if errorlevel 1 (
-  call :LOG "repair helper missing git_as_owner (repo-owner fix)"
+  call :LOG "repair helper missing git_as_owner - repo-owner fix"
   exit /b 2
 )
 findstr /C:"runuser -u" "%SCRIPT_DIR%deploy\repair-otacon-core.ps1" >nul
@@ -391,7 +391,7 @@ if errorlevel 1 (
 if exist "%SCRIPT_DIR%deploy\installer-revision.txt" (
   for /f "usebackq delims=" %%R in ("%SCRIPT_DIR%deploy\installer-revision.txt") do call :LOG "cached revision after refresh=%%R"
 )
-call :LOG "refreshed files verified (assistant + repair + wsl-bash-file + owner-git)"
+call :LOG "refreshed files verified - assistant + repair + wsl-bash-file + owner-git"
 for %%A in ("%ASSISTANT%") do if %%~zA LSS 40 (
   call :LOG "assistant too small"
   exit /b 2

@@ -195,59 +195,7 @@ echo.
 
 :FETCH_RETRY
 call :LOG "FETCH_RETRY begin"
-call :CHECK_INSTALLER_STALE
-set "CACHED_REV="
-set "PUBLISHED_REV="
-set "REFRESH_REQUIRED=1"
-if exist "%INST%\deploy\installer-revision.txt" (
-  for /f "usebackq delims=" %%R in ("%INST%\deploy\installer-revision.txt") do set "CACHED_REV=%%R"
-)
-if not defined CACHED_REV set "CACHED_REV=none"
-set "REV_TMP=%TEMP%\otacon-installer-rev-remote.txt"
-if exist "%REV_TMP%" del /f /q "%REV_TMP%" >nul 2>&1
-where curl.exe >nul 2>&1
-if errorlevel 1 goto CHECK_REV_PS
-curl.exe -fsSL --connect-timeout 8 --max-time 15 "%RAW%/deploy/installer-revision.txt" > "%REV_TMP%" 2>nul
-if exist "%REV_TMP%" for /f "usebackq delims=" %%R in ("%REV_TMP%") do set "PUBLISHED_REV=%%R"
-goto CHECK_REV_DONE
-:CHECK_REV_PS
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12}catch{}; try{Invoke-WebRequest -Uri ($env:RAW+'/deploy/installer-revision.txt') -OutFile $env:REV_TMP -UseBasicParsing -TimeoutSec 15; exit 0}catch{exit 1}"
-if exist "%REV_TMP%" for /f "usebackq delims=" %%R in ("%REV_TMP%") do set "PUBLISHED_REV=%%R"
-:CHECK_REV_DONE
-if not defined PUBLISHED_REV set "PUBLISHED_REV=unknown"
-if /I "!CACHED_REV!"=="none" (
-  set "REFRESH_REQUIRED=1"
-  exit /b 0
-)
-if /I "!PUBLISHED_REV!"=="unknown" (
-  set "REFRESH_REQUIRED=1"
-  call :LOG "published revision unknown - refresh required (will not use unverified stale cache)"
-  exit /b 0
-)
-if /I not "!CACHED_REV!"=="!PUBLISHED_REV!" (
-  set "REFRESH_REQUIRED=1"
-  exit /b 0
-)
-set "REFRESH_REQUIRED=0"
-exit /b 0
-
-:VERIFY_CACHED_HELPERS
-set "HELPERS_OK=0"
-if not exist "%ASSISTANT%" exit /b 0
-if not exist "%INST%\deploy\repair-otacon-core.ps1" exit /b 0
-if not exist "%INST%\deploy\wsl-bash-file.ps1" exit /b 0
-findstr /C:"Invoke-OtaconWslBashFile" "%INST%\deploy\repair-otacon-core.ps1" >nul
-if errorlevel 1 exit /b 0
-findstr /C:"bash -lc $bash" "%INST%\deploy\repair-otacon-core.ps1" >nul
-if not errorlevel 1 exit /b 0
-findstr /C:"git_as_owner" "%INST%\deploy\repair-otacon-core.ps1" >nul
-if errorlevel 1 exit /b 0
-findstr /C:"runuser -u" "%INST%\deploy\repair-otacon-core.ps1" >nul
-if errorlevel 1 exit /b 0
-set "HELPERS_OK=1"
-exit /b 0
-
-:ENSURE_FETCH_HELPER
+call :ENSURE_FETCH_HELPER
 set "RC=!ERRORLEVEL!"
 if defined DEBUG echo [DEBUG] ENSURE_FETCH_HELPER errorlevel=!RC!
 if "!RC!"=="0" goto FETCH_HELPER_OK
@@ -454,6 +402,58 @@ call :LOG "user chose RETRY"
 exit /b 0
 :SS_EXIT
 call :LOG "user chose EXIT"
+exit /b 0
+
+:CHECK_INSTALLER_STALE
+set "CACHED_REV="
+set "PUBLISHED_REV="
+set "REFRESH_REQUIRED=1"
+if exist "%INST%\deploy\installer-revision.txt" (
+  for /f "usebackq delims=" %%R in ("%INST%\deploy\installer-revision.txt") do set "CACHED_REV=%%R"
+)
+if not defined CACHED_REV set "CACHED_REV=none"
+set "REV_TMP=%TEMP%\otacon-installer-rev-remote.txt"
+if exist "%REV_TMP%" del /f /q "%REV_TMP%" >nul 2>&1
+where curl.exe >nul 2>&1
+if errorlevel 1 goto CHECK_REV_PS
+curl.exe -fsSL --connect-timeout 8 --max-time 15 "%RAW%/deploy/installer-revision.txt" > "%REV_TMP%" 2>nul
+if exist "%REV_TMP%" for /f "usebackq delims=" %%R in ("%REV_TMP%") do set "PUBLISHED_REV=%%R"
+goto CHECK_REV_DONE
+:CHECK_REV_PS
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12}catch{}; try{Invoke-WebRequest -Uri ($env:RAW+'/deploy/installer-revision.txt') -OutFile $env:REV_TMP -UseBasicParsing -TimeoutSec 15; exit 0}catch{exit 1}"
+if exist "%REV_TMP%" for /f "usebackq delims=" %%R in ("%REV_TMP%") do set "PUBLISHED_REV=%%R"
+:CHECK_REV_DONE
+if not defined PUBLISHED_REV set "PUBLISHED_REV=unknown"
+if /I "!CACHED_REV!"=="none" (
+  set "REFRESH_REQUIRED=1"
+  exit /b 0
+)
+if /I "!PUBLISHED_REV!"=="unknown" (
+  set "REFRESH_REQUIRED=1"
+  call :LOG "published revision unknown - refresh required - will not use unverified stale cache"
+  exit /b 0
+)
+if /I not "!CACHED_REV!"=="!PUBLISHED_REV!" (
+  set "REFRESH_REQUIRED=1"
+  exit /b 0
+)
+set "REFRESH_REQUIRED=0"
+exit /b 0
+
+:VERIFY_CACHED_HELPERS
+set "HELPERS_OK=0"
+if not exist "%ASSISTANT%" exit /b 0
+if not exist "%INST%\deploy\repair-otacon-core.ps1" exit /b 0
+if not exist "%INST%\deploy\wsl-bash-file.ps1" exit /b 0
+findstr /C:"Invoke-OtaconWslBashFile" "%INST%\deploy\repair-otacon-core.ps1" >nul
+if errorlevel 1 exit /b 0
+findstr /C:"bash -lc $bash" "%INST%\deploy\repair-otacon-core.ps1" >nul
+if not errorlevel 1 exit /b 0
+findstr /C:"git_as_owner" "%INST%\deploy\repair-otacon-core.ps1" >nul
+if errorlevel 1 exit /b 0
+findstr /C:"runuser -u" "%INST%\deploy\repair-otacon-core.ps1" >nul
+if errorlevel 1 exit /b 0
+set "HELPERS_OK=1"
 exit /b 0
 
 :ENSURE_FETCH_HELPER

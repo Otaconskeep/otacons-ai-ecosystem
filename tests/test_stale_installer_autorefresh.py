@@ -24,6 +24,14 @@ def main() -> int:
     repair = (ROOT / "deploy" / "repair-otacon-core.ps1").read_text(encoding="utf-8-sig")
 
     must("CHECK_INSTALLER_STALE" in setup, "Setup has CHECK_INSTALLER_STALE", fails)
+    must(":CHECK_INSTALLER_STALE" in setup, "Setup defines :CHECK_INSTALLER_STALE label", fails)
+    fetch_retry = setup.split(":FETCH_RETRY", 1)[1].split(":FETCH_HELPER_OK", 1)[0]
+    must("call :ENSURE_FETCH_HELPER" in fetch_retry,
+         "FETCH_RETRY calls ENSURE_FETCH_HELPER before download", fails)
+    must("call :CHECK_INSTALLER_STALE" not in fetch_retry,
+         "FETCH_RETRY does not inline stale-check body", fails)
+    must("(will not use unverified stale cache)" not in setup,
+         "Setup avoids CMD paren-trap log string inside IF blocks", fails)
     must("cached revision=" in setup, "Setup logs cached revision", fails)
     must("published revision=" in setup, "Setup logs published revision", fails)
     must("refresh required=" in setup, "Setup logs refresh required", fails)
