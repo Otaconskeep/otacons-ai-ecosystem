@@ -121,8 +121,13 @@ class TestP3A_Capabilities(P3LayoutCase):
 
     def test_discord_n8n_optional(self):
         self.assertEqual(probe_discord(self.layout).state, 'NEEDS_CREDENTIAL')
-        self.assertEqual(probe_n8n(self.layout).state, 'NOT_INSTALLED')
-        allc = probe_all_optional(self.layout)
+        # Isolate from any host n8n on :5678 so installer self-check stays deterministic.
+        with mock.patch(
+            'expansion.capabilities.n8n_sidecar.n8n_endpoint_healthy',
+            return_value=(False, 'down'),
+        ):
+            self.assertEqual(probe_n8n(self.layout).state, 'NOT_INSTALLED')
+            allc = probe_all_optional(self.layout)
         self.assertIn('video_studio', allc)
         self.assertIn('home_assistant', allc)
 

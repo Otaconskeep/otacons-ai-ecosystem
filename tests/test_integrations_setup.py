@@ -58,7 +58,12 @@ class IntegrationsCase(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_integrations_status_checklist(self):
-        st = integrations_status(self.layout)
+        # Isolate from any host n8n on :5678 (common on Keep / lab PCs).
+        with mock.patch(
+            'expansion.capabilities.n8n_sidecar.n8n_endpoint_healthy',
+            return_value=(False, 'down'),
+        ):
+            st = integrations_status(self.layout)
         self.assertTrue(st['ok'])
         ids = [x['id'] for x in st['recommended']]
         self.assertIn('discord', ids)
