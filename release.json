@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "c89f4fe22cca077f6d5ef0ae6b7d0aedb5a150dc",
+  "commit": "9fe892274596127a8269707c68d89959a8b1513f",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -39,23 +39,23 @@
     },
     {
       "path": "install_otacon.sh",
-      "sha256": "c04e6e3023e9f4fb9634d67f4036e38e4cbba676473f60fd015290f72744a033",
-      "bytes": 95788
+      "sha256": "188b235def1cd7ba1ecf6f3d72d057c3562adc12bd44ae7e82836ae73e334d2a",
+      "bytes": 96108
     },
     {
       "path": "install_otacon_expansion.sh",
-      "sha256": "c671db03462c2b201e314b78336d0f02ba20efd08abb6ac46b433d328757aab2",
-      "bytes": 28810
+      "sha256": "ba931f46c110a3c04dc4b8c84b20c571587be780a4cadae8c69bd73efc215807",
+      "bytes": 31373
     },
     {
       "path": "deploy/bootstrap-fetch.ps1",
-      "sha256": "6cfa00952624beaf5d7de0002a1106d911d68be69659441fadb33bd9f855686d",
-      "bytes": 23845
+      "sha256": "f3cde5ec01f21d23da7d9880124c2758fbac71b6caa89b4b520c7021e2bb5416",
+      "bytes": 23933
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
-      "sha256": "a0b4537c08d862ffd24c8ca62b5840ba1d904b7a48851688222209290460a8df",
-      "bytes": 177120
+      "sha256": "1e36f202836bda43bbec6c9ba58bfaeb1aaca83e62af06a4d529e3ba1e76c168",
+      "bytes": 177951
     },
     {
       "path": "deploy/repair-otacon-core.ps1",
@@ -64,8 +64,8 @@
     },
     {
       "path": "deploy/install-otacon-expansion.ps1",
-      "sha256": "5bcc0a72880a001d352dd2dfeeb1acc3a1dca423993cf41c336051a83785135a",
-      "bytes": 18107
+      "sha256": "bdf0ce31ad7f2a676fa3d704361dadf33c99844614f5a56620bba748bc557caa",
+      "bytes": 20475
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
@@ -91,6 +91,11 @@
       "path": "deploy/install-wake-task.ps1",
       "sha256": "a37be907402c1cfd12c10f5b6c16faf28f74f9793b746e9048ef6cd0ae10c00d",
       "bytes": 3107
+    },
+    {
+      "path": "deploy/install-desktop-launcher.ps1",
+      "sha256": "d6f57bc6584a1b21415f5e99412a79eebbc958310cf700a783ae6a52cc869857",
+      "bytes": 4380
     },
     {
       "path": "deploy/wake-otacon.ps1",
