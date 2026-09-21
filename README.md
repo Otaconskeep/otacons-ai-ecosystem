@@ -12,121 +12,57 @@
 
 ## Install Otacon Core (no experience required)
 
-**Canonical install pages (one-click + baby steps):**
-[otaconskeep.github.io → Install Lite](https://otaconskeep.github.io/#install-otacon) ·
-[otacon product page](https://otaconskeep.github.io/otacon/#install)
+**Canonical consumer install:** [otaconskeep.github.io → Install Lite](https://otaconskeep.github.io/#install-otacon)
+· [otacon product page](https://otaconskeep.github.io/otacon/#install)
 
-**Watch the one-click install:** [Install Your Own Self Hosted AI With One Installer OtaconsKeep Lite](https://youtu.be/OitYjPlbTng)
+**Watch the guided install:** [Install Your Own Self Hosted AI With One Installer OtaconsKeep Lite](https://youtu.be/OitYjPlbTng)
 
 **You do not need to know Linux, Python, Docker, Rust, or WSL to do this.**
-Two methods — pick one:
 
 | Method | Best for | What you do |
 |---|---|---|
-| **1 · One-click** | No terminal | Download Setup → double-click |
-| **2 · Baby steps** | Prefer copy-paste | Prerequisites → one CMD/Ubuntu line → clickable error fixes on the site |
+| **1 · Guided Windows Setup** | Most people | Download one file from the website → double-click |
+| **2 · Manual (step by step)** | Prefer copy-paste | Pick Windows or Linux on the site, then follow baby steps |
 
-### Method 1 · One-click (Windows)
+### Method 1 · Guided Windows Setup (recommended)
 
-1. Prefer the button on the [website](https://otaconskeep.github.io/#install-otacon) (**Download OtaconsKeep Setup**), or download [`OtaconsKeep-Setup.bat`](OtaconsKeep-Setup.bat) / [`install_otacon.bat`](install_otacon.bat) from this repo.
-2. Double-click it (do not type the filename into Command Prompt unless you `cd` there first).
+1. Open the [official install page](https://otaconskeep.github.io/#install-otacon).
+2. Click **Download OtaconsKeep Setup**.
+3. Double-click `OtaconsKeep-Setup.bat` in your Downloads folder.
+4. Approve the Windows administrator prompt if asked.
+5. Follow Setup until it says **OTACON IS READY**.
+6. Open [http://localhost:5757](http://localhost:5757).
 
-That's it. It checks whether WSL2 and an Ubuntu environment are already set
-up; if not, it sets them up for you, walks you through the one unavoidable
-manual step (a Windows restart and/or a one-time Ubuntu username/password,
-which is Microsoft's own requirement, not something any script can skip),
-then automatically continues and finishes the real install the moment
-that's done. You do not need to know what WSL or Ubuntu even are.
+First install typically takes **about 10–30 minutes**. Windows may restart once while enabling WSL; Setup resumes afterward (look for **WELCOME BACK**, or double-click the same Setup file again).
 
-**Install once, and Otacon starts itself from then on.** The installer sets
-Otacon up as a real background service and adds a small Windows task that
-wakes it at logon, so after that first install: shut your PC down, turn it
-back on tomorrow, sign in, and open `http://localhost:5757`: Otacon is
-already running. No terminal, no "start the server," nothing to remember.
+**Do not use browser Save As on the raw GitHub `.bat`.** Browsers and editors can change Windows line endings or encoding and break the installer. The Setup file itself detects that damage and asks you to re-download from the website.
 
-### Method 2 · Baby steps (copy-paste)
+Developers who want the repository should **clone** it or download the **[GitHub ZIP](https://github.com/Otaconskeep/otacons-ai-ecosystem/archive/refs/heads/main.zip)** and run `OtaconsKeep-Setup.bat` from the extracted folder — not Save As on a single raw file.
 
-#### Step 1 · Prerequisites (click through on the site for more)
+**Install once, and Otacon starts itself from then on.** Setup registers a background service and a Windows logon task so after reboot you open `http://localhost:5757` — no “start the server” step to remember.
 
-- Windows 10/11 **or** Ubuntu/Debian (WSL2 Ubuntu is fine on Windows)
-- Admin / `sudo` password (WSL sudo = Ubuntu password, not Windows PIN)
-- ~10+ GB free disk; first run often 15–45 minutes
-- Python / curl / git are installed for you on Method 1; only needed if you install by hand inside Ubuntu
+Setup handles WSL2 when needed, OtaconsKeep Core, hardware detection, Ollama, a VRAM-sized chat model, Genome Voice Trainer when supported, health checks, and auto-start.
 
-Full expandable checklist: [website baby steps](https://otaconskeep.github.io/#lite-prereqs)
+### Method 2 · Manual install — step by step
 
-#### Step 2 · One line
+Prefer the site’s **OS chooser** (Windows / Ubuntu / Advanced WSL) with clickable baby steps:
+[Manual install on the website](https://otaconskeep.github.io/#install-otacon).
 
-**Windows Command Prompt:**
+**Windows Command Prompt** (downloads the same website Setup file — preferred over raw GitHub):
 
 ```bat
 curl -L -o "%USERPROFILE%\Downloads\OtaconsKeep-Setup.bat" "https://otaconskeep.github.io/downloads/OtaconsKeep-Setup.bat" && start "" "%USERPROFILE%\Downloads\OtaconsKeep-Setup.bat"
 ```
 
-**Windows PowerShell:**
-
-```powershell
-irm https://otaconskeep.github.io/downloads/OtaconsKeep-Setup.bat -OutFile "$env:USERPROFILE\Downloads\OtaconsKeep-Setup.bat"; Start-Process "$env:USERPROFILE\Downloads\OtaconsKeep-Setup.bat"
-```
-
-**Linux / Ubuntu / WSL** — copy the block below exactly, paste it into a terminal, and press Enter:
+**Linux / Ubuntu / WSL** — paste into a terminal and press Enter:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/install_otacon.sh | bash
 ```
 
-**New to terminals? Here's the whole Linux path:**
+**New to terminals?** Open Terminal (or the Ubuntu app on Windows), paste, press Enter, type your Ubuntu password when asked (nothing appears — that is normal). First run often takes 10–30 minutes. When it prints `http://127.0.0.1:5757`, open that address.
 
-1. Open a terminal. (On Ubuntu Desktop: press the `Super`/Windows key, type
-   `terminal`, press Enter. On Windows, open the **Ubuntu** app after WSL is installed.)
-2. Click into the black window, then paste the command above (right-click →
-   Paste, or `Ctrl+Shift+V`).
-3. Press Enter.
-4. Wait. The first run takes 10-30 minutes: it's installing everything
-   needed (Python, build tools, Rust, and Otacon itself) and building the
-   app for your machine. It will ask for your password once, to install a
-   few system packages (this is normal; that's what `sudo` is for).
-5. When it finishes, it prints a web address (`http://127.0.0.1:5757`) and
-   tries to open it in your browser automatically. If it doesn't open on
-   its own, copy that address into your browser yourself.
-
-That's the entire Otacon install. It detects your GPU (if NVIDIA), installs
-Ollama, pulls a default chat model sized to your VRAM
-(`qwen2.5:1.5b` / `3b` / `7b` / `14b`), installs Genome Voice Trainer when
-possible, runs self-tests, builds a native `.deb` when enabled, and registers
-`otacon.service` to start on boot. When it finishes, open Otacon and chat.
-
-### If you see an error (clickable on the site)
-
-Open [If you see an error](https://otaconskeep.github.io/#lite-errors) on the website for expandable fixes. Common ones:
-
-<details>
-<summary>Windows protected your PC / SmartScreen</summary>
-
-More info → **Run anyway**. Prefer downloads from the Otaconskeep website (or the CMD one-liner above), not a browser Save-As from raw GitHub (that can corrupt `.bat` encoding).
-
-</details>
-
-<details>
-<summary>Restart required / WELCOME BACK</summary>
-
-Not a failure. Save work, restart, then re-run the same Setup if it does not resume. You should see **WELCOME BACK**.
-
-</details>
-
-<details>
-<summary>localhost:5757 blank / broken</summary>
-
-Do not open the UI until Setup says **OTACON IS READY**. Opening early looks broken even when install is fine.
-
-</details>
-
-<details>
-<summary>sudo password / Permission denied</summary>
-
-Use your **Ubuntu** password (nothing appears while typing). Not your Windows PIN.
-
-</details>
+Clickable “normal things you may see” and real error fixes live on the [install page](https://otaconskeep.github.io/#install-otacon).
 
 Skip pieces if you want a lighter install:
 
@@ -152,10 +88,10 @@ chmod +x install_otacon.sh
 ./install_otacon.sh
 ```
 
-### Windows/WSL manual path (only if the `.bat` doesn't work for you)
+### Windows/WSL manual path (only if Guided Setup doesn't work for you)
 
-`install_otacon.bat` automates all of this, so you shouldn't normally need
-it, but if you want to do it by hand or something goes wrong:
+Prefer re-downloading Setup from the [website](https://otaconskeep.github.io/#install-otacon) first.
+`OtaconsKeep-Setup.bat` / `install_otacon.bat` automate all of this; only do the steps below by hand if you need to:
 
 1. Open PowerShell **as Administrator**, run `wsl --install`, and restart
    if it asks you to.
