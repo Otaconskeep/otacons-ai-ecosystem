@@ -281,18 +281,18 @@ $env:USERPROFILE = '{td}'
             p = RS / name
             self.assertTrue(p.is_file(), name)
             text = p.read_text(encoding="utf-8", errors="replace")
-            self.assertIn("Invoke-MakeFriendInstaller.ps1", text)
-        launcher = RS / "Invoke-MakeFriendInstaller.ps1"
-        self.assertTrue(launcher.is_file())
-        ltxt = launcher.read_text(encoding="utf-8", errors="replace")
-        self.assertIn("Build-RemoteSupportInstaller.ps1", ltxt)
-        self.assertIn("CopyToDesktop", ltxt)
-        friend = RS / "Make-Friend-Installer.bat"
-        self.assertTrue(friend.is_file())
-        josh = (RS / "Make-Josh-Installer.bat").read_text(encoding="utf-8", errors="replace")
-        self.assertIn("SEND-TO-JOSH", josh)
+            self.assertIn("Otacon-Make-", text)
+            self.assertIn("raw.githubusercontent.com", text)
+        josh_ps1 = RS / "Make-Josh.ps1"
+        self.assertTrue(josh_ps1.is_file())
+        jtxt = josh_ps1.read_text(encoding="utf-8", errors="replace")
+        self.assertIn("Build-RemoteSupportInstaller.ps1", jtxt)
+        self.assertIn("SEND-TO-", jtxt)
+        self.assertIn("CopyToDesktop", jtxt)
+        chris_ps1 = RS / "Make-Chris.ps1"
+        self.assertTrue(chris_ps1.is_file())
         easy = (RS / "EASY-START.txt").read_text(encoding="utf-8", errors="replace")
-        self.assertIn("Make-Josh-Installer.bat", easy)
+        self.assertIn("Make-Josh.ps1", easy)
         self.assertIn("SEND-TO-JOSH.bat", easy)
 
 if __name__ == "__main__":

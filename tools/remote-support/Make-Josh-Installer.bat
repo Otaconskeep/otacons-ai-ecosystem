@@ -1,41 +1,17 @@
 @echo off
-REM ============================================================
-REM  OtaconsKeep — Make Josh installer
-REM  Double-click from ANYWHERE (Desktop, D:\, Downloads, repo).
-REM  Designed by Antonio G. Garcia // Otaconskeep
-REM ============================================================
 setlocal EnableExtensions
-title Make Josh installer - OtaconsKeep
-
+title OtaconsKeep - Make Josh installer
 echo.
-echo  Making Josh's remote-support installer...
-echo  Works from Desktop / D:\ / Downloads — no special folder needed.
+echo  OtaconsKeep: making Josh's installer...
+echo  Downloading latest script from GitHub, then starting...
 echo.
-
-set "LAUNCHER=%TEMP%\Otacon-Invoke-MakeFriendInstaller.ps1"
-set "NEAR=%~dp0"
-
-REM Prefer launcher next to this BAT (full repo). Else download from GitHub.
-if exist "%NEAR%Invoke-MakeFriendInstaller.ps1" (
-  copy /Y "%NEAR%Invoke-MakeFriendInstaller.ps1" "%LAUNCHER%" >nul
-) else (
-  echo  Downloading launcher from GitHub...
-  powershell -NoProfile -ExecutionPolicy Bypass -Command " [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/tools/remote-support/Invoke-MakeFriendInstaller.ps1' -OutFile $env:TEMP\Otacon-Invoke-MakeFriendInstaller.ps1 -UseBasicParsing "
-  if errorlevel 1 (
-    echo  [FAIL] Could not download launcher. Check internet / GitHub access.
-    pause
-    exit /b 1
-  )
-)
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "%LAUNCHER%" -Recipient "Josh" -Alias "otacon-josh" -SshUser "Josh" -NearbyDir "%NEAR%"
-set "EC=%ERRORLEVEL%"
-
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $p = Join-Path $env:TEMP 'Otacon-Make-Josh.ps1'; Write-Host ('Saving to ' + $p); Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/tools/remote-support/Make-Josh.ps1' -OutFile $p; if (-not (Test-Path $p)) { throw 'Download failed' }; Write-Host 'Download OK. Starting...'; & $p; exit $LASTEXITCODE } catch { Write-Host ''; Write-Host 'FAILED:' -ForegroundColor Red; Write-Host $_.Exception.Message -ForegroundColor Red; exit 1 }"
+set EC=%ERRORLEVEL%
 echo.
 if not "%EC%"=="0" (
-  echo  [FAIL] Could not build Josh's installer. Leave this window open and tell Xof.
+  echo  FAILED. Copy the red error text above and send it to Xof.
 ) else (
-  echo  Done. Send Desktop\SEND-TO-JOSH.bat to Josh.
+  echo  OK. Send Desktop\SEND-TO-JOSH.bat to Josh.
 )
 echo.
 pause

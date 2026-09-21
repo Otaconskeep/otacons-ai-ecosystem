@@ -1,15 +1,19 @@
-OTACONSKEEP — EASIEST PATH
+OTACONSKEEP — MAKE FRIEND INSTALLER
 
-YOU:
-1. Double-click Make-Josh-Installer.bat
-   (Desktop, D:\, Downloads, or the repo folder — all fine)
-2. Paste the Tailscale one-time key when asked
-3. Send Desktop\SEND-TO-JOSH.bat to Josh
+EASIEST (no repo folder needed):
 
-FRIEND:
-Run as administrator → Yes → Done
+1. Open PowerShell on YOUR PC
+2. Paste this whole line, press Enter:
 
-YOU AFTER:
-  ssh Josh@otacon-josh
+irm https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/tools/remote-support/Make-Josh.ps1 -OutFile $env:TEMP\Otacon-Make-Josh.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\Otacon-Make-Josh.ps1
 
-Same for Chris with Make-Chris-Installer.bat → SEND-TO-CHRIS.bat
+3. When asked, paste your Tailscale key
+4. Send Desktop\SEND-TO-JOSH.bat to Josh
+
+OR double-click Make-Josh-Installer.bat (same thing).
+
+Chris:
+irm https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem/main/tools/remote-support/Make-Chris.ps1 -OutFile $env:TEMP\Otacon-Make-Chris.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\Otacon-Make-Chris.ps1
+
+Friend: Run as administrator -> Yes -> Done
+You after: ssh Josh@otacon-josh
