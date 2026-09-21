@@ -509,6 +509,19 @@ YOU MUST (once):
   C) Paste the token in Expansion Ops -> Home Assistant Configure
 Re-run Expansion Setup if the container was skipped (Docker not ready yet).
 
+==============================================================================
+11) VOICE - TTS (Piper) / STT (Faster-Whisper)
+==============================================================================
+Setup auto-installs Python venv packages + Linux libs (ffmpeg, libsndfile,
+portaudio) and defaults OTACON_INSTALL_STT=1. Leave the window open while
+models download (first STT pull can take several minutes).
+If Preview is silent or mic transcription stays LIMITED:
+  A) Re-run OtaconsKeep Setup (do not close Stage 6 / 6.5t)
+  B) In WSL:  ffmpeg -version
+  C) Confirm Piper:  ss -ltn | grep 10200   (or Repair from Setup)
+  D) Optional skip only if you set OTACON_INSTALL_STT=0 yourself
+  E) Repair path: Setup --repair restores Piper TTS unit + spoken preview
+
 Discord: https://discord.gg/cZDeqECzX
 "@
     try {
@@ -3849,13 +3862,14 @@ function Step-InstallOtacon {
     Show-Stage6Panel -Started $started -Substep "Preparing Linux installer (root bootstrap)" -Phase "privileged" -GpuWin $gpuWin -GpuWsl $gpuWsl -LastProgress $started -ProgressPct 8
 
     # Never inject blank env values - Python int('') crashes (OTACON_CHAT_PORT="").
+    # Voice stack defaults ON: Piper TTS + Faster-Whisper STT + default LLM model.
     $envPairs = [ordered]@{
-        OTACON_INSTALL_DEFAULT_MODEL = $env:OTACON_INSTALL_DEFAULT_MODEL
-        OTACON_INSTALL_VOICE_TRAINER = $env:OTACON_INSTALL_VOICE_TRAINER
+        OTACON_INSTALL_DEFAULT_MODEL = $(if ([string]::IsNullOrWhiteSpace($env:OTACON_INSTALL_DEFAULT_MODEL)) { "1" } else { $env:OTACON_INSTALL_DEFAULT_MODEL })
+        OTACON_INSTALL_VOICE_TRAINER = $(if ([string]::IsNullOrWhiteSpace($env:OTACON_INSTALL_VOICE_TRAINER)) { "1" } else { $env:OTACON_INSTALL_VOICE_TRAINER })
         OTACON_LLM_MODEL             = $env:OTACON_LLM_MODEL
         OTACON_BUILD_NATIVE          = $env:OTACON_BUILD_NATIVE
         OTACON_LAN_MODE              = $env:OTACON_LAN_MODE
-        OTACON_INSTALL_STT           = $env:OTACON_INSTALL_STT
+        OTACON_INSTALL_STT           = $(if ([string]::IsNullOrWhiteSpace($env:OTACON_INSTALL_STT)) { "1" } else { $env:OTACON_INSTALL_STT })
         OTACON_CHAT_HOST             = $env:OTACON_CHAT_HOST
         OTACON_CHAT_PORT             = $(if ([string]::IsNullOrWhiteSpace($env:OTACON_CHAT_PORT)) { "$Port" } else { $env:OTACON_CHAT_PORT })
         OTACON_INSTALL_DIR           = $env:OTACON_INSTALL_DIR

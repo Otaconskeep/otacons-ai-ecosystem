@@ -1,0 +1,6 @@
+# Voice stack (TTS/STT) — installed by install_otacon.sh when defaults are on.
+# Linux also needs apt: ffmpeg libsndfile1 libportaudio2 portaudio19-dev python3-dev
+wyoming-piper>=2.5.0
+onnxruntime>=1.16.0
+faster-whisper>=1.0.0
+av>=10.0.0

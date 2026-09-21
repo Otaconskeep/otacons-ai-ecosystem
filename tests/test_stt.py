@@ -1,5 +1,6 @@
 import io, wave, unittest
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 from core.stt import TestSTTProvider, FasterWhisperProvider, normalize_wav, recommend
 from core.topology import Deployment, Host, Service
 from core.router import resolve
@@ -24,6 +25,32 @@ class STTTests(unittest.TestCase):
   self.assertEqual(recommend(SimpleNamespace(gpu_detection={'status':'error'},gpus=[]))['id'],'stt_small')
  def test_production_provider_does_not_fallback(self):
   self.assertNotEqual(FasterWhisperProvider().provider_id, TestSTTProvider.provider_id)
+ def test_faster_whisper_health_missing_package(self):
+  import builtins
+  real_import = builtins.__import__
+  def _deny(name, *a, **k):
+   if name == 'faster_whisper' or name.startswith('faster_whisper.'):
+    raise ImportError('blocked for test')
+   return real_import(name, *a, **k)
+  with patch('builtins.__import__', side_effect=_deny):
+   state, detail = FasterWhisperProvider().health()
+  self.assertEqual(state, 'STT_MODEL_MISSING')
+  self.assertIn('faster-whisper', detail)
+ def test_faster_whisper_transcribe_with_mock_model(self):
+  import core.stt as stt_mod
+  stt_mod._FW_CACHE.clear()
+  seg = SimpleNamespace(text=' hello world ')
+  info = SimpleNamespace(language='en', duration=0.1)
+  mock_model = MagicMock()
+  mock_model.transcribe.return_value = ([seg], info)
+  prov = FasterWhisperProvider('stt_small')
+  with patch.object(prov, 'health', return_value=('STT_READY', 'mocked')):
+   with patch.object(prov, '_load', return_value=mock_model):
+    result = prov.transcribe(normalize_wav(wav()))
+  self.assertEqual(result.text, 'hello world')
+  self.assertEqual(result.status, 'STT_READY')
+  self.assertEqual(result.provider, 'faster_whisper')
+  mock_model.transcribe.assert_called_once()
 if __name__=='__main__': unittest.main()
 
 class VoiceLoopTests(unittest.TestCase):

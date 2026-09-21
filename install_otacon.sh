@@ -47,7 +47,7 @@ set -Eeuo pipefail
 #   OTACON_BUILD_NATIVE=0           # default 0 for CORE; set 1 or use profile=desktop
 #   OTACON_INSTALL_DEB=0
 #   OTACON_LAUNCH_WIZARD=1
-#   OTACON_INSTALL_STT=0
+#   OTACON_INSTALL_STT=1            # default ON — Faster-Whisper + ffmpeg for speech-to-text
 #   OTACON_RUN_TESTS=1
 #   OTACON_INSTALL_VOICE_TRAINER=1   # set 0 to skip Genome Voice Trainer (GPU Piper)
 #   OTACON_INSTALL_DEFAULT_MODEL=1   # set 0 to skip Ollama + VRAM-sized default chat model
@@ -91,7 +91,7 @@ esac
 BUILD_NATIVE="${OTACON_BUILD_NATIVE:-$DEFAULT_BUILD_NATIVE}"
 INSTALL_DEB="${OTACON_INSTALL_DEB:-0}"
 LAUNCH_WIZARD="${OTACON_LAUNCH_WIZARD:-1}"
-INSTALL_STT="${OTACON_INSTALL_STT:-0}"
+INSTALL_STT="${OTACON_INSTALL_STT:-1}"
 RUN_TESTS="${OTACON_RUN_TESTS:-1}"
 INSTALL_VOICE_TRAINER="${OTACON_INSTALL_VOICE_TRAINER:-1}"
 # Default Model = Ollama + VRAM-tier chat pull (normal Otacon install). Alias: OTACON_INSTALL_OLLAMA.
@@ -890,7 +890,9 @@ install_apt_packages() {
 
   local APT_PACKAGES=(
     ca-certificates curl file git build-essential pkg-config
-    python3 python3-venv python3-pip libssl-dev zstd
+    python3 python3-venv python3-pip python3-dev libssl-dev zstd
+    # TTS / STT / media prerequisites (Piper + Faster-Whisper + voice tools)
+    ffmpeg libsndfile1 libportaudio2 portaudio19-dev
   )
   if [[ "$BUILD_NATIVE" == "1" ]]; then
     APT_PACKAGES+=(
@@ -1420,18 +1422,39 @@ if (( PY_MAJOR > 3 || (PY_MAJOR == 3 && PY_MINOR >= 13) )); then
 fi
 
 if [[ "$INSTALL_STT" == "1" ]]; then
-  log "Installing optional Faster-Whisper package"
-  "$VPIP" install --upgrade faster-whisper
-  log "STT functional gate (package alone is not READY)"
+  printf '\n'
+  printf ' ################################################################\n'
+  printf ' #  !!!  VOICE PREREQS - STT (FASTER-WHISPER)  !!!\n'
+  printf ' #  FIRST MODEL DOWNLOAD MAY TAKE SEVERAL MINUTES\n'
+  printf ' ################################################################\n'
+  printf '     Installing Faster-Whisper + pulling a CPU-friendly base model.\n'
+  printf '     Leave OtaconsKeep Setup open. ffmpeg was installed via apt.\n'
+  printf ' ################################################################\n'
+  printf '\n'
+  log "Installing Faster-Whisper + STT voice prerequisites into the Otacon venv"
+  if ! command_exists ffmpeg; then
+    warn "ffmpeg missing after apt phase — STT may fail until ffmpeg is installed"
+  else
+    ok "ffmpeg present: $(command -v ffmpeg)"
+  fi
+  REQ_VOICE="$INSTALL_DIR/requirements-voice.txt"
+  if [[ -f "$REQ_VOICE" ]]; then
+    "$VPIP" install --upgrade -r "$REQ_VOICE"
+  else
+    "$VPIP" install --upgrade 'faster-whisper>=1.0.0' 'av>=10.0.0' 'wyoming-piper>=2.5.0' 'onnxruntime>=1.16.0'
+  fi
+  # Ensure STT pieces specifically if voice file was partial / older tree
+  "$VPIP" install --upgrade 'faster-whisper>=1.0.0' 'av>=10.0.0'
+  log "STT functional gate (load base model + smoke transcribe)"
   if PYTHONPATH=. "$VPY" installer/backend_entry.py validate-stt --real; then
     ok "STT real validation passed"
   else
-    warn "STT package installed but functional readiness failed — capability will stay unavailable"
+    warn "STT package installed but functional readiness failed — capability may stay LIMITED until model finishes downloading"
     OPTIONAL_FAIL=1
   fi
 else
   warn "Faster-Whisper installation skipped (OTACON_INSTALL_STT=0)."
-  warn "Installing the package alone never marks STT READY; use OTACON_INSTALL_STT=1 and pass validate-stt --real."
+  warn "Re-run with OTACON_INSTALL_STT=1 for speech-to-text (default on modern Setup)."
 fi
 
 # ------------------------------------------------------------------------------
@@ -1556,11 +1579,17 @@ install_otacon_tts_piper() {
   mkdir -p "$data_dir"
 
   stage "6.5t" "START" "Installing Piper TTS (wyoming-piper) for spoken voice preview"
-  log "Installing wyoming-piper into the Otacon venv (CPU; spoken Preview requires this)"
-  if ! "$VPIP" install --upgrade 'wyoming-piper>=2.5.0'; then
+  log "Installing wyoming-piper + onnxruntime into the Otacon venv (CPU; spoken Preview requires this)"
+  if ! "$VPIP" install --upgrade 'wyoming-piper>=2.5.0' 'onnxruntime>=1.16.0'; then
     warn "wyoming-piper pip install failed — voice preview will not speak until Piper is installed"
     OPTIONAL_FAIL=1
     return 1
+  fi
+  if ! "$VPY" -c "import wyoming_piper, onnxruntime" 2>/dev/null; then
+    warn "wyoming-piper/onnxruntime import check failed after pip install"
+    OPTIONAL_FAIL=1
+  else
+    ok "wyoming-piper + onnxruntime import OK"
   fi
 
   # Pre-download the catalog voices used by Warm Male / Measured Female / Lessac.
