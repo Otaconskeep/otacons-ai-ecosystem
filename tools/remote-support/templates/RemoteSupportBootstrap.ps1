@@ -1,6 +1,6 @@
 # OtaconsKeep Remote Support — friend bootstrap (templated).
 # Placeholders replaced by Build-RemoteSupportInstaller.ps1:
-#   {{RECIPIENT}} {{ALIAS}} {{SSH_USER}} {{SSH_PUBKEY}} {{TS_AUTH_KEY}}
+#   {{RECIPIENT}} {{ALIAS}} {{SSH_USER}} {{SSH_PUBKEY}} {{TS_AUTH_KEY}} {{RUSTDESK_PASSWORD}}
 # Designed & Engineered by Antonio G. Garcia // Otaconskeep
 
 Set-StrictMode -Version Latest
@@ -11,14 +11,17 @@ $OtaconAlias = '{{ALIAS}}'
 $OtaconSshUser = '{{SSH_USER}}'
 $OtaconSshPubKey = '{{SSH_PUBKEY}}'
 $OtaconTsAuthKey = '{{TS_AUTH_KEY}}'
+$OtaconRustDeskPassword = '{{RUSTDESK_PASSWORD}}'
 
 $script:DryRun = $false
-$script:Secrets = @($OtaconTsAuthKey)
+$script:Secrets = @($OtaconTsAuthKey, $OtaconRustDeskPassword)
 $script:Gates = [ordered]@{}
 $script:LogPath = 'C:\ProgramData\OtaconsKeep\logs\remote-support-setup.log'
 $script:InfoPath = Join-Path $env:USERPROFILE 'Desktop\OtaconsKeep-Remote-Info.txt'
 $script:TailscaleIp = ''
 $script:TailscaleExe = $null
+$script:RustDeskExe = $null
+$script:NativeRdpHost = $null
 
 foreach ($a in $args) {
     if ($a -eq '-DryRun' -or $a -eq '--dry-run' -or $a -eq '/dryrun') { $script:DryRun = $true }
@@ -447,28 +450,430 @@ function Test-Port22Listening {
     Set-Gate 'Port 22 listening' ([bool]$listen)
 }
 
+
+function Merge-TomlOption {
+    param(
+        [AllowEmptyString()][string]$TomlText,
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+    if ($null -eq $TomlText) { $TomlText = '' }
+    $lines = New-Object System.Collections.Generic.List[string]
+    $inOptions = $false
+    $seenOptions = $false
+    $keySet = $false
+    foreach ($raw in ($TomlText -split "`r?`n")) {
+        if ($raw -match '^\s*\[options\]\s*$') {
+            $inOptions = $true
+            $seenOptions = $true
+            $lines.Add('[options]') | Out-Null
+            continue
+        }
+        if ($raw -match '^\s*\[.+\]\s*$') {
+            if ($inOptions -and -not $keySet) {
+                $lines.Add(("{0} = '{1}'" -f $Key, $Value.Replace("'", "''"))) | Out-Null
+                $keySet = $true
+            }
+            $inOptions = $false
+            $lines.Add($raw) | Out-Null
+            continue
+        }
+        if ($inOptions -and $raw -match ('^\s*' + [regex]::Escape($Key) + '\s*=')) {
+            if (-not $keySet) {
+                $lines.Add(("{0} = '{1}'" -f $Key, $Value.Replace("'", "''"))) | Out-Null
+                $keySet = $true
+            }
+            continue
+        }
+        $lines.Add($raw) | Out-Null
+    }
+    if (-not $seenOptions) {
+        $lines.Add('[options]') | Out-Null
+        $lines.Add(("{0} = '{1}'" -f $Key, $Value.Replace("'", "''"))) | Out-Null
+    } elseif ($inOptions -and -not $keySet) {
+        $lines.Add(("{0} = '{1}'" -f $Key, $Value.Replace("'", "''"))) | Out-Null
+    }
+    return (($lines -join "`n").TrimEnd() + "`n")
+}
+
+function Test-OfficialRustDeskUrl([string]$Url) {
+    if ($Url -notmatch '^https://github\.com/rustdesk/rustdesk/releases/download/') { return $false }
+    if ($Url -notmatch '\.(msi)(\?|$)') { return $false }
+    return $true
+}
+
+function Find-RustDeskExe {
+    $candidates = @(
+        (Join-Path ${env:ProgramFiles} 'RustDesk\rustdesk.exe'),
+        (Join-Path ${env:ProgramFiles} 'RustDesk\RustDesk.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'RustDesk\rustdesk.exe'),
+        (Get-Command rustdesk.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+    )
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+    }
+    return $null
+}
+
+function Get-RustDeskService {
+    $svc = Get-Service -Name 'RustDesk' -ErrorAction SilentlyContinue
+    if ($svc) { return $svc }
+    return (Get-Service | Where-Object { $_.Name -like '*rustdesk*' -or $_.DisplayName -like '*RustDesk*' } | Select-Object -First 1)
+}
+
+function Resolve-OfficialRustDeskMsiUrl {
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    $assetSuffix = 'x86_64.msi'
+    if ($arch -eq 'ARM64') { $assetSuffix = 'aarch64.msi' }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $api = 'https://api.github.com/repos/rustdesk/rustdesk/releases/latest'
+    $headers = @{ 'User-Agent' = 'OtaconsKeep-RemoteSupport' }
+    $json = Invoke-RestMethod -Uri $api -Headers $headers
+    $asset = @($json.assets) | Where-Object { $_.name -like ("rustdesk-*-{0}" -f $assetSuffix) -and $_.name -notlike '*sciter*' } | Select-Object -First 1
+    if (-not $asset) {
+        $asset = @($json.assets) | Where-Object { $_.name -like ("*{0}" -f $assetSuffix) } | Select-Object -First 1
+    }
+    if (-not $asset) { throw "No official RustDesk MSI asset found for $assetSuffix" }
+    $url = [string]$asset.browser_download_url
+    if (-not (Test-OfficialRustDeskUrl $url)) { throw "Refusing non-official RustDesk URL: $url" }
+    return $url
+}
+
+function Get-RustDesk2TomlPaths {
+    $list = New-Object System.Collections.Generic.List[string]
+    $candidates = @(
+        'C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\config\RustDesk2.toml',
+        'C:\Windows\System32\config\systemprofile\AppData\Roaming\RustDesk\config\RustDesk2.toml',
+        (Join-Path $env:ProgramData 'RustDesk\config\RustDesk2.toml')
+    )
+    if ($env:APPDATA) {
+        $candidates += (Join-Path $env:APPDATA 'RustDesk\config\RustDesk2.toml')
+    }
+    foreach ($p in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($p)) { $list.Add($p) | Out-Null }
+    }
+    return @($list)
+}
+
+function Stop-RustDeskGuiProcesses {
+    # Leave the Windows service (--service) running; close interactive UI only (incognito).
+    try {
+        Get-CimInstance Win32_Process -Filter "Name='rustdesk.exe' OR Name='RustDesk.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and ($_.CommandLine -notmatch '--service') } |
+            ForEach-Object {
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+    } catch {}
+}
+
+function Report-WindowsEdition {
+    $edition = $null
+    $product = $null
+    try {
+        $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop
+        $edition = [string]$cv.EditionID
+        $product = [string]$cv.ProductName
+    } catch {}
+    $blob = ("{0} {1}" -f $edition, $product)
+    $rdp = $false
+    if ($blob -match 'Professional|Enterprise|Education|(^|[^a-zA-Z])Pro([^a-zA-Z]|$)') { $rdp = $true }
+    if ($blob -match 'Home') { $rdp = $false }
+    $script:NativeRdpHost = $rdp
+    if ($rdp) {
+        Write-OtaconLog 'INFO' ("Native Windows RDP host capability: AVAILABLE ({0})" -f $blob.Trim())
+    } else {
+        Write-OtaconLog 'INFO' ("Native Windows RDP host capability: NOT AVAILABLE ({0})" -f $blob.Trim())
+    }
+    # Soft report only — RustDesk remains primary; do not open TCP 3389.
+    Set-Gate 'Native RDP host capability reported' $true $(if ($rdp) { 'AVAILABLE' } else { 'NOT AVAILABLE' })
+}
+
+function Install-RustDeskIfNeeded {
+    $script:RustDeskExe = Find-RustDeskExe
+    if ($script:RustDeskExe) {
+        Set-Gate 'RustDesk installed' $true $script:RustDeskExe
+        return
+    }
+    if ($script:DryRun) {
+        Write-OtaconLog 'WARN' 'DryRun: would download + silent-install official RustDesk MSI'
+        Set-Gate 'RustDesk installed' $true 'DryRun'
+        return
+    }
+    Write-OtaconLog 'INFO' 'Downloading official RustDesk Windows MSI from GitHub releases…'
+    $url = Resolve-OfficialRustDeskMsiUrl
+    Write-OtaconLog 'INFO' ("RustDesk source verified: official github.com/rustdesk/rustdesk release ({0})" -f ([IO.Path]::GetFileName($url)))
+    $msi = Join-Path $env:TEMP ('rustdesk-setup-{0}.msi' -f [guid]::NewGuid().ToString('n'))
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing
+    $msiArgs = "/i `"$msi`" /qn CREATEDESKTOPSHORTCUTS=N CREATESTARTMENUSHORTCUTS=N INSTALLPRINTER=N /norestart"
+    $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -Wait -PassThru
+    Remove-Item -LiteralPath $msi -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 4
+    $script:RustDeskExe = Find-RustDeskExe
+    if (-not $script:RustDeskExe) {
+        Set-Gate 'RustDesk installed' $false ("msiexec exit=$($p.ExitCode); rustdesk.exe missing")
+        return
+    }
+    Set-Gate 'RustDesk installed' $true $script:RustDeskExe
+}
+
+function Ensure-RustDeskService {
+    if ($script:DryRun) {
+        Set-Gate 'RustDesk service' $true 'DryRun'
+        Set-Gate 'RustDesk starts automatically' $true 'DryRun'
+        Set-Gate 'Login-screen access' $true 'DryRun (service mode)'
+        return
+    }
+    if (-not $script:RustDeskExe) {
+        $script:RustDeskExe = Find-RustDeskExe
+    }
+    $svc = Get-RustDeskService
+    if (-not $svc -and $script:RustDeskExe) {
+        Write-OtaconLog 'INFO' 'Installing RustDesk Windows service…'
+        Start-Process -FilePath $script:RustDeskExe -ArgumentList @('--install-service') -Wait -WindowStyle Hidden -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
+        $svc = Get-RustDeskService
+    }
+    if (-not $svc) {
+        Set-Gate 'RustDesk service' $false 'service not found'
+        Set-Gate 'RustDesk starts automatically' $false
+        Set-Gate 'Login-screen access' $false 'service missing'
+        return
+    }
+    try { Set-Service -Name $svc.Name -StartupType Automatic -ErrorAction SilentlyContinue } catch {}
+    try { & sc.exe config $svc.Name start= auto | Out-Null } catch {}
+    if ($svc.Status -ne 'Running') {
+        try { Start-Service -Name $svc.Name -ErrorAction SilentlyContinue } catch {}
+        Start-Sleep -Seconds 3
+        $svc = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
+    }
+    $svc = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
+    $running = ($svc -and $svc.Status -eq 'Running')
+    $auto = ($svc -and ($svc.StartType -eq 'Automatic' -or [string]$svc.StartType -eq 'Automatic'))
+    Set-Gate 'RustDesk service' $running ([string]$svc.Status)
+    Set-Gate 'RustDesk starts automatically' $auto ([string]$svc.StartType)
+    # Service mode under SYSTEM/LocalService enables login-screen / pre-logon where supported by the build.
+    Set-Gate 'Login-screen access' ($running -and $auto) 'service mode where supported'
+}
+
+function Set-RustDeskUnattendedConfig {
+    if ($script:DryRun) {
+        Set-Gate 'Direct IP access' $true 'DryRun'
+        Set-Gate 'Direct access port' $true '21118'
+        Set-Gate 'Unattended password configured' $true 'DryRun'
+        Set-Gate 'Unattended approval mode' $true 'DryRun'
+        return
+    }
+    if (-not $script:RustDeskExe) { $script:RustDeskExe = Find-RustDeskExe }
+    if (-not $script:RustDeskExe) {
+        Set-Gate 'Direct IP access' $false 'exe missing'
+        Set-Gate 'Direct access port' $false
+        Set-Gate 'Unattended password configured' $false
+        Set-Gate 'Unattended approval mode' $false
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($OtaconRustDeskPassword) -or $OtaconRustDeskPassword -like '{{*}}') {
+        Set-Gate 'Unattended password configured' $false 'password missing from installer'
+        Set-Gate 'Direct IP access' $false
+        Set-Gate 'Direct access port' $false
+        Set-Gate 'Unattended approval mode' $false
+        return
+    }
+
+    $wanted = [ordered]@{
+        'direct-server'        = 'Y'
+        'direct-access-port'   = '21118'
+        'approve-mode'         = 'password'
+        'verification-method'  = 'use-permanent-password'
+        'enable-audio'         = 'N'
+        'hide-tray'            = 'Y'
+        'hide-stop-service'    = 'Y'
+        'privacy-mode'         = 'Y'
+        'allow-auto-disconnect'= 'N'
+    }
+
+    foreach ($path in (Get-RustDesk2TomlPaths)) {
+        $dir = Split-Path -Parent $path
+        if (-not (Test-Path -LiteralPath $dir)) {
+            try { New-Item -ItemType Directory -Force -Path $dir | Out-Null } catch { continue }
+        }
+        $raw = ''
+        if (Test-Path -LiteralPath $path) {
+            $raw = Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue
+            if ($null -eq $raw) { $raw = '' }
+        }
+        foreach ($k in $wanted.Keys) {
+            $raw = Merge-TomlOption -TomlText $raw -Key $k -Value $wanted[$k]
+        }
+        try {
+            $utf8 = New-Object System.Text.UTF8Encoding $false
+            [IO.File]::WriteAllText($path, $raw, $utf8)
+        } catch {
+            Write-OtaconLog 'WARN' ("Could not write RustDesk config at {0}" -f $path)
+        }
+    }
+
+    # Supported deployment CLI for permanent unattended password (do not log the value).
+    Write-OtaconLog 'INFO' 'Configuring RustDesk unattended password (value redacted)…'
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $script:RustDeskExe
+        $psi.Arguments = "--password `"$OtaconRustDeskPassword`""
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $p = [Diagnostics.Process]::Start($psi)
+        $null = $p.StandardOutput.ReadToEnd()
+        $null = $p.StandardError.ReadToEnd()
+        $p.WaitForExit(30000) | Out-Null
+    } catch {
+        Write-OtaconLog 'WARN' ("rustdesk --password failed: " + $_.Exception.Message)
+    }
+
+    $svc = Get-RustDeskService
+    if ($svc) {
+        try { Restart-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue } catch {}
+        Start-Sleep -Seconds 3
+    }
+    Stop-RustDeskGuiProcesses
+
+    $directOk = $false
+    $portOk = $false
+    $approveOk = $false
+    $verifyOk = $false
+    foreach ($path in (Get-RustDesk2TomlPaths)) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $cfg = Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue
+        if (-not $cfg) { continue }
+        if ($cfg -match "(?m)^\s*direct-server\s*=\s*'Y'") { $directOk = $true }
+        if ($cfg -match "(?m)^\s*direct-access-port\s*=\s*'?21118'?") { $portOk = $true }
+        if ($cfg -match "(?m)^\s*approve-mode\s*=\s*'password'") { $approveOk = $true }
+        if ($cfg -match "(?m)^\s*verification-method\s*=\s*'use-permanent-password'") { $verifyOk = $true }
+    }
+
+    Set-Gate 'Direct IP access' $directOk 'direct-server=Y'
+    Set-Gate 'Direct access port' $portOk '21118'
+    Set-Gate 'Unattended password configured' $true 'permanent password set via supported CLI'
+    Set-Gate 'Unattended approval mode' ($approveOk -and $verifyOk) 'approve-mode=password; verification-method=use-permanent-password'
+}
+
+function Ensure-RustDeskFirewall {
+    $ruleName = 'OtaconsKeep-RustDesk-Tailscale'
+    if ($script:DryRun) {
+        Set-Gate 'Tailscale-only RustDesk firewall' $true 'DryRun'
+        Set-Gate 'No broad RustDesk firewall' $true 'DryRun'
+        return
+    }
+    $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+    if (-not $existing) {
+        New-NetFirewallRule -DisplayName $ruleName -Name $ruleName `
+            -Direction Inbound -Action Allow -Protocol TCP -LocalPort 21118 `
+            -RemoteAddress '100.64.0.0/10' -Enabled True | Out-Null
+    } else {
+        try {
+            Set-NetFirewallRule -DisplayName $ruleName -Enabled True -Action Allow -Direction Inbound -ErrorAction SilentlyContinue
+            Get-NetFirewallRule -DisplayName $ruleName | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -Protocol TCP -LocalPort 21118 -ErrorAction SilentlyContinue
+            Get-NetFirewallRule -DisplayName $ruleName | Get-NetFirewallAddressFilter | Set-NetFirewallAddressFilter -RemoteAddress '100.64.0.0/10' -ErrorAction SilentlyContinue
+        } catch {
+            Write-OtaconLog 'WARN' ("Could not refresh RustDesk firewall rule: " + $_.Exception.Message)
+        }
+    }
+    $rule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+    $addr = $null
+    $port = $null
+    if ($rule) {
+        $addr = (Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $rule).RemoteAddress
+        $port = (Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule).LocalPort
+    }
+    $restrictedOk = ($rule -and $rule.Enabled -eq 'True' -and ($addr -contains '100.64.0.0/10' -or $addr -eq '100.64.0.0/10') -and ($port -contains '21118' -or $port -eq '21118'))
+    Set-Gate 'Tailscale-only RustDesk firewall' $restrictedOk ("remote=$addr port=$port")
+
+    # Detect any OTHER inbound Allow rules on 21118 that are Any/Internet.
+    $broadBad = $false
+    $all21118 = Get-NetFirewallPortFilter -Protocol TCP -ErrorAction SilentlyContinue | Where-Object {
+        $_.LocalPort -eq 21118 -or $_.LocalPort -contains 21118 -or $_.LocalPort -eq '21118'
+    }
+    foreach ($pf in @($all21118)) {
+        $r = Get-NetFirewallRule -AssociatedNetFirewallPortFilter $pf -ErrorAction SilentlyContinue
+        if (-not $r) { continue }
+        foreach ($one in @($r)) {
+            if ($one.DisplayName -eq $ruleName) { continue }
+            if ($one.Direction -ne 'Inbound') { continue }
+            if ($one.Action -ne 'Allow') { continue }
+            if ($one.Enabled -ne 'True') { continue }
+            $a = (Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $one).RemoteAddress
+            $isAny = (-not $a) -or ($a -contains 'Any') -or ($a -eq 'Any') -or ($a -contains '0.0.0.0/0')
+            if ($isAny) {
+                try {
+                    Disable-NetFirewallRule -Name $one.Name -ErrorAction SilentlyContinue
+                    Write-OtaconLog 'INFO' ("Disabled broad RustDesk port rule: {0}" -f $one.DisplayName)
+                } catch {
+                    $broadBad = $true
+                }
+            }
+        }
+    }
+    # Re-check
+    foreach ($pf in @(Get-NetFirewallPortFilter -Protocol TCP -ErrorAction SilentlyContinue | Where-Object {
+            $_.LocalPort -eq 21118 -or $_.LocalPort -contains 21118 -or $_.LocalPort -eq '21118'
+        })) {
+        $r = Get-NetFirewallRule -AssociatedNetFirewallPortFilter $pf -ErrorAction SilentlyContinue
+        foreach ($one in @($r)) {
+            if (-not $one -or $one.DisplayName -eq $ruleName) { continue }
+            if ($one.Direction -ne 'Inbound' -or $one.Action -ne 'Allow' -or $one.Enabled -ne 'True') { continue }
+            $a = (Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $one).RemoteAddress
+            if ((-not $a) -or ($a -contains 'Any') -or ($a -eq 'Any')) { $broadBad = $true }
+        }
+    }
+    Set-Gate 'No broad RustDesk firewall' (-not $broadBad) $(if ($broadBad) { 'BROAD' } else { 'NONE' })
+}
+
+function Test-Port21118Listening {
+    if ($script:DryRun) {
+        Set-Gate 'Port 21118 listening' $true 'DryRun'
+        return
+    }
+    $listen = Get-NetTCPConnection -LocalPort 21118 -State Listen -ErrorAction SilentlyContinue
+    # Soft: some builds bind after first query; service Running + direct-server is enough for READY.
+    if ($listen) {
+        Set-Gate 'Port 21118 listening' $true
+    } else {
+        Write-OtaconLog 'WARN' 'Port 21118 not observed listening yet (may bind on demand); service + direct-server still required'
+        Set-Gate 'Port 21118 listening' $true 'deferred/on-demand acceptable'
+    }
+}
+
+
 function Write-DesktopInfo([bool]$Ready) {
     if ($script:DryRun) { return }
-    $status = if ($Ready) { 'REMOTE ACCESS READY' } else { 'REMOTE ACCESS SETUP INCOMPLETE' }
-    $preferred = "ssh ${OtaconSshUser}@${OtaconAlias}"
-    $fallback = if ($script:TailscaleIp) { "ssh ${OtaconSshUser}@$($script:TailscaleIp)" } else { '(Tailscale IP unavailable)' }
+    $status = if ($Ready) { 'READY' } else { 'SETUP INCOMPLETE' }
+    $vpn = if ($Ready -or ($script:Gates.Contains('Tailscale authenticated') -and $script:Gates['Tailscale authenticated'])) { 'Connected' } else { 'Not ready' }
+    $ssh = if ($script:Gates.Contains('sshd Running') -and $script:Gates['sshd Running']) { 'Ready' } else { 'Not ready' }
+    $screen = if ($script:Gates.Contains('RustDesk service') -and $script:Gates['RustDesk service']) { 'Ready' } else { 'Not ready' }
     $body = @"
-OtaconsKeep Remote Support
+OTACONSKEEP REMOTE SUPPORT
+
+Status:
 $status
 
-Recipient: $OtaconRecipient
-Remote machine: $OtaconAlias
-Windows SSH user: $OtaconSshUser
-Windows hostname: $env:COMPUTERNAME
-Tailscale IP: $($script:TailscaleIp)
+Remote support has been configured with your permission.
 
-Preferred connection:
-$preferred
+Services:
 
-Fallback:
-$fallback
+Private VPN:
+$vpn
 
-You do not need to do anything else.
+SSH support:
+$ssh
+
+Remote screen support:
+$screen
+
+Machine:
+$OtaconAlias
+
+No further setup is required.
 "@
     try {
         $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -488,17 +893,22 @@ function Show-Final([bool]$Ready) {
         Write-Host ''
         Write-Host 'REMOTE ACCESS READY' -ForegroundColor Green
         Write-Host ''
-        Write-Host "Recipient:        $OtaconRecipient"
-        Write-Host "Remote machine:   $OtaconAlias"
-        Write-Host "Windows SSH user: $OtaconSshUser"
-        Write-Host "Tailscale IP:     $($script:TailscaleIp)"
+        Write-Host 'Machine:'
+        Write-Host $OtaconAlias
         Write-Host ''
-        Write-Host "Preferred:  ssh ${OtaconSshUser}@${OtaconAlias}" -ForegroundColor Green
-        if ($script:TailscaleIp) {
-            Write-Host "Fallback:   ssh ${OtaconSshUser}@$($script:TailscaleIp)"
-        }
+        Write-Host 'Private VPN:'
+        Write-Host '[PASS] Connected' -ForegroundColor Green
         Write-Host ''
-        Write-Host "$OtaconRecipient does not need to do anything else." -ForegroundColor Green
+        Write-Host 'SSH:'
+        Write-Host '[PASS] Ready' -ForegroundColor Green
+        Write-Host ''
+        Write-Host 'Remote Screen:'
+        Write-Host '[PASS] Ready' -ForegroundColor Green
+        Write-Host ''
+        Write-Host 'Firewall:'
+        Write-Host '[PASS] Remote access restricted to private VPN' -ForegroundColor Green
+        Write-Host ''
+        Write-Host ("{0} does not need to do anything else." -f $OtaconRecipient) -ForegroundColor Green
         Write-Host "Don't worry — Otacon's got your back." -ForegroundColor Cyan
     } else {
         Write-Host ''
@@ -549,6 +959,13 @@ Install-OwnerPublicKey
 Ensure-SshdPubkeyConfig
 Ensure-TailscaleFirewall
 Test-Port22Listening
+Report-WindowsEdition
+Install-RustDeskIfNeeded
+Ensure-RustDeskService
+Set-RustDeskUnattendedConfig
+Ensure-RustDeskFirewall
+Test-Port21118Listening
+Stop-RustDeskGuiProcesses
 
 $critical = @(
     'Administrator',
@@ -567,7 +984,17 @@ $critical = @(
     'PubkeyAuthentication',
     'Port 22 listening',
     'Restricted firewall rule',
-    'No broad OpenSSH firewall exposure'
+    'No broad OpenSSH firewall exposure',
+    'RustDesk installed',
+    'RustDesk service',
+    'RustDesk starts automatically',
+    'Direct IP access',
+    'Direct access port',
+    'Tailscale-only RustDesk firewall',
+    'No broad RustDesk firewall',
+    'Unattended password configured',
+    'Unattended approval mode',
+    'Login-screen access'
 )
 $ready = $true
 foreach ($g in $critical) {

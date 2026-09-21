@@ -1,0 +1,3 @@
+# Never commit RustDesk unattended passwords or owner access records.
+*
+!.gitignore

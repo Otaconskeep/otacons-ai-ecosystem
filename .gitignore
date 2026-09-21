@@ -29,3 +29,7 @@ src-tauri/target/
 tools/remote-support/out/
 OtaconsKeep-Remote-Setup-*.bat
 **/OtaconsKeep-Remote-Setup-*.bat
+# Owner-side RustDesk unattended passwords + access records (never commit)
+tools/remote-support/generated/owner/*
+!tools/remote-support/generated/owner/.gitignore
+*-RemoteAccess.txt

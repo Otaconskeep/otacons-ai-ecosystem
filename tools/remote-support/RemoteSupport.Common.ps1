@@ -218,6 +218,94 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='%~f0'; $c=Get-Conten
     return ($parts -join $nl)
 }
 
+
+function New-OtaconRustDeskPassword {
+    # >= 128 bits CSPRNG; URL-safe-ish charset RustDesk accepts
+    $bytes = New-Object byte[] 24
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%*-_'
+    $chars = New-Object char[] $bytes.Length
+    for ($i = 0; $i -lt $bytes.Length; $i++) {
+        $chars[$i] = $alphabet[$bytes[$i] % $alphabet.Length]
+    }
+    return (-join $chars)
+}
+
+function Merge-OtaconTomlOption {
+    param(
+        [AllowEmptyString()][string]$TomlText,
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+    if ($null -eq $TomlText) { $TomlText = '' }
+    $lines = New-Object System.Collections.Generic.List[string]
+    $inOptions = $false
+    $seenOptions = $false
+    $keySet = $false
+    foreach ($raw in ($TomlText -split "`r?`n")) {
+        if ($raw -match '^\s*\[options\]\s*$') {
+            $inOptions = $true
+            $seenOptions = $true
+            $lines.Add('[options]') | Out-Null
+            continue
+        }
+        if ($raw -match '^\s*\[.+\]\s*$') {
+            if ($inOptions -and -not $keySet) {
+                $lines.Add(("{0} = '{1}'" -f $Key, $Value.Replace("'", "''"))) | Out-Null
+                $keySet = $true
+            }
+            $inOptions = $false
+            $lines.Add($raw) | Out-Null
+            continue
+        }
+        if ($inOptions -and $raw -match ('^\s*' + [regex]::Escape($Key) + '\s*=')) {
+            if (-not $keySet) {
+                $lines.Add(("{0} = '{1}'" -f $Key, $Value.Replace("'", "''"))) | Out-Null
+                $keySet = $true
+            }
+            continue
+        }
+        $lines.Add($raw) | Out-Null
+    }
+    if (-not $seenOptions) {
+        $lines.Add('[options]') | Out-Null
+        $lines.Add(("{0} = '{1}'" -f $Key, $Value.Replace("'", "''"))) | Out-Null
+        $keySet = $true
+    } elseif ($inOptions -and -not $keySet) {
+        $lines.Add(("{0} = '{1}'" -f $Key, $Value.Replace("'", "''"))) | Out-Null
+    }
+    return (($lines -join "`n").TrimEnd() + "`n")
+}
+
+function Test-OtaconOfficialRustDeskUrl {
+    param([Parameter(Mandatory = $true)][string]$Url)
+    if ($Url -notmatch '^https://github\.com/rustdesk/rustdesk/releases/download/') { return $false }
+    if ($Url -notmatch '\.(msi|exe)(\?|$)') { return $false }
+    return $true
+}
+
+function Get-OtaconWindowsEditionReport {
+    $edition = $null
+    try {
+        $edition = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop).EditionID
+    } catch {}
+    $product = $null
+    try {
+        $product = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop).ProductName
+    } catch {}
+    $blob = ("{0} {1}" -f $edition, $product)
+    $rdpHost = $false
+    if ($blob -match 'Professional|Enterprise|Education|Pro') { $rdpHost = $true }
+    if ($blob -match 'Home') { $rdpHost = $false }
+    return @{
+        EditionId = $edition
+        ProductName = $product
+        NativeRdpHostAvailable = $rdpHost
+    }
+}
+
+
 # Dot-sourced by builder/tests — Export-ModuleMember only when imported as module.
 if ($MyInvocation.MyCommand.ModuleName) {
     Export-ModuleMember -Function * -ErrorAction SilentlyContinue

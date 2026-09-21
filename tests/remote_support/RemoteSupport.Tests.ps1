@@ -65,4 +65,24 @@ Describe 'RemoteSupport.Common' {
         $bat | Should -Match 'Run as administrator'
         $bat | Should -Not -Match 'BEGIN OPENSSH PRIVATE KEY'
     }
+
+    It 'generates unique high-entropy RustDesk passwords' {
+        $a = New-OtaconRustDeskPassword
+        $b = New-OtaconRustDeskPassword
+        ($a.Length -ge 16) | Should -BeTrue
+        $a | Should -Not -Be $b
+    }
+
+    It 'merges RustDesk toml options without duplicating keys' {
+        $t = Merge-OtaconTomlOption -TomlText '' -Key 'direct-server' -Value 'Y'
+        $t = Merge-OtaconTomlOption -TomlText $t -Key 'approve-mode' -Value 'password'
+        $t = Merge-OtaconTomlOption -TomlText $t -Key 'direct-server' -Value 'Y'
+        ([regex]::Matches($t, 'direct-server')).Count | Should -Be 1
+        $t | Should -Match "approve-mode = 'password'"
+    }
+
+    It 'accepts only official RustDesk release URLs' {
+        (Test-OtaconOfficialRustDeskUrl -Url 'https://github.com/rustdesk/rustdesk/releases/download/1.4.9/rustdesk-1.4.9-x86_64.msi') | Should -BeTrue
+        (Test-OtaconOfficialRustDeskUrl -Url 'https://cdn.example/rustdesk.msi') | Should -BeFalse
+    }
 }
