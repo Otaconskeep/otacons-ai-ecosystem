@@ -30,6 +30,7 @@ class HomeAssistantSidecarTests(unittest.TestCase):
             ),
             'OTACON_HA_URL': '',
             'OTACON_HA_TOKEN': '',
+            'OTACON_HA_DOCKER_WAIT': '0',
         }
         self._env_patch = mock.patch.dict('os.environ', env, clear=False)
         self._env_patch.start()
