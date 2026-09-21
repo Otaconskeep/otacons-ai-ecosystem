@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "bf6f1ea26c6a796ee659bf661a4681ed09f5681c",
+  "commit": "e9a8a0b1ae8306ea8884b5b6d325323165485667",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -10,7 +10,7 @@
   "python_preferred": "3.12",
   "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on 'main').",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
-  "installer_revision": "c3ba9d956c1bf822a64302fd54dc08a10bd55030",
+  "installer_revision": "e9a8a0b1ae8306ea8884b5b6d325323165485667",
   "files": [
     {
       "path": "install_otacon.bat",
@@ -54,8 +54,8 @@
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
-      "sha256": "02adb128f7d4a8f52cca05788371d902ad6407a101cd9a96895cbaf2e32d671f",
-      "bytes": 212242
+      "sha256": "d7ca976e73781a5d0215e1a9ac5f21eb038e4501fd5c3009e36970d8a3da98fe",
+      "bytes": 222877
     },
     {
       "path": "deploy/repair-otacon-core.ps1",
@@ -64,8 +64,8 @@
     },
     {
       "path": "deploy/install-otacon-expansion.ps1",
-      "sha256": "b94957db5ec5be055b1f109697646f101aa8d3c035a409e64d1abb50c68446fa",
-      "bytes": 32194
+      "sha256": "d253d70465362b52e277c56360875ee28a4e3b579de444407674ab6fb10e8c18",
+      "bytes": 38151
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
