@@ -218,6 +218,19 @@ fi
 if [[ "$_wsl_net_ok" != "1" ]]; then
   echo "EXP_FAIL=wsl_network"
   echo "EXP_FAIL_DETAIL=cannot_resolve_github"
+  printf '\n'
+  printf ' ################################################################\n'
+  printf ' #  !!!  ACTION REQUIRED - NETWORK  !!!\n'
+  printf ' #  WSL CANNOT REACH GITHUB (WINDOWS MAY STILL WORK)\n'
+  printf ' ################################################################\n'
+  printf '     Windows downloads and WSL networking are SEPARATE stacks.\n'
+  printf '     YOU MUST: fix WSL DNS/default route / VPN / .wslconfig, then:\n'
+  printf '       wsl --shutdown\n'
+  printf '       ping -c2 github.com   (inside Ubuntu)\n'
+  printf '     Then re-run Expansion Setup.\n'
+  printf '     Guide: %%LOCALAPPDATA%%\\OtaconsKeep\\TROUBLESHOOTING.txt section 2\n'
+  printf ' ################################################################\n'
+  printf '\n'
   die "WSL/Linux cannot reach github.com (no DNS/default route). Windows may still download fine — these are separate stacks. Fix WSL networking (default route / .wslconfig / VPN adapters), then rerun Expansion. Log: $INSTALL_LOG"
 fi
 ok "WSL/Linux can resolve github.com"
@@ -544,6 +557,33 @@ if [[ -n "${VPY:-}" ]] && [[ -f "$INSTALL_DIR/core/hardware_profile.py" ]]; then
   EXP_STUDIO_AUTO="$(printf '%s\n' "$STUDIO_OUT" | sed -n '3p')"
   EXP_STUDIO_ASSETS="$(printf '%s\n' "$STUDIO_OUT" | sed -n '4p')"
   ok "Studio profile=${EXP_STUDIO_PROFILE:-?} comfy=${EXP_STUDIO_COMFY:-?} auto=${EXP_STUDIO_AUTO:-?} assets=${EXP_STUDIO_ASSETS:-none}"
+  case "${EXP_STUDIO_PROFILE:-}" in
+    *LTX2*|*24GB*|*32GB*)
+      _free_gb="$(df -Pk "$OWNER_HOME" 2>/dev/null | awk 'NR==2{printf "%.0f", $4/1024/1024}')"
+      if [[ -n "${_free_gb:-}" ]] && [[ "$_free_gb" -lt 100 ]]; then
+        printf '\n'
+        printf ' ################################################################\n'
+        printf ' #  !!!  ACTION REQUIRED - DISK  !!!\n'
+        printf ' #  LTX-2 / 24GB+ STUDIO NEEDS ~100 GB FREE\n'
+        printf ' ################################################################\n'
+        printf '     Free space near home: %s GB (need ~100 GB for LTX packs).\n' "$_free_gb"
+        printf '     YOU MUST free space; keep models in WSL/Docker (not /mnt/c).\n'
+        printf ' ################################################################\n'
+        printf '\n'
+        warn "Low disk for LTX-2 path — pack downloads may fail until space is freed."
+      fi
+      printf '\n'
+      printf ' ################################################################\n'
+      printf ' #  !!!  NOTE - VIDEO ENGINE  !!!\n'
+      printf ' #  PROFILE SELECTED LTX-2 (24GB+ / RTX 4090 CLASS)\n'
+      printf ' ################################################################\n'
+      printf '     Packs may download LTX-2 while Workshop video still uses Wan\n'
+      printf '     until the LTX submitter ships. If video asks for Wan packs,\n'
+      printf '     update Expansion + see TROUBLESHOOTING.txt section 9.\n'
+      printf ' ################################################################\n'
+      printf '\n'
+      ;;
+  esac
   # Kick hardware-matched creative packs (Z-Image + video + music) in the background
   # when this PC is auto-install eligible. Does not wait for multi-GB downloads.
   if [[ "${EXP_STUDIO_AUTO:-0}" == "1" ]]; then

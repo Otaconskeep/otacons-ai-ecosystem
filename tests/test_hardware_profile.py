@@ -8,8 +8,11 @@ from pathlib import Path
 from core.hardware_profile import (
     classify_studio_profile,
     comfy_gpu_image_candidates,
+    detect_studio_profile,
+    infer_sku_vram_gb,
     profile_asset_manifest,
     resolve_comfy_gpu_image,
+    resolve_vram_gb,
 )
 
 
@@ -234,6 +237,54 @@ class ComfyGpuImageTagTests(unittest.TestCase):
         self.assertNotIn('yanwk/comfyui-boot:cu124"', text)
         self.assertNotIn(':-yanwk/comfyui-boot:cu124}', text)
         self.assertIn('OTACON_COMFY_GPU_IMAGE', text)
+
+    def test_infer_sku_vram_4090_and_env_safe_name(self):
+        self.assertEqual(infer_sku_vram_gb('NVIDIA GeForce RTX 4090'), 24.0)
+        self.assertEqual(infer_sku_vram_gb('NVIDIA_GeForce_RTX_4090'), 24.0)
+        self.assertEqual(infer_sku_vram_gb('rtx4090'), 24.0)
+        self.assertEqual(infer_sku_vram_gb('NVIDIA GPU'), 0.0)
+        v, src = resolve_vram_gb(0.0, 'RTX 4090')
+        self.assertEqual(v, 24.0)
+        self.assertEqual(src, 'sku_table')
+        v2, src2 = resolve_vram_gb(23.5, 'RTX 4090')
+        self.assertEqual(v2, 23.5)
+        self.assertEqual(src2, 'measured')
+
+    def test_detect_studio_profile_sku_when_vram_zero(self):
+        # /proc-style detection: model known, memory unknown → still 24GB LTX-2.
+        class _G:
+            model = 'NVIDIA GeForce RTX 4090'
+            vram_gb = 0.0
+
+        class _H:
+            gpus = [_G()]
+            ram_gb = 64.0
+            free_storage_gb = 500.0
+            gpu_detection = {'status': 'detected', 'message': 'proc'}
+
+        p = detect_studio_profile(_H())
+        self.assertTrue(p.profile_id.startswith('24GB'))
+        self.assertTrue(p.ltx2_eligible)
+        self.assertEqual(p.marketed_vram_gb, 24.0)
+        self.assertTrue(any('sku' in n for n in p.notes))
+
+    def test_detect_studio_profile_windows_hint_env(self):
+        os.environ['OTACON_WINDOWS_GPU_HINT'] = 'NVIDIA GeForce RTX 4090'
+        os.environ['OTACON_WINDOWS_GPU_VRAM_GB'] = '24.0'
+        try:
+            class _H:
+                gpus = []
+                ram_gb = 64.0
+                free_storage_gb = 500.0
+                gpu_detection = {'status': 'none', 'message': 'No supported GPU detected'}
+
+            p = detect_studio_profile(_H())
+            self.assertTrue(p.profile_id.startswith('24GB'))
+            self.assertTrue(p.ltx2_eligible)
+            self.assertTrue(any('Windows reports' in w for w in p.warnings))
+        finally:
+            os.environ.pop('OTACON_WINDOWS_GPU_HINT', None)
+            os.environ.pop('OTACON_WINDOWS_GPU_VRAM_GB', None)
 
 
 if __name__ == '__main__':

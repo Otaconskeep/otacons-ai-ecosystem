@@ -674,11 +674,13 @@ def _wait_docker_ready(
                 state,
                 DOCKER_MISSING,
                 aria=(
-                    'Video Studio needs Docker Desktop. Install Docker Desktop for Windows '
-                    'with the WSL2 backend, then click Set Up Video Studio again.'
+                    'Video Studio needs Docker Desktop. OtaconsKeep Setup normally '
+                    'installs it automatically — re-run Expansion Setup, or install '
+                    'Docker Desktop for Windows with the WSL2 backend, then click '
+                    'Set Up Video Studio again.'
                 ),
                 message='Docker Desktop is not installed.',
-                user_action='Install Docker Desktop, then click Set Up Video Studio.',
+                user_action='Re-run Expansion Setup (auto-installs Docker) or install Docker Desktop, then Set Up again.',
                 error=docker.get('detail') or '',
                 technical=json.dumps(docker)[:1500],
                 layout=layout,

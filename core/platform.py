@@ -193,9 +193,83 @@ def detect():
    gpu_message = 'GPU status unavailable'
   elif gpu_status == 'none':
    gpu_message = 'No supported GPU detected'
+ # When /proc names the card but memory is unknown, fill marketed VRAM from
+ # the desktop SKU table (e.g. RTX 4090 → 24) so Studio/Codec do not look
+ # like "no hardware" / 0 GB on a high-end card.
+ if g:
+  try:
+   from core.hardware_profile import infer_sku_vram_gb
+  except Exception:  # pragma: no cover
+   infer_sku_vram_gb = None  # type: ignore[assignment]
+  if infer_sku_vram_gb is not None:
+   enriched = False
+   for gpu in g:
+    if float(getattr(gpu, 'vram_gb', 0.0) or 0.0) > 0:
+     continue
+    hint = float(infer_sku_vram_gb(getattr(gpu, 'model', '') or '') or 0.0)
+    if hint <= 0:
+     continue
+    gpu.vram_gb = hint
+    gpu.capability = capability(hint)
+    enriched = True
+   if enriched and 'sku' not in (gpu_message or '').lower():
+    gpu_message = (gpu_message or 'GPU detected') + ' (VRAM inferred from SKU).'
+ # Windows Setup / bootstrap hint: keep Codec moving when WSL passthrough is
+ # still dark but Windows already named an RTX card.
+ if not g:
+  hint_model, hint_vram, hint_src = _windows_gpu_hint()
+  if hint_model:
+   try:
+    from core.hardware_profile import infer_sku_vram_gb
+    if hint_vram <= 0:
+     hint_vram = float(infer_sku_vram_gb(hint_model) or 0.0)
+   except Exception:
+    pass
+   g = [GPU('gpu_001', 'nvidia', hint_model, float(hint_vram or 0.0), capability(float(hint_vram or 0.0)))]
+   gpu_status = 'detected'
+   gpu_message = f'Detected NVIDIA GPU via {hint_src} (WSL nvidia-smi not ready).'
  h=Hardware(platform.system(),platform.processor() or platform.machine(),os.cpu_count() or 1,ram,free,g)
  h.gpu_detection={'status':gpu_status,'message':gpu_message,'nvidia_smi':(_resolve_nvidia_smi() or '') if not skip else '', 'skipped': skip}
  return h
+
+
+def _windows_gpu_hint() -> tuple[str, float, str]:
+  """Return (model, vram_gb, source) from env or bootstrap-hardware.env."""
+  model = (os.environ.get('OTACON_WINDOWS_GPU_HINT') or '').strip()
+  vram = 0.0
+  try:
+   vram = float(os.environ.get('OTACON_WINDOWS_GPU_VRAM_GB') or 0.0)
+  except (TypeError, ValueError):
+   vram = 0.0
+  src = 'OTACON_WINDOWS_GPU_HINT' if model else ''
+  if model:
+   return model, vram, src
+  # Persist across reboots: installer writes bootstrap-hardware.env
+  for base in (
+    Path.home() / '.config' / 'otacon' / 'bootstrap-hardware.env',
+    Path('/root/.config/otacon/bootstrap-hardware.env'),
+  ):
+    if not base.is_file():
+      continue
+    try:
+      data = {}
+      for line in base.read_text(encoding='utf-8', errors='replace').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+          continue
+        k, v = line.split('=', 1)
+        data[k.strip()] = v.strip().strip('"').strip("'")
+      name = data.get('OTACON_WINDOWS_GPU_HINT') or data.get('OTACON_BOOTSTRAP_GPU_NAME') or ''
+      if not name or name.lower() in ('none detected', 'none', 'cpu', 'n/a'):
+        continue
+      try:
+        vb = float(data.get('OTACON_WINDOWS_GPU_VRAM_GB') or data.get('OTACON_BOOTSTRAP_GPU_VRAM_GB') or 0.0)
+      except (TypeError, ValueError):
+        vb = 0.0
+      return name, vb, f'bootstrap:{base}'
+    except OSError:
+      continue
+  return '', 0.0, ''
 
 
 def as_dict(h):

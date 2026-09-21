@@ -286,11 +286,185 @@ Write-OtaconSay "Initializing relationships..." "work"
 Write-OtaconSay "Preparing journals and diaries..." "work"
 Write-OtaconSay "Bringing the agent roster online..." "work"
 
+# Shared risk guide + medium/high preflight (network / disk / Docker).
+$guidePath = Join-Path $KeepDir "TROUBLESHOOTING.txt"
+$guideBody = @"
+OTACONSKEEP EXPANSION - QUICK TROUBLESHOOTING
+Generated: $(Get-Date -Format o)
+Log: $LogFile
+
+1) NETWORK (WSL cannot reach GitHub while Windows works)
+   - Disconnect extra VPNs temporarily; fix Hyper-V dead routes
+   - wsl --shutdown then: ping github.com inside Ubuntu
+   - See also Lite Setup TROUBLESHOOTING.txt section 2
+
+2) DISK (LTX-2 / 24GB GPUs need ~100 GB free)
+   - Free space on C: / WSL drive; avoid storing models on /mnt/c
+
+3) DOCKER (Video Studio / Comfy)
+   - Setup tries to install Docker Desktop automatically via winget
+   - If that fails: install from docker.com; enable WSL Integration + GPU
+   - docker version inside your Ubuntu distro
+   - Leave Docker Desktop Running before Set Up Video Studio
+
+4) ENTITLEMENT / PREMIUM LOGIN
+   - Exact username/email; hard-refresh Codec; re-run Expansion after login
+
+5) GPU
+   - Fix-Otacon-GPU.bat; never install Linux nvidia drivers inside WSL
+
+Discord: https://discord.gg/cZDeqECzX
+"@
+try {
+    [System.IO.File]::WriteAllText($guidePath, $guideBody, (New-Object System.Text.UTF8Encoding $false))
+} catch {}
+
+$netOk = $false
+try {
+    $netProbe = 'set +e; (getent hosts github.com >/dev/null 2>&1 && echo OK); (curl -fsSI --max-time 8 https://github.com >/dev/null 2>&1 && echo OK)'
+    $netOut = & wsl.exe -d $distro -- bash -lc $netProbe 2>$null
+    if (($netOut | Out-String) -match 'OK') { $netOk = $true }
+} catch {}
+if (-not $netOk) {
+    Write-Host ""
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host " #  !!!  ACTION REQUIRED - NETWORK  !!!" -ForegroundColor Red
+    Write-Host " #  WSL CANNOT REACH GITHUB" -ForegroundColor Yellow
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host "     Expansion will likely fail until WSL can reach github.com." -ForegroundColor White
+    Write-Host "  >>> YOU MUST: fix WSL DNS/VPN/route (see TROUBLESHOOTING.txt), then retry" -ForegroundColor Yellow
+    Write-Host ("  Guide: {0}" -f $guidePath) -ForegroundColor DarkCyan
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ""
+    try { Write-Host "  Press Enter to try Expansion anyway..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 5 }
+}
+
+$freeGb = -1
+try {
+    $drv = Get-PSDrive -Name C -ErrorAction SilentlyContinue
+    if ($drv) { $freeGb = [math]::Round(([double]$drv.Free) / 1GB, 1) }
+} catch {}
+if ($freeGb -ge 0 -and $freeGb -lt 100) {
+    Write-Host ""
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host " #  !!!  ACTION REQUIRED - DISK  !!!" -ForegroundColor Red
+    Write-Host (" #  LOW FREE SPACE ON C: (~{0} GB) - LTX NEEDS ~100 GB" -f $freeGb) -ForegroundColor Yellow
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host "  >>> YOU MUST: free disk space before large Studio pack downloads" -ForegroundColor Yellow
+    Write-Host ("  Guide: {0}" -f $guidePath) -ForegroundColor DarkCyan
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ""
+    try { Write-Host "  Press Enter to continue anyway..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 4 }
+}
+
+$dockerOk = $false
+try { if (Get-Command docker -ErrorAction SilentlyContinue) { $dockerOk = $true } } catch {}
+if (-not $dockerOk) {
+    $dd = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
+    if (Test-Path -LiteralPath $dd) { $dockerOk = $true }
+}
+if ($dockerOk) {
+    $ddExe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
+    if (Test-Path -LiteralPath $ddExe) {
+        try { Start-Process -FilePath $ddExe -ErrorAction SilentlyContinue | Out-Null } catch {}
+    }
+} else {
+    Write-Host ""
+    Write-Host " ################################################################" -ForegroundColor Cyan
+    Write-Host " #  DOCKER DESKTOP MISSING - INSTALLING AUTOMATICALLY            #" -ForegroundColor Cyan
+    Write-Host " #  Leave this window open (several minutes)                     #" -ForegroundColor Yellow
+    Write-Host " ################################################################" -ForegroundColor Cyan
+    Write-Host ""
+    Write-OtaconSay "Docker Desktop is required for Video Studio. I'm installing it for you..." "work"
+    $winget = $null
+    try { $winget = (Get-Command winget -ErrorAction SilentlyContinue).Source } catch {}
+    $installed = $false
+    if ($winget) {
+        try {
+            $p = Start-Process -FilePath $winget -ArgumentList @(
+                "install", "-e", "--id", "Docker.DockerDesktop",
+                "--accept-package-agreements", "--accept-source-agreements",
+                "--disable-interactivity"
+            ) -Wait -PassThru -NoNewWindow
+            Write-ExpLog ("winget Docker.DockerDesktop exit={0}" -f $p.ExitCode)
+            if ($p.ExitCode -eq 0 -or $p.ExitCode -eq -1978335189) { $installed = $true }
+        } catch {
+            Write-ExpLog ("winget docker install error: {0}" -f $_.Exception.Message)
+        }
+    }
+    $dd2 = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
+    if (Test-Path -LiteralPath $dd2) { $installed = $true }
+    if ($installed) {
+        try { Start-Process -FilePath $dd2 -ErrorAction SilentlyContinue | Out-Null } catch {}
+        Write-Host " ################################################################" -ForegroundColor Green
+        Write-Host " #  DOCKER DESKTOP INSTALLED / STARTING                          #" -ForegroundColor Green
+        Write-Host " #  Enable WSL Integration if Docker asks; leave it Running      #" -ForegroundColor Yellow
+        Write-Host " ################################################################" -ForegroundColor Green
+        Write-Host ""
+        try { Write-Host "  Press Enter when Docker Desktop shows Running (or to continue)..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 8 }
+    } else {
+        Write-Host ""
+        Write-Host " ################################################################" -ForegroundColor Red
+        Write-Host " #  !!!  ACTION REQUIRED - DOCKER  !!!" -ForegroundColor Red
+        Write-Host " #  AUTOMATIC INSTALL DID NOT FINISH" -ForegroundColor Yellow
+        Write-Host " ################################################################" -ForegroundColor Red
+        Write-Host "     Foundation can still install; Video Studio needs Docker." -ForegroundColor White
+        Write-Host "  >>> YOU MUST: install Docker Desktop from docker.com + WSL Integration" -ForegroundColor Yellow
+        Write-Host ("  Guide: {0}" -f $guidePath) -ForegroundColor DarkCyan
+        Write-Host " ################################################################" -ForegroundColor Red
+        Write-Host ""
+        try { Write-Host "  Press Enter to continue foundation install..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 4 }
+    }
+}
+
+# GPU hint: Expansion Studio packs need the same Windows->WSL bridge as Lite.
+$gpuWin = "not visible"
+$gpuWinVram = "0"
+try {
+    $o = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
+    if ($o) { $gpuWin = (($o | Select-Object -First 1).ToString().Trim()) }
+} catch {}
+try {
+    $o2 = & nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>$null
+    if ($o2) {
+        $mb = 0.0
+        if ([double]::TryParse((($o2 | Select-Object -First 1).ToString().Trim()), [ref]$mb) -and $mb -gt 0) {
+            $gpuWinVram = [string]([math]::Round($mb / 1024.0, 1))
+        }
+    }
+} catch {}
+$gpuWsl = "not visible"
+try {
+    $probe = 'export PATH=/usr/lib/wsl/lib:$PATH; export LD_LIBRARY_PATH=/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}; SMI=$(command -v nvidia-smi 2>/dev/null); [ -z "$SMI" ] && [ -x /usr/lib/wsl/lib/nvidia-smi ] && SMI=/usr/lib/wsl/lib/nvidia-smi; [ -n "$SMI" ] && "$SMI" --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1'
+    $o3 = & wsl.exe -d $distro -- bash -lc $probe 2>$null
+    if ($o3) { $s = ($o3 | Out-String).Trim(); if ($s) { $gpuWsl = $s } }
+} catch {}
+Write-ExpLog "GPU windows='$gpuWin' vram=$gpuWinVram wsl='$gpuWsl'"
+if ($gpuWin -ne "not visible" -and $gpuWsl -eq "not visible") {
+    Write-Host ""
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host " #  !!!  ACTION REQUIRED - GPU  !!!" -ForegroundColor Red
+    Write-Host " #  WINDOWS SEES GPU - LINUX DOES NOT" -ForegroundColor Yellow
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ("     Windows NVIDIA: {0}" -f $gpuWin) -ForegroundColor White
+    Write-Host "     Linux (WSL): NOT VISIBLE" -ForegroundColor White
+    Write-Host "     Expansion will CONTINUE with a Windows GPU hint." -ForegroundColor Yellow
+    Write-Host "  >>> YOU MUST (after install): update NVIDIA driver, wsl --update && wsl --shutdown, then Fix-Otacon-GPU.bat" -ForegroundColor Yellow
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ""
+    Write-OtaconSay "Windows sees '$gpuWin' but WSL GPU is dark - continuing with hint. Fix-Otacon-GPU.bat if Studio still says no GPU." "warn"
+}
+$gpuWinEsc = $gpuWin.Replace("'", "'\''")
+$gpuVramEsc = $gpuWinVram.Replace("'", "'\''")
+
 # Bash body: only expand PowerShell $linuxSh / $runTests; escape bash vars with backtick-dollar.
 $bash = @"
 set -Eeuo pipefail
 echo "stage=expansion-foundation"
 export OTACON_RUN_TESTS=$runTests
+export OTACON_SKIP_NVIDIA_SMI=0
+export OTACON_WINDOWS_GPU_HINT='$gpuWinEsc'
+export OTACON_WINDOWS_GPU_VRAM_GB='$gpuVramEsc'
 SCRIPT='$linuxSh'
 if [ ! -f "`$SCRIPT" ]; then
   echo "EXP_FAIL=missing_install_script"
@@ -402,17 +576,23 @@ if ($status -and $null -ne $status.expansion_entitled) {
 
 if (-not $status -or -not $status.enabled -or -not $status.foundation_ready -or $agentCount -lt 5 -or $missing.Count -gt 0) {
     Write-OtaconSay "Expansion foundation is not healthy yet." "alert"
-    Write-Host ("  enabled={0}" -f $(if ($status) { $status.enabled } else { 'n/a' }))
-    Write-Host ("  foundation_ready={0}" -f $(if ($status) { $status.foundation_ready } else { 'n/a' }))
-    Write-Host ("  expansion_entitled={0}" -f $entitled)
-    Write-Host ("  agents={0}  missing={1}" -f $agentCount, ($missing -join ','))
-    Write-Host ("  base={0}" -f $(if ($base) { $base } else { 'unreachable' }))
-    Write-Host ("  linux_markers EXP_FOUNDATION_READY / EXP_AGENT_COUNT in log: $LogFile")
-    if ($out -match 'EXP_FOUNDATION_READY=(\d+)') { Write-Host ("  EXP_FOUNDATION_READY={0}" -f $Matches[1]) }
-    if ($out -match 'EXP_AGENT_COUNT=(\d+)') { Write-Host ("  EXP_AGENT_COUNT={0}" -f $Matches[1]) }
-    if ($out -match 'EXP_SERVICE_ACTIVE=(\S+)') { Write-Host ("  EXP_SERVICE_ACTIVE={0}" -f $Matches[1]) }
-    Write-Host "  Tip: wait a few seconds and rerun deploy\install-otacon-expansion.ps1 (no reinstall needed)."
-    Write-Host "  Log: $LogFile"
+    Write-Host ""
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host " #  !!!  ACTION REQUIRED - EXPANSION HEALTH  !!!" -ForegroundColor Red
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ("  enabled={0}" -f $(if ($status) { $status.enabled } else { 'n/a' })) -ForegroundColor White
+    Write-Host ("  foundation_ready={0}" -f $(if ($status) { $status.foundation_ready } else { 'n/a' })) -ForegroundColor White
+    Write-Host ("  expansion_entitled={0}" -f $entitled) -ForegroundColor White
+    Write-Host ("  agents={0}  missing={1}" -f $agentCount, ($missing -join ',')) -ForegroundColor White
+    Write-Host ("  base={0}" -f $(if ($base) { $base } else { 'unreachable' })) -ForegroundColor White
+    if ($out -match 'EXP_FAIL=wsl_network|cannot_resolve_github|git_fetch') {
+        Write-Host "  Likely cause: WSL cannot reach GitHub (see TROUBLESHOOTING.txt section 1)." -ForegroundColor Yellow
+    }
+    Write-Host "  >>> YOU MUST: open the guide, fix network/GPU/Docker as listed, wait, then rerun Expansion Setup" -ForegroundColor Yellow
+    Write-Host ("  Guide: {0}" -f (Join-Path $KeepDir "TROUBLESHOOTING.txt")) -ForegroundColor DarkCyan
+    Write-Host ("  Log: {0}" -f $LogFile) -ForegroundColor DarkCyan
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ""
     exit 8
 }
 
@@ -429,6 +609,18 @@ Write-Host "   foundation_ready=true"
 Write-Host ("   expansion_entitled={0}" -f $entitled)
 if (-not $entitled) {
     $entMsg = if ($status -and $status.entitlement) { $status.entitlement.message } else { 'check /api/expansion/entitlement' }
+    Write-Host ""
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host " #  !!!  ACTION REQUIRED - ENTITLEMENT  !!!" -ForegroundColor Red
+    Write-Host " #  FOUNDATION OK - PREMIUM FEATURES STILL LOCKED" -ForegroundColor Yellow
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ("     entitlement_reason={0}" -f $entMsg) -ForegroundColor White
+    Write-Host "     War Room / REX / Learning stay locked until entitlement is true." -ForegroundColor White
+    Write-Host "  >>> YOU MUST: log in with the exact Premium username/email Otaconskeep issued" -ForegroundColor Yellow
+    Write-Host "      then hard-refresh Codec (Ctrl+Shift+R) and re-run Expansion Setup if needed" -ForegroundColor Yellow
+    Write-Host ("  Guide: {0}" -f (Join-Path $KeepDir "TROUBLESHOOTING.txt")) -ForegroundColor DarkCyan
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ""
     Write-Host ("   entitlement_reason={0}" -f $entMsg)
     Write-Host "   War Room / REX / Learning stay locked until entitlement resolves."
 }

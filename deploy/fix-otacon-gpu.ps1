@@ -58,6 +58,35 @@ if (-not $distro) {
 }
 Write-Host " Distro: $distro"
 
+# Preflight: Windows vs WSL visibility (Josh / RTX 4090 class false-negatives).
+$winGpu = "not visible"
+try {
+    $o = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
+    if ($o) { $winGpu = (($o | Select-Object -First 1).ToString().Trim()) }
+} catch {}
+$wslGpu = "not visible"
+try {
+    $probe = 'export PATH=/usr/lib/wsl/lib:$PATH; export LD_LIBRARY_PATH=/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}; SMI=$(command -v nvidia-smi 2>/dev/null); [ -z "$SMI" ] && [ -x /usr/lib/wsl/lib/nvidia-smi ] && SMI=/usr/lib/wsl/lib/nvidia-smi; [ -n "$SMI" ] && "$SMI" --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1'
+    $o2 = & wsl.exe -d $distro -- bash -lc $probe 2>$null
+    if ($o2) {
+        $s = ($o2 | Out-String).Trim()
+        if ($s) { $wslGpu = $s }
+    }
+} catch {}
+Write-Host " Windows GPU: $winGpu"
+Write-Host " WSL GPU:     $wslGpu"
+$cfg = Join-Path $env:USERPROFILE ".wslconfig"
+if (Test-Path -LiteralPath $cfg) {
+    $rawCfg = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+    if ($rawCfg -match '(?im)^\s*gpuSupport\s*=\s*false\s*$') {
+        Write-Host " WARNING: .wslconfig has gpuSupport=false - remove that line, then: wsl --shutdown" -ForegroundColor Yellow
+    }
+}
+if ($winGpu -ne "not visible" -and $wslGpu -eq "not visible") {
+    Write-Host " Windows sees NVIDIA but WSL does not yet - will repair PATH/SKIP + re-probe." -ForegroundColor Yellow
+    Write-Host " If this still fails: update NVIDIA Windows driver, run wsl --update, wsl --shutdown." -ForegroundColor Yellow
+}
+
 $bash = @'
 set +e
 PORT="__PORT__"

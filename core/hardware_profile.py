@@ -153,6 +153,74 @@ def marketed_gib(raw_gb: float, *, kind: str = 'ram') -> float:
     return v
 
 
+# Desktop SKU marketed VRAM when nvidia-smi /proc reports the model but not
+# memory (common WSL proc fallback / Windows-hint path). Conservative: only
+# unambiguous card names — never invent VRAM for bare "NVIDIA GPU".
+_SKU_VRAM_GB: tuple[tuple[re.Pattern[str], float], ...] = (
+    (re.compile(r'rtx\s*5090', re.I), 32.0),
+    (re.compile(r'rtx\s*5080', re.I), 16.0),
+    (re.compile(r'rtx\s*5070\s*ti', re.I), 16.0),
+    (re.compile(r'rtx\s*5070', re.I), 12.0),
+    (re.compile(r'rtx\s*5060\s*ti', re.I), 16.0),
+    (re.compile(r'rtx\s*5060', re.I), 8.0),
+    (re.compile(r'rtx\s*4090', re.I), 24.0),
+    (re.compile(r'rtx\s*4080\s*super', re.I), 16.0),
+    (re.compile(r'rtx\s*4080', re.I), 16.0),
+    (re.compile(r'rtx\s*4070\s*ti\s*super', re.I), 16.0),
+    (re.compile(r'rtx\s*4070\s*ti', re.I), 12.0),
+    (re.compile(r'rtx\s*4070\s*super', re.I), 12.0),
+    (re.compile(r'rtx\s*4070', re.I), 12.0),
+    (re.compile(r'rtx\s*4060\s*ti', re.I), 16.0),
+    (re.compile(r'rtx\s*4060', re.I), 8.0),
+    (re.compile(r'rtx\s*3090\s*ti', re.I), 24.0),
+    (re.compile(r'rtx\s*3090', re.I), 24.0),
+    (re.compile(r'rtx\s*3080\s*ti', re.I), 12.0),
+    (re.compile(r'rtx\s*3080', re.I), 10.0),
+    (re.compile(r'rtx\s*3070\s*ti', re.I), 8.0),
+    (re.compile(r'rtx\s*3070', re.I), 8.0),
+    (re.compile(r'rtx\s*3060\s*ti', re.I), 8.0),
+    (re.compile(r'rtx\s*3060', re.I), 12.0),
+    (re.compile(r'rtx\s*2080\s*ti', re.I), 11.0),
+    (re.compile(r'rtx\s*2080\s*super', re.I), 8.0),
+    (re.compile(r'rtx\s*2080', re.I), 8.0),
+    (re.compile(r'rtx\s*2070\s*super', re.I), 8.0),
+    (re.compile(r'rtx\s*2070', re.I), 8.0),
+    (re.compile(r'rtx\s*2060\s*super', re.I), 8.0),
+    (re.compile(r'rtx\s*2060', re.I), 6.0),
+)
+
+
+def infer_sku_vram_gb(model: str) -> float:
+    """Marketed VRAM for a known desktop SKU name, else 0.
+
+    Used when WSL ``/proc/driver/nvidia`` names the card but not memory, or
+    when Windows Setup passes ``OTACON_WINDOWS_GPU_HINT`` because WSL
+    nvidia-smi is not yet visible. Prefer live nvidia-smi memory when present.
+    """
+    # Normalize so "NVIDIA_GeForce_RTX_4090" (env-safe) still matches.
+    m = re.sub(r'[^a-z0-9]+', ' ', (model or '').lower()).strip()
+    if not m:
+        return 0.0
+    for pat, gb in _SKU_VRAM_GB:
+        if pat.search(m):
+            return float(gb)
+    return 0.0
+
+
+def resolve_vram_gb(measured_gb: float, model: str = '') -> tuple[float, str]:
+    """Return (vram_gb, source) preferring measured memory, else SKU table."""
+    try:
+        measured = float(measured_gb or 0.0)
+    except (TypeError, ValueError):
+        measured = 0.0
+    if measured > 0:
+        return measured, 'measured'
+    sku = infer_sku_vram_gb(model)
+    if sku > 0:
+        return sku, 'sku_table'
+    return 0.0, 'unknown'
+
+
 def _ram_tier(ram_gb: float) -> tuple[str, bool, list[str]]:
     """Return (tier, auto_ok_by_ram, warnings).
 
@@ -699,6 +767,19 @@ def detect_studio_profile(hw: Any = None) -> StudioHardwareProfile:
     gpu = primary[0] if primary else None
     vram = float(getattr(gpu, 'vram_gb', 0.0) or 0.0) if gpu else 0.0
     model = str(getattr(gpu, 'model', '') or '') if gpu else ''
+    # Windows Setup can see the RTX card while WSL nvidia-smi is still dark —
+    # honor that hint so Studio does not classify a 4090 as CPU-only.
+    win_hint = (os.environ.get('OTACON_WINDOWS_GPU_HINT') or '').strip()
+    win_vram_hint = 0.0
+    try:
+        win_vram_hint = float(os.environ.get('OTACON_WINDOWS_GPU_VRAM_GB') or 0.0)
+    except (TypeError, ValueError):
+        win_vram_hint = 0.0
+    if not model and win_hint:
+        model = win_hint
+    if vram <= 0 and win_vram_hint > 0:
+        vram = win_vram_hint
+    vram, vram_src = resolve_vram_gb(vram, model)
     ram = float(getattr(hw, 'ram_gb', 0.0) or 0.0)
     disk = float(getattr(hw, 'free_storage_gb', 0.0) or 0.0)
     det = getattr(hw, 'gpu_detection', None) or {}
@@ -707,13 +788,29 @@ def detect_studio_profile(hw: Any = None) -> StudioHardwareProfile:
         cuda = False
     elif det.get('status') == 'detected':
         cuda = True
-    return classify_studio_profile(
+    # Hint-only path: Windows named an NVIDIA SKU; treat as CUDA-capable for
+    # profile selection even if WSL has not mounted nvidia-smi yet.
+    if not gpus and model and infer_sku_vram_gb(model) > 0:
+        cuda = True
+    profile = classify_studio_profile(
         vram_gb=vram,
         ram_gb=ram,
         free_disk_gb=disk,
         gpu_model=model,
-        cuda_available=cuda if gpus else False,
+        cuda_available=cuda if (gpus or model) else False,
     )
+    if vram_src == 'sku_table':
+        profile.notes.append(f'vram_from_sku_table model={model!r}')
+        profile.warnings.append(
+            'VRAM inferred from GPU model name (WSL did not report memory). '
+            'If wrong, run Fix-Otacon-GPU.bat after Windows nvidia-smi works in WSL.'
+        )
+    if win_hint and (not gpus or det.get('status') in ('none', 'error', 'unavailable', 'skipped')):
+        profile.warnings.append(
+            f'Windows reports GPU {win_hint!r} but WSL GPU probe is weak — '
+            'update the Windows NVIDIA driver, run wsl --update, then Fix-Otacon-GPU.bat.'
+        )
+    return profile
 
 
 def profile_asset_manifest(profile: StudioHardwareProfile) -> list[dict[str, str]]:

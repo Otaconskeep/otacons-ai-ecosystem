@@ -339,6 +339,348 @@ function Show-Box {
     Write-Host ""
 }
 
+function Show-ActionRequired {
+    <#
+      Loud, hard-to-miss banner for problems we cannot fully auto-fix.
+      Console has no true bold; RED title + WHITE/YELLOW action + optional pause.
+    #>
+    param(
+        [string]$Topic = "SETUP",
+        [string]$Headline,
+        [string[]]$Lines,
+        [string]$MustDo,
+        [string]$ContinueNote = "Setup will CONTINUE where safe; fix the item above for full features.",
+        [switch]$Pause,
+        [switch]$WriteGuide
+    )
+    Initialize-OtaconConsole
+    $topic = if ($Topic) { $Topic.ToUpperInvariant() } else { "SETUP" }
+    Write-Host ""
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host " #                                                              #" -ForegroundColor Red
+    Write-Host (" #  !!!  {0,-52}  !!!  #" -f ("ACTION REQUIRED - " + $topic)) -ForegroundColor Red
+    Write-Host (" #  !!!  {0,-52}  !!!  #" -f $Headline.ToUpperInvariant()) -ForegroundColor Yellow
+    Write-Host " #                                                              #" -ForegroundColor Red
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ""
+    foreach ($ln in $Lines) {
+        if ($null -eq $ln -or $ln -eq "") { Write-Host ""; continue }
+        Write-Host ("     {0}" -f $ln) -ForegroundColor White
+    }
+    if ($MustDo) {
+        Write-Host ""
+        Write-Host "  >>> YOU MUST: " -NoNewline -ForegroundColor Yellow
+        Write-Host $MustDo -ForegroundColor White
+    }
+    Write-Host ""
+    Write-Host ("  {0}" -f $ContinueNote) -ForegroundColor Yellow
+    $guidePath = Join-Path $KeepDir "TROUBLESHOOTING.txt"
+    Write-Host ("  Guide: {0}" -f $guidePath) -ForegroundColor DarkCyan
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ""
+    Write-KeepLog ("ACTION REQUIRED [{0}]: {1} | must={2}" -f $topic, $Headline, $MustDo) -Level "WARN" -Stage $topic
+    if ($WriteGuide) { [void](Write-OtaconTroubleshootGuide -Highlight $topic) }
+    if ($Pause) {
+        try {
+            Write-Host "  Press Enter to keep installing (read the red box above first)..." -ForegroundColor Cyan
+            [void](Read-Host)
+        } catch {
+            Start-Sleep -Seconds 6
+        }
+    }
+}
+
+function Show-GpuActionRequired {
+    param(
+        [string]$Headline,
+        [string[]]$Lines,
+        [string]$MustDo,
+        [switch]$Pause
+    )
+    Show-ActionRequired -Topic "GPU" -Headline $Headline -Lines $Lines -MustDo $MustDo -Pause:$Pause -WriteGuide `
+        -ContinueNote "Setup will CONTINUE, but GPU features stay limited until this is fixed."
+}
+
+function Write-OtaconTroubleshootGuide {
+    param([string]$Highlight = "")
+    $path = Join-Path $KeepDir "TROUBLESHOOTING.txt"
+    $body = @"
+OTACONSKEEP / OTACON - INSTALL TROUBLESHOOTING
+Generated: $(Get-Date -Format o)
+Highlight: $Highlight
+
+This file is written by Setup when something needs YOUR action.
+Logs folder: $LogDir
+Installer log: $LogFile
+
+==============================================================================
+1) GPU - Windows sees RTX, Linux says no GPU
+==============================================================================
+YOU MUST:
+  A) Update Windows NVIDIA driver (Game Ready or Studio) from nvidia.com, reboot
+  B) In PowerShell:  wsl --update
+  C) Then:           wsl --shutdown
+  D) Re-open Ubuntu / re-run Setup
+  E) Double-click Fix-Otacon-GPU.bat from the Otaconskeep downloads page
+
+Also check:
+  - %USERPROFILE%\.wslconfig must NOT contain: gpuSupport=false
+  - Do NOT install Linux nvidia-driver / nvidia-utils inside WSL
+  - Docker Desktop: Settings -> Resources -> WSL Integration ON (for Studio/Comfy)
+
+==============================================================================
+2) NETWORK - WSL cannot reach GitHub (Windows browser works)
+==============================================================================
+Windows downloads and WSL networking are SEPARATE.
+YOU MUST:
+  A) Temporarily disconnect extra VPNs (Tailscale/Twingate/WireGuard) or set
+     them to leave WSL alone
+  B) Check Hyper-V switches / dead default routes (metric 0 adapters)
+  C) Try: wsl --shutdown   then reopen Ubuntu and:  ping -c2 github.com
+  D) If using .wslconfig networkingMode=mirrored, try commenting it out, then
+     wsl --shutdown
+  E) Re-run OtaconsKeep-Setup.bat or Expansion Setup
+
+==============================================================================
+3) DISK - Studio video (LTX-2 on 24GB cards) needs ~100 GB free
+==============================================================================
+YOU MUST free space on the drive that holds your WSL files (usually C:).
+Prefer storing models inside WSL/Docker volumes - NOT under /mnt/c (slow/flaky).
+
+==============================================================================
+4) DOCKER - Expansion Video Studio / ComfyUI
+==============================================================================
+YOU MUST:
+  A) OtaconsKeep Setup tries to install Docker Desktop automatically via winget
+  B) If that fails: install from https://www.docker.com/products/docker-desktop/
+  C) Enable WSL2 backend + WSL Integration for your Ubuntu distro
+  D) Confirm:  wsl -d <distro> -- docker version
+  E) GPU: Docker Desktop -> Settings -> Resources -> use WSL2, then
+     docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi
+
+==============================================================================
+5) ENTITLEMENT / PREMIUM LOGIN
+==============================================================================
+Foundation can install while War Room / REX / Learning stay locked.
+YOU MUST:
+  A) Use the exact Premium username/email Otaconskeep issued (spelling matters)
+  B) Prefer the official site login / workers.dev entitlement path if Pages fails
+  C) Hard-refresh Codec (Ctrl+Shift+R) after entitlement flips true
+  D) Re-run Expansion Setup after login succeeds (no full wipe needed)
+
+==============================================================================
+6) STALE INSTALLER CACHE
+==============================================================================
+If Setup flashes and dies, or behaves like an old bug already fixed:
+YOU MUST:
+  A) Re-download OtaconsKeep-Setup.bat from the Otaconskeep website (do not reuse
+     an old Desktop copy forever)
+  B) Or delete:  %LOCALAPPDATA%\OtaconsKeep\installer\  then re-run Setup
+  C) Leave the black window open - closing it cancels install
+
+==============================================================================
+7) LONG DOWNLOADS (Ollama 14b on high-end GPUs)
+==============================================================================
+Falling code / Stage 6 can look stuck for 20-60+ minutes on large models.
+Do NOT close the window. Check installer.log for heartbeat lines.
+Retry later:  wsl -d <distro> -- ollama pull <model>
+
+==============================================================================
+8) ANTIVIRUS / SMARTSCREEN
+==============================================================================
+If downloads fail instantly: allow OtaconsKeep-Setup.bat, PowerShell, and
+wsl.exe. Unblock the file (Properties -> Unblock) if Windows marked it.
+
+==============================================================================
+9) VIDEO ENGINE NOTE (RTX 4090 / 24GB+)
+==============================================================================
+Installer may select LTX-2 packs for 24GB+ cards. If Workshop video still
+asks for Wan packs, run Fix-Otacon-GPU.bat after update, and check the site
+for the latest Expansion release. Report the mismatch with TROUBLESHOOTING.txt.
+
+Discord: https://discord.gg/cZDeqECzX
+"@
+    try {
+        New-Item -ItemType Directory -Force -Path $KeepDir | Out-Null
+        [System.IO.File]::WriteAllText($path, $body, (New-Object System.Text.UTF8Encoding $false))
+    } catch {
+        Write-KeepLog "Write-OtaconTroubleshootGuide failed: $($_.Exception.Message)" -Level "WARN" -Stage "GUIDE"
+    }
+    return $path
+}
+
+function Test-WslGithubReachable {
+    param([string]$Name)
+    if (-not $Name) { return $true }  # cannot test yet
+    $probe = @'
+set +e
+if command -v getent >/dev/null 2>&1 && getent hosts github.com >/dev/null 2>&1; then echo OK; exit 0; fi
+if command -v curl >/dev/null 2>&1 && curl -fsSI --max-time 8 https://github.com >/dev/null 2>&1; then echo OK; exit 0; fi
+if command -v ping >/dev/null 2>&1 && ping -c1 -W3 github.com >/dev/null 2>&1; then echo OK; exit 0; fi
+echo FAIL
+exit 1
+'@
+    try {
+        $o = & wsl.exe -d $Name -- bash -lc $probe 2>$null
+        $s = ($o | Out-String)
+        return ($s -match 'OK')
+    } catch { return $false }
+}
+
+function Get-WindowsFreeDiskGb {
+    try {
+        $d = Get-PSDrive -Name C -ErrorAction SilentlyContinue
+        if ($d -and $d.Free) { return [math]::Round(([double]$d.Free) / 1GB, 1) }
+    } catch {}
+    return -1
+}
+
+function Test-DockerDesktopPresent {
+    try {
+        $c = Get-Command docker -ErrorAction SilentlyContinue
+        if ($c) { return $true }
+    } catch {}
+    $paths = @(
+        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe")
+    )
+    foreach ($p in $paths) {
+        if ($p -and (Test-Path -LiteralPath $p)) { return $true }
+    }
+    return $false
+}
+
+function Start-DockerDesktopIfPresent {
+    $exe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
+    if (-not (Test-Path -LiteralPath $exe)) {
+        $exe = Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe"
+    }
+    if (-not (Test-Path -LiteralPath $exe)) { return $false }
+    try {
+        Start-Process -FilePath $exe -ErrorAction SilentlyContinue | Out-Null
+        Write-KeepLog "Started Docker Desktop exe=$exe" -Stage "DOCKER"
+        return $true
+    } catch {
+        Write-KeepLog "Start Docker Desktop failed: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+        return $false
+    }
+}
+
+function Install-DockerDesktopBestEffort {
+    <#
+      Easiest path: if Docker Desktop is missing, install it via winget (admin).
+      Product expectation: Expansion Studio should not leave Docker as a manual homework item.
+      Returns: installed | already | started | failed | skipped_no_admin | skipped_no_winget
+    #>
+    if (Test-DockerDesktopPresent) {
+        [void](Start-DockerDesktopIfPresent)
+        return "already"
+    }
+    Write-OtaconSay "Docker Desktop is missing. I'm installing it for you (needed for Video Studio)..." -Mood "work"
+    Write-KeepLog "Docker Desktop missing - attempting winget install" -Stage "DOCKER"
+
+    $winget = $null
+    try { $winget = (Get-Command winget -ErrorAction SilentlyContinue).Source } catch {}
+    if (-not $winget) {
+        Show-ActionRequired -Topic "DOCKER" -Headline "DOCKER DESKTOP MISSING - WINGET NOT AVAILABLE" -Lines @(
+            "I tried to install Docker Desktop automatically, but winget is not on this PC.",
+            "Video Studio / Comfy need Docker Desktop with the WSL2 backend."
+        ) -MustDo "Install Docker Desktop from https://www.docker.com/products/docker-desktop/ then re-run Setup" -Pause -WriteGuide
+        return "skipped_no_winget"
+    }
+
+    if (-not (Ensure-Admin)) {
+        Show-ActionRequired -Topic "DOCKER" -Headline "DOCKER INSTALL NEEDS ADMINISTRATOR" -Lines @(
+            "I can install Docker Desktop for you, but Windows needs an Admin approval.",
+            "Click Yes on the UAC prompt when asked, or re-run Setup as Administrator."
+        ) -MustDo "Approve Admin / UAC, then press Enter so I can install Docker" -Pause -WriteGuide
+        if (-not (Ensure-Admin)) { return "skipped_no_admin" }
+    }
+
+    Write-Host ""
+    Write-Host " ################################################################" -ForegroundColor Cyan
+    Write-Host " #  INSTALLING DOCKER DESKTOP (automatic)                        #" -ForegroundColor Cyan
+    Write-Host " #  Leave this window open - first install can take several min  #" -ForegroundColor Yellow
+    Write-Host " ################################################################" -ForegroundColor Cyan
+    Write-Host ""
+
+    $ok = $false
+    try {
+        $p = Start-Process -FilePath $winget -ArgumentList @(
+            "install", "-e", "--id", "Docker.DockerDesktop",
+            "--accept-package-agreements", "--accept-source-agreements",
+            "--disable-interactivity"
+        ) -Wait -PassThru -NoNewWindow
+        Write-KeepLog ("winget Docker.DockerDesktop exit={0}" -f $p.ExitCode) -Stage "DOCKER"
+        # 0 = ok, -1978335189 / other codes sometimes mean already installed
+        if ($p.ExitCode -eq 0 -or $p.ExitCode -eq -1978335189) { $ok = $true }
+    } catch {
+        Write-KeepLog "winget docker install threw: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+    }
+
+    if (-not $ok -and -not (Test-DockerDesktopPresent)) {
+        Show-ActionRequired -Topic "DOCKER" -Headline "AUTOMATIC DOCKER INSTALL DID NOT FINISH" -Lines @(
+            "winget could not finish installing Docker Desktop.",
+            "Common causes: corporate block, SmartScreen, or needing a reboot mid-install."
+        ) -MustDo "Install Docker Desktop from docker.com, enable WSL Integration, reboot if asked, then re-run Setup" -Pause -WriteGuide
+        return "failed"
+    }
+
+    [void](Start-DockerDesktopIfPresent)
+    Show-ActionRequired -Topic "DOCKER" -Headline "DOCKER DESKTOP INSTALLED - FIRST START" -Lines @(
+        "Docker Desktop is installed (or was already present after install).",
+        "First launch can take a few minutes and may ask you to accept terms.",
+        "Enable: Settings -> Resources -> WSL Integration -> your Ubuntu distro.",
+        "A Windows reboot is sometimes required after the first Docker install."
+    ) -MustDo "Leave Docker Desktop running until it says Running, then press Enter to continue" -Pause -WriteGuide `
+        -ContinueNote "Setup continues; Video Studio will work once Docker shows Running."
+    return "installed"
+}
+
+function Invoke-InstallRiskPreflight {
+    param(
+        [string]$Name,
+        [switch]$ForExpansion
+    )
+    <#
+      Medium/high probability risks: loud guide + continue (except hard blockers
+      that already have their own exit paths).
+    #>
+    [void](Write-OtaconTroubleshootGuide -Highlight "PREFLIGHT")
+    Write-OtaconSay "Checking common install risks (network, disk, Docker)..." -Mood "work" -NoType
+
+    if ($Name -and -not (Test-WslGithubReachable -Name $Name)) {
+        Show-ActionRequired -Topic "NETWORK" -Headline "WSL CANNOT REACH GITHUB" -Lines @(
+            "Windows may browse fine while Linux (WSL) has no route/DNS to github.com.",
+            "That breaks Lite repo sync and Expansion updates (git exit 128).",
+            "",
+            "Typical causes: VPN (Tailscale/Twingate), dead Hyper-V switches,",
+            "or .wslconfig networkingMode=mirrored with a bad host route."
+        ) -MustDo "Fix WSL networking (see TROUBLESHOOTING.txt section 2), then press Enter" -Pause -WriteGuide
+    }
+
+    $free = Get-WindowsFreeDiskGb
+    $need = if ($ForExpansion) { 120 } else { 40 }
+    if ($free -ge 0 -and $free -lt $need) {
+        Show-ActionRequired -Topic "DISK" -Headline ("LOW FREE SPACE ON C: (~{0} GB)" -f $free) -Lines @(
+            ("This PC reports about {0} GB free on C:." -f $free),
+            ("Recommended free before {0}: ~{1} GB+." -f ($(if ($ForExpansion) { "Expansion / Studio (LTX packs)" } else { "Lite install" }), $need)),
+            "Studio video on 24GB GPUs (RTX 4090) can need ~100 GB for LTX-2 packs.",
+            "Keep models inside WSL/Docker volumes - avoid /mnt/c when possible."
+        ) -MustDo "Free disk space on C: (or the WSL drive), then press Enter to continue anyway" -Pause -WriteGuide
+    }
+
+    if ($ForExpansion -or $script:ForceInstall) {
+        $dockerState = Install-DockerDesktopBestEffort
+        Write-KeepLog "Docker preflight result=$dockerState" -Stage "DOCKER"
+    } elseif (-not (Test-DockerDesktopPresent)) {
+        # Lite-only: still try automatic install so Expansion later is painless.
+        Write-OtaconSay "Checking Docker Desktop (makes Expansion Video Studio easier later)..." -Mood "work" -NoType
+        $dockerState = Install-DockerDesktopBestEffort
+        Write-KeepLog "Docker lite preflight result=$dockerState" -Stage "DOCKER"
+    }
+}
+
 function Show-WorkingPanel {
     param(
         [int]$Step,
@@ -1441,20 +1783,50 @@ function Show-SetupNeedsHelp {
     }
     Write-KeepLog "FAILED step=$Step err=$PlainError" -Level "ERROR" -Stage "FAILED"
     Save-InstallerState @{ stage = "failed"; last_error = $PlainError; last_step = $Step }
+    [void](Write-OtaconTroubleshootGuide -Highlight $Step)
     Write-OtaconSay "I couldn't repair this automatically." -Mood "alert"
+    $err = [string]$PlainError
+    if ($err -match '(?i)github|git fetch|wsl_network|dns|route|128') {
+        Show-ActionRequired -Topic "NETWORK" -Headline "INSTALL FAILED - NETWORK / GITHUB" -Lines @(
+            $err,
+            "",
+            "See TROUBLESHOOTING.txt section 2 (WSL vs Windows networking)."
+        ) -MustDo "Fix WSL route/DNS/VPN, then press ENTER to retry" -Pause -WriteGuide `
+            -ContinueNote "Retry after networking works; Core cannot finish without GitHub."
+    } elseif ($err -match '(?i)gpu|nvidia|cuda') {
+        Show-ActionRequired -Topic "GPU" -Headline "INSTALL FAILED - GPU PATH" -Lines @(
+            $err,
+            "",
+            "See TROUBLESHOOTING.txt section 1."
+        ) -MustDo "Run Fix-Otacon-GPU.bat after driver/WSL repair, then retry" -Pause -WriteGuide
+    } elseif ($err -match '(?i)space|disk|no space') {
+        Show-ActionRequired -Topic "DISK" -Headline "INSTALL FAILED - DISK SPACE" -Lines @(
+            $err,
+            "",
+            "See TROUBLESHOOTING.txt section 3."
+        ) -MustDo "Free disk space, then press ENTER to retry" -Pause -WriteGuide
+    }
     Show-Box "GUIDED RECOVERY" @(
         "You don't need to understand Linux.",
         "I saved the technical details here:",
         "",
         $LogFile,
         "",
+        ("Guide: {0}" -f (Join-Path $KeepDir "TROUBLESHOOTING.txt")),
+        "",
         "Press ENTER to try again (I'll keep handling it).",
         "Press L to open logs.",
+        "Press G to open the troubleshooting guide.",
         "Press Q to exit."
     ) -Color Yellow
     while ($true) {
-        $c = Read-Choice "  [ENTER]=retry  [L]=logs  [Q]=exit : " @("ENTER","L","Q")
+        $c = Read-Choice "  [ENTER]=retry  [L]=logs  [G]=guide  [Q]=exit : " @("ENTER","L","G","Q")
         if ($c -eq "L") { Start-Process explorer.exe $LogDir; continue }
+        if ($c -eq "G") {
+            $g = Join-Path $KeepDir "TROUBLESHOOTING.txt"
+            if (Test-Path -LiteralPath $g) { Start-Process notepad.exe $g }
+            continue
+        }
         if ($c -eq "Q") { return "exit" }
         if ($c -eq "ENTER") { return "retry" }
     }
@@ -1928,16 +2300,196 @@ function Get-WindowsNvidiaName {
     return "not visible"
 }
 
+function Get-WindowsNvidiaVramGb {
+    try {
+        $o = & nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>$null
+        if ($o) {
+            $mb = 0.0
+            if ([double]::TryParse((($o | Select-Object -First 1).ToString().Trim()), [ref]$mb) -and $mb -gt 0) {
+                return [math]::Round($mb / 1024.0, 1)
+            }
+        }
+    } catch {}
+    return 0
+}
+
 function Get-WslNvidiaName {
     param([string]$Name)
+    # Same PATH trap as Linux otacon.service: nvidia-smi often lives only under
+    # /usr/lib/wsl/lib and bare `nvidia-smi` falsely reports "not visible".
+    $probe = @'
+export PATH="/usr/lib/wsl/lib:/usr/local/bin:/usr/bin:/bin:$PATH"
+export LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+SMI=""
+if command -v nvidia-smi >/dev/null 2>&1; then SMI="$(command -v nvidia-smi)"
+elif [ -x /usr/lib/wsl/lib/nvidia-smi ]; then SMI=/usr/lib/wsl/lib/nvidia-smi
+elif [ -x /usr/bin/nvidia-smi ]; then SMI=/usr/bin/nvidia-smi
+fi
+if [ -n "$SMI" ]; then
+  "$SMI" --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1
+  exit 0
+fi
+# Last resort: /proc names the card even when nvidia-smi is missing from PATH.
+if [ -d /proc/driver/nvidia/gpus ]; then
+  for d in /proc/driver/nvidia/gpus/*; do
+    [ -f "$d/information" ] || continue
+    awk -F: 'tolower($1) ~ /^model$/ {gsub(/^[ \t]+/,"",$2); print $2; exit}' "$d/information"
+    exit 0
+  done
+fi
+exit 1
+'@
     try {
-        $o = & wsl.exe -d $Name -- bash -lc "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1" 2>$null
+        $o = & wsl.exe -d $Name -- bash -lc $probe 2>$null
         if ($o) {
             $s = ($o | Out-String).Trim()
-            if ($s) { return $s }
+            if ($s -and $s -notmatch '(?i)not visible|command not found|failed') { return $s }
         }
     } catch {}
     return "not visible in WSL"
+}
+
+function Test-WslGpuConfigDisabled {
+    <#
+      .wslconfig gpuSupport=false hides /usr/lib/wsl entirely - looks like
+      "no GPU" on a machine that has an RTX 4090 in Device Manager.
+    #>
+    $cfg = Join-Path $env:USERPROFILE ".wslconfig"
+    if (-not (Test-Path -LiteralPath $cfg)) { return $false }
+    try {
+        $raw = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+        if ($raw -match '(?im)^\s*gpuSupport\s*=\s*false\s*$') { return $true }
+    } catch {}
+    return $false
+}
+
+function Get-WslGpuDiagnosis {
+    param([string]$Name)
+    <#
+      Structured diagnosis for Windows-sees-GPU / WSL-dark cases.
+      Always returns a hashtable so Setup can log + decide soft fixes.
+    #>
+    $d = [ordered]@{
+        windows_name        = "not visible"
+        windows_vram_gb     = 0
+        wsl_name            = "not visible in WSL"
+        wsl_lib_present     = $false
+        wsl_smi_present     = $false
+        apt_nvidia_conflict = $false
+        gpu_support_disabled = $false
+        driver_hint         = ""
+        can_continue_hinted = $false
+        next_action         = "none"
+    }
+    try { $d.windows_name = Get-WindowsNvidiaName } catch {}
+    try { $d.windows_vram_gb = Get-WindowsNvidiaVramGb } catch {}
+    try { $d.wsl_name = Get-WslNvidiaName -Name $Name } catch {}
+    $d.gpu_support_disabled = [bool](Test-WslGpuConfigDisabled)
+
+    $probe = @'
+set +e
+echo "WSL_LIB=$([ -d /usr/lib/wsl/lib ] && echo 1 || echo 0)"
+echo "WSL_SMI=$([ -x /usr/lib/wsl/lib/nvidia-smi ] && echo 1 || echo 0)"
+# Linux NVIDIA packages fight Windows passthrough - common false "no GPU".
+PKGS="$(dpkg-query -W -f='${Package}\n' 'nvidia-driver*' 'nvidia-utils*' 'cuda-drivers*' 2>/dev/null | head -n5 | tr '\n' ',')"
+echo "APT_NVIDIA=${PKGS:-}"
+# Windows nvidia-smi.exe sometimes works from WSL when Linux stub is missing.
+if [ -x /mnt/c/Windows/System32/nvidia-smi.exe ]; then
+  WN="$(/mnt/c/Windows/System32/nvidia-smi.exe --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1 | tr -d '\r')"
+  echo "EXE_NAME=${WN:-}"
+fi
+'@
+    try {
+        $o = & wsl.exe -d $Name -- bash -lc $probe 2>$null
+        $txt = ($o | Out-String)
+        if ($txt -match 'WSL_LIB=1') { $d.wsl_lib_present = $true }
+        if ($txt -match 'WSL_SMI=1') { $d.wsl_smi_present = $true }
+        if ($txt -match 'APT_NVIDIA=(\S+)' -and $Matches[1] -and $Matches[1] -ne '') {
+            $d.apt_nvidia_conflict = $true
+            $d.driver_hint = "Linux NVIDIA packages installed inside WSL ($($Matches[1])). Remove them; use Windows driver only."
+        }
+        if ($txt -match 'EXE_NAME=(.+)' -and $Matches[1].Trim() -and $d.windows_name -eq "not visible") {
+            $d.windows_name = $Matches[1].Trim()
+        }
+    } catch {}
+
+    $winOk = ($d.windows_name -and $d.windows_name -ne "not visible")
+    $wslOk = ($d.wsl_name -and $d.wsl_name -ne "not visible in WSL")
+    $d.can_continue_hinted = [bool]($winOk)
+    if ($d.gpu_support_disabled) {
+        $d.next_action = "edit_wslconfig_gpuSupport"
+    } elseif ($winOk -and -not $wslOk -and -not $d.wsl_lib_present) {
+        $d.next_action = "update_windows_nvidia_and_wsl"
+        if (-not $d.driver_hint) {
+            $d.driver_hint = "Missing /usr/lib/wsl/lib - update Windows NVIDIA driver, then: wsl --update && wsl --shutdown"
+        }
+    } elseif ($winOk -and -not $wslOk -and $d.apt_nvidia_conflict) {
+        $d.next_action = "purge_linux_nvidia_packages"
+    } elseif ($winOk -and -not $wslOk) {
+        $d.next_action = "fix_otacon_gpu_bat"
+    } elseif ($wslOk) {
+        $d.next_action = "ok"
+    } else {
+        $d.next_action = "no_windows_nvidia"
+    }
+    return $d
+}
+
+function Repair-WslGpuVisibility {
+    param(
+        [string]$Name,
+        [string]$WindowsGpuName
+    )
+    <#
+      Soft repair for Windows-sees-GPU / WSL-does-not:
+      - warn if .wslconfig disabled GPU
+      - warn on apt nvidia conflict (do not auto-purge)
+      - wsl --update (best effort)
+      - restart distro and re-probe absolute nvidia-smi
+      Returns the (possibly improved) WSL GPU name string.
+    #>
+    $diag = Get-WslGpuDiagnosis -Name $Name
+    Write-KeepLog ("GPU diag win={0} wsl={1} lib={2} smi={3} apt_conflict={4} disabled={5} next={6}" -f `
+        $diag.windows_name, $diag.wsl_name, $diag.wsl_lib_present, $diag.wsl_smi_present, `
+        $diag.apt_nvidia_conflict, $diag.gpu_support_disabled, $diag.next_action) -Stage "GPU"
+
+    if ($diag.gpu_support_disabled) {
+        Write-KeepLog "WSL GPU blocked: .wslconfig has gpuSupport=false" -Level "WARN" -Stage "GPU"
+        Show-GpuActionRequired -Headline "WSL GPU DISABLED IN .WSLCONFIG" -Lines @(
+            "Your %USERPROFILE%\.wslconfig has gpuSupport=false.",
+            "That hides every NVIDIA card (including an RTX 4090) from Linux.",
+            "Otacon cannot safely edit that file for you."
+        ) -MustDo "Remove the gpuSupport=false line, then run: wsl --shutdown" -Pause
+        return [string]$diag.wsl_name
+    }
+    if ($diag.apt_nvidia_conflict) {
+        Show-GpuActionRequired -Headline "LINUX NVIDIA PACKAGES BLOCK PASSTHROUGH" -Lines @(
+            [string]$diag.driver_hint,
+            "Linux NVIDIA drivers inside WSL fight the Windows driver.",
+            "Otacon will NOT auto-remove packages (too risky on your machine)."
+        ) -MustDo "In Ubuntu: sudo apt remove --purge 'nvidia-driver*' 'nvidia-utils*'   then: wsl --shutdown" -Pause
+    }
+    if (-not $diag.wsl_lib_present -and $WindowsGpuName -and $WindowsGpuName -ne "not visible") {
+        Write-OtaconSay "Linux is missing /usr/lib/wsl/lib (GPU passthrough libs). Updating WSL..." -Mood "warn" -NoType
+    }
+
+    Write-KeepLog "WSL GPU soft-repair begin win='$WindowsGpuName'" -Stage "GPU"
+    try {
+        Write-OtaconSay "Windows sees an NVIDIA GPU, but Linux does not yet. Trying a quick WSL GPU repair..." -Mood "warn" -NoType
+        & wsl.exe --update 2>$null | Out-Null
+    } catch {
+        Write-KeepLog "wsl --update soft-fail: $($_.Exception.Message)" -Level "WARN" -Stage "GPU"
+    }
+    try {
+        & wsl.exe -t $Name 2>$null | Out-Null
+        Start-Sleep -Seconds 2
+        [void](Ensure-WslDistroRunning -Name $Name)
+    } catch {
+        Write-KeepLog "WSL restart soft-fail: $($_.Exception.Message)" -Level "WARN" -Stage "GPU"
+    }
+    $after = Get-WslNvidiaName -Name $Name
+    Write-KeepLog "WSL GPU soft-repair after='$after'" -Stage "GPU"
+    return $after
 }
 
 function ConvertTo-OtaconLinuxUsername {
@@ -3157,9 +3709,92 @@ function Step-InstallOtacon {
     param([string]$Name)
     Save-InstallerState @{ stage = "installing_otacon"; step = 6; ubuntu_name = $Name }
     $started = Get-Date
-    $gpuWin = Get-WindowsNvidiaName
-    $gpuWsl = Get-WslNvidiaName -Name $Name
-    Write-KeepLog "GPU windows='$gpuWin' wsl='$gpuWsl'" -Stage "INSTALLING_OTACON"
+    Invoke-InstallRiskPreflight -Name $Name
+    Write-OtaconSay "Identifying GPU (Windows + Linux)..." -Mood "work" -NoType
+    $gpuWin = "not visible"
+    $gpuWsl = "not visible in WSL"
+    $gpuWinVram = 0
+    $gpuDiag = $null
+    try { $gpuDiag = Get-WslGpuDiagnosis -Name $Name } catch { Write-KeepLog "Get-WslGpuDiagnosis: $($_.Exception.Message)" -Level "WARN" -Stage "GPU" }
+    if ($gpuDiag) {
+        $gpuWin = [string]$gpuDiag.windows_name
+        $gpuWsl = [string]$gpuDiag.wsl_name
+        $gpuWinVram = [double]$gpuDiag.windows_vram_gb
+        Write-KeepLog ("GPU diag next={0} lib={1} apt={2} disabled={3}" -f $gpuDiag.next_action, $gpuDiag.wsl_lib_present, $gpuDiag.apt_nvidia_conflict, $gpuDiag.gpu_support_disabled) -Stage "INSTALLING_OTACON"
+    } else {
+        try { $gpuWin = Get-WindowsNvidiaName } catch { Write-KeepLog "Get-WindowsNvidiaName: $($_.Exception.Message)" -Level "WARN" -Stage "GPU" }
+        try { $gpuWinVram = Get-WindowsNvidiaVramGb } catch { $gpuWinVram = 0 }
+        try { $gpuWsl = Get-WslNvidiaName -Name $Name } catch { Write-KeepLog "Get-WslNvidiaName: $($_.Exception.Message)" -Level "WARN" -Stage "GPU" }
+    }
+    Write-KeepLog "GPU windows='$gpuWin' vram_gb=$gpuWinVram wsl='$gpuWsl'" -Stage "INSTALLING_OTACON"
+
+    $winOk = ($gpuWin -and $gpuWin -ne "not visible")
+    $wslOk = ($gpuWsl -and $gpuWsl -ne "not visible in WSL")
+    if ($winOk -and -not $wslOk) {
+        $gpuWsl = Repair-WslGpuVisibility -Name $Name -WindowsGpuName $gpuWin
+        $wslOk = ($gpuWsl -and $gpuWsl -ne "not visible in WSL")
+        if (-not $wslOk) {
+            $next = if ($gpuDiag) { [string]$gpuDiag.next_action } else { "fix_otacon_gpu_bat" }
+            $headline = "WINDOWS SEES GPU - LINUX DOES NOT"
+            $must = "After setup: update NVIDIA Windows driver, run wsl --update && wsl --shutdown, then Fix-Otacon-GPU.bat"
+            $lines = @(
+                "Windows NVIDIA: $gpuWin",
+                "Linux (WSL): NOT VISIBLE",
+                "",
+                "Otacon cannot auto-fix a broken Windows driver or WSL GPU passthrough.",
+                "Install will CONTINUE using a Windows GPU hint (so a 4090 is not treated as CPU-only).",
+                ""
+            )
+            if ($next -eq "edit_wslconfig_gpuSupport") {
+                $headline = "WSL GPU DISABLED IN .WSLCONFIG"
+                $must = "Edit %USERPROFILE%\.wslconfig - remove gpuSupport=false - then: wsl --shutdown"
+                $lines += @(
+                    "Cause: .wslconfig has gpuSupport=false (hides the RTX card from Linux)."
+                )
+            } elseif ($next -eq "purge_linux_nvidia_packages") {
+                $headline = "LINUX NVIDIA PACKAGES BLOCK PASSTHROUGH"
+                $must = "In Ubuntu: sudo apt remove --purge 'nvidia-driver*' 'nvidia-utils*'   then: wsl --shutdown"
+                $lines += @(
+                    "Cause: Linux NVIDIA drivers inside WSL fight the Windows driver.",
+                    "I will NOT auto-remove packages (too risky)."
+                )
+            } elseif ($next -eq "update_windows_nvidia_and_wsl") {
+                $headline = "WSL GPU LIBRARIES MISSING"
+                $must = "Update Windows NVIDIA driver (Game Ready/Studio), then: wsl --update && wsl --shutdown"
+                $lines += @(
+                    "Cause: /usr/lib/wsl/lib is missing - Windows driver is too old or WSL GPU not enabled."
+                )
+            } else {
+                $lines += @(
+                    "Common fixes:",
+                    "  1) Update Windows NVIDIA driver (Game Ready or Studio)",
+                    "  2) PowerShell: wsl --update    then    wsl --shutdown",
+                    "  3) Check %USERPROFILE%\.wslconfig is NOT gpuSupport=false",
+                    "  4) Do NOT install Linux nvidia drivers inside WSL",
+                    "  5) After install: double-click Fix-Otacon-GPU.bat"
+                )
+            }
+            if ($gpuDiag -and $gpuDiag.driver_hint) { $lines += @("", [string]$gpuDiag.driver_hint) }
+            Show-GpuActionRequired -Headline $headline -Lines $lines -MustDo $must -Pause
+            Write-OtaconSay ("Continuing install with Windows GPU hint: {0}" -f $gpuWin) -Mood "warn"
+        } else {
+            Write-OtaconSay ("Linux GPU visible after repair: {0}" -f $gpuWsl) -Mood "ok" -NoType
+        }
+    } elseif ($winOk -and $wslOk) {
+        Write-OtaconSay ("GPU ready: {0}" -f $gpuWsl) -Mood "ok" -NoType
+    } elseif (-not $winOk) {
+        Write-KeepLog "Windows nvidia-smi not visible - Core can still install (CPU path)" -Stage "GPU"
+        Show-GpuActionRequired -Headline "NO NVIDIA GPU VISIBLE ON WINDOWS" -Lines @(
+            "Windows nvidia-smi did not report a GPU.",
+            "Otacon will install in CPU mode (chat still works; Studio/Genome GPU features will be limited).",
+            "",
+            "If this PC has an RTX card (e.g. 4090):",
+            "  1) Install/update the NVIDIA Windows driver from nvidia.com",
+            "  2) Reboot Windows",
+            "  3) Re-run OtaconsKeep-Setup.bat",
+            "  4) If still stuck: Fix-Otacon-GPU.bat"
+        ) -MustDo "Install or repair the Windows NVIDIA driver if you expected a GPU" -Pause
+    }
 
     # Elevation architecture: never configure NOPASSWD:ALL.
     # privileged + finalize run as WSL root via wsl.exe -u root; user phase runs as the normal account.
@@ -3217,12 +3852,20 @@ function Step-InstallOtacon {
         OTACON_LAUNCH_WIZARD         = $env:OTACON_LAUNCH_WIZARD
         OTACON_RUN_TESTS             = $env:OTACON_RUN_TESTS
         OTACON_RELEASE               = $env:OTACON_RELEASE
+        # Windows GPU hint: when WSL nvidia-smi is dark, Linux still classifies
+        # Studio packs from the Windows-reported card (RTX 4090 -> 24GB LTX-2).
+        OTACON_WINDOWS_GPU_HINT      = $(if ($winOk) { $gpuWin } else { "" })
+        OTACON_WINDOWS_GPU_VRAM_GB   = $(if ($gpuWinVram -gt 0) { "$gpuWinVram" } else { "" })
+        # Never leave SKIP=1 sticky from a prior hung probe on this host.
+        OTACON_SKIP_NVIDIA_SMI       = "0"
     }
     $envBits = New-Object System.Collections.Generic.List[string]
     foreach ($k in $envPairs.Keys) {
         $v = [string]$envPairs[$k]
         if ([string]::IsNullOrWhiteSpace($v)) { continue }
-        [void]$envBits.Add(("{0}={1}" -f $k, $v))
+        # bash `env KEY=VAL ...` - quote values so "NVIDIA GeForce RTX 4090" survives.
+        $esc = $v.Replace("'", "'\''")
+        [void]$envBits.Add(("{0}='{1}'" -f $k, $esc))
     }
     $envPass = ($envBits -join " ")
 
@@ -3486,6 +4129,7 @@ function Step-Verify {
 # ---------------------------------------------------------------------------
 function Start-GuidedSetup {
     Show-Banner
+    [void](Write-OtaconTroubleshootGuide -Highlight "LAUNCH")
     Write-KeepLog "installer launch Resume=$Resume Force=$($script:ForceInstall) AutoPilot=$($script:AutoPilot)" -Stage "READY"
 
     $st = Get-InstallerState

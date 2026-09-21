@@ -59,3 +59,33 @@ class PlatformGpuTests(unittest.TestCase):
         from core.platform import docker_env
         env = docker_env()
         self.assertIn('Docker/resources/bin', env.get('PATH', ''))
+
+    def test_detect_proc_fallback_enriches_4090_vram(self):
+        from core.platform import GPU
+
+        proc = [GPU('gpu_001', 'nvidia', 'NVIDIA GeForce RTX 4090', 0.0, 'GPU_SMALL')]
+        with mock.patch('core.platform._resolve_nvidia_smi', return_value=None):
+            with mock.patch('core.platform._proc_nvidia_gpus', return_value=proc):
+                h = detect()
+        self.assertEqual(len(h.gpus), 1)
+        self.assertEqual(h.gpus[0].vram_gb, 24.0)
+        self.assertEqual(h.gpus[0].capability, 'GPU_HIGH_END')
+        self.assertEqual(h.gpu_detection['status'], 'detected')
+        self.assertIn('SKU', h.gpu_detection['message'])
+
+    def test_detect_uses_windows_gpu_hint_env(self):
+        with mock.patch('core.platform._resolve_nvidia_smi', return_value=None):
+            with mock.patch('core.platform._proc_nvidia_gpus', return_value=[]):
+                with mock.patch.dict(os.environ, {
+                    'OTACON_WINDOWS_GPU_HINT': 'NVIDIA GeForce RTX 4090',
+                    'OTACON_WINDOWS_GPU_VRAM_GB': '24.0',
+                }, clear=False):
+                    h = detect()
+        self.assertEqual(len(h.gpus), 1)
+        self.assertEqual(h.gpus[0].model, 'NVIDIA GeForce RTX 4090')
+        self.assertEqual(h.gpus[0].vram_gb, 24.0)
+        self.assertIn('WINDOWS_GPU_HINT', h.gpu_detection['message'])
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1146,9 +1146,20 @@ GPU_NAME="None detected"
 GPU_VRAM_GB="0"
 GPU_STATUS="CPU fallback"
 
-if command_exists nvidia-smi; then
+# Prefer absolute WSL nvidia-smi (/usr/lib/wsl/lib) — bare PATH often misses it.
+_GPU_SMI=""
+if command_exists nvidia-smi; then _GPU_SMI="$(command -v nvidia-smi)"
+elif [[ -x /usr/lib/wsl/lib/nvidia-smi ]]; then _GPU_SMI=/usr/lib/wsl/lib/nvidia-smi
+elif [[ -x /usr/bin/nvidia-smi ]]; then _GPU_SMI=/usr/bin/nvidia-smi
+fi
+export PATH="/usr/lib/wsl/lib:${PATH:-/usr/bin}"
+if [[ -d /usr/lib/wsl/lib ]]; then
+  export LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+if [[ -n "$_GPU_SMI" ]]; then
   GPU_LINE="$(
-    nvidia-smi \
+    "$_GPU_SMI" \
       --query-gpu=name,memory.total \
       --format=csv,noheader,nounits 2>/dev/null \
       | head -n1 || true
@@ -1159,6 +1170,35 @@ if command_exists nvidia-smi; then
     GPU_VRAM_MB="$(printf '%s' "$GPU_LINE" | awk -F, '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print int($2)}')"
     GPU_VRAM_GB="$(awk -v m="$GPU_VRAM_MB" 'BEGIN{printf "%.1f",m/1024}')"
     GPU_STATUS="NVIDIA detected"
+  fi
+fi
+
+# Windows Setup can see the card while WSL nvidia-smi is still dark (Josh /
+# RTX 4090 class). Honor the hint so we still pick a large chat model + Studio.
+if [[ "$GPU_NAME" == "None detected" ]] && [[ -n "${OTACON_WINDOWS_GPU_HINT:-}" ]]; then
+  GPU_NAME="$OTACON_WINDOWS_GPU_HINT"
+  if [[ -n "${OTACON_WINDOWS_GPU_VRAM_GB:-}" ]]; then
+    GPU_VRAM_GB="$OTACON_WINDOWS_GPU_VRAM_GB"
+  fi
+  GPU_STATUS="NVIDIA hinted from Windows (WSL nvidia-smi not ready)"
+  warn "GPU: using Windows hint '$GPU_NAME' (${GPU_VRAM_GB} GB) — run Fix-Otacon-GPU.bat if Codec still says no GPU."
+fi
+
+# If we have a known desktop SKU name but still 0 VRAM, use marketed size so
+# chat model + later Studio profile are not CPU-tier on a 4090.
+if awk -v v="${GPU_VRAM_GB:-0}" 'BEGIN{exit !(v+0==0)}'; then
+  _gn="$(printf '%s' "$GPU_NAME" | tr '[:upper:]' '[:lower:]')"
+  case "$_gn" in
+    *rtx*5090*) GPU_VRAM_GB=32 ;;
+    *rtx*5080*|*rtx*5070*ti*|*rtx*5060*ti*|*rtx*4080*|*rtx*4060*ti*) GPU_VRAM_GB=16 ;;
+    *rtx*4090*|*rtx*3090*) GPU_VRAM_GB=24 ;;
+    *rtx*3060*ti*|*rtx*3070*|*rtx*2080*|*rtx*2070*|*rtx*2060*super*) GPU_VRAM_GB=8 ;;
+    *rtx*4070*|*rtx*3080*ti*|*rtx*3060*) GPU_VRAM_GB=12 ;;
+    *rtx*3080*) GPU_VRAM_GB=10 ;;
+    *rtx*2060*) GPU_VRAM_GB=6 ;;
+  esac
+  if awk -v v="${GPU_VRAM_GB:-0}" 'BEGIN{exit !(v+0>0)}'; then
+    log "GPU VRAM inferred from SKU name: ${GPU_VRAM_GB} GB ($GPU_NAME)"
   fi
 fi
 
@@ -1591,7 +1631,21 @@ OTACON_BOOTSTRAP_MODEL_ID=$MODEL_ID
 OTACON_LLM_ENDPOINT=$OLLAMA_ENDPOINT
 OTACON_LLM_MODEL=$RECOMMENDED_MODEL
 OTACON_LLM_PROVIDER=ollama
+OTACON_WINDOWS_GPU_HINT=${OTACON_WINDOWS_GPU_HINT:-$GPU_NAME}
+OTACON_WINDOWS_GPU_VRAM_GB=${OTACON_WINDOWS_GPU_VRAM_GB:-$GPU_VRAM_GB}
+OTACON_SKIP_NVIDIA_SMI=${OTACON_SKIP_NVIDIA_SMI:-0}
 EOF
+
+# Durable diagnosis for support / Fix-Otacon-GPU (do not fail install).
+{
+  printf 'gpu_name=%s\n' "$GPU_NAME"
+  printf 'gpu_vram_gb=%s\n' "$GPU_VRAM_GB"
+  printf 'gpu_status=%s\n' "$GPU_STATUS"
+  printf 'windows_hint=%s\n' "${OTACON_WINDOWS_GPU_HINT:-}"
+  printf 'wsl_lib=%s\n' "$( [[ -d /usr/lib/wsl/lib ]] && echo present || echo missing )"
+  printf 'wsl_smi=%s\n' "$( [[ -x /usr/lib/wsl/lib/nvidia-smi ]] && echo present || echo missing )"
+  printf 'apt_nvidia=%s\n' "$(dpkg-query -W -f='${Package} ' 'nvidia-driver*' 'nvidia-utils*' 2>/dev/null | head -c 200 || true)"
+} >"$HOME/.config/otacon/gpu-diagnosis.txt" 2>/dev/null || true
 
 # VRAM-first Video Studio / music profile (Z-Image, Wan/LTX-2, ACE-Step)
 if [[ -n "${VPY:-}" ]] && [[ -f "$INSTALL_DIR/core/hardware_profile.py" ]]; then
@@ -1718,6 +1772,20 @@ if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
   if ensure_ollama_running; then
     ok "Ollama is reachable at $OLLAMA_ENDPOINT"
     log "Pulling $RECOMMENDED_MODEL (sized for ${GPU_VRAM_GB} GB VRAM / $MODEL_TIER)"
+    # Loud guidance: large models look "stuck" — do not close the Windows Setup window.
+    if awk -v v="${GPU_VRAM_GB:-0}" 'BEGIN{exit !(v+0>=16)}'; then
+      printf '\n'
+      printf ' ################################################################\n'
+      printf ' #  !!!  ACTION REQUIRED - MODEL DOWNLOAD  !!!\n'
+      printf ' #  LARGE OLLAMA PULL (UP TO 60+ MIN) - LEAVE WINDOW OPEN\n'
+      printf ' ################################################################\n'
+      printf '     Model: %s  (high-VRAM / %s path)\n' "$RECOMMENDED_MODEL" "$MODEL_TIER"
+      printf '     Falling code / Stage 6 heartbeats mean it is still working.\n'
+      printf '     Do NOT close OtaconsKeep Setup. Antivirus may slow downloads.\n'
+      printf '     Guide (Windows): %%LOCALAPPDATA%%\\OtaconsKeep\\TROUBLESHOOTING.txt\n'
+      printf ' ################################################################\n'
+      printf '\n'
+    fi
     # RTX 4090 selects 14b — can take a long time; heartbeats keep Stage 6 honest.
     if run_watched 3600 "ollama pull $RECOMMENDED_MODEL" --soft -- ollama pull "$RECOMMENDED_MODEL"; then
       ok "Model ready: $RECOMMENDED_MODEL"
@@ -1726,6 +1794,7 @@ if [[ "$INSTALL_DEFAULT_MODEL" == "1" ]]; then
     else
       warn "Could not pull $RECOMMENDED_MODEL."
       warn "Retry later with: ollama pull $RECOMMENDED_MODEL"
+      warn "If Windows Setup closed early, re-run Setup; see TROUBLESHOOTING.txt section 7."
       REQUIRED_FAIL=1
       MODEL_OK=0
       stage "6.5" "FAIL" "ollama pull failed or timed out"
@@ -1987,6 +2056,10 @@ write_otacon_service_unit() {
   local ENV_EXTRA
   local TTS_PROVIDER="${OTACON_TTS_PROVIDER:-piper}"
   local TTS_ENDPOINT="${OTACON_TTS_ENDPOINT:-wyoming://127.0.0.1:10200}"
+  local WIN_GPU_HINT WIN_GPU_VRAM
+  # systemd Environment= breaks on spaces unless quoted; strip risky chars.
+  WIN_GPU_HINT="$(printf '%s' "${OTACON_WINDOWS_GPU_HINT:-}" | tr -cd 'A-Za-z0-9 ._-+' | head -c 96)"
+  WIN_GPU_VRAM="$(printf '%s' "${OTACON_WINDOWS_GPU_VRAM_GB:-}" | tr -cd '0-9.' | head -c 16)"
   if [[ -f "$HOME/.config/otacon/tts.env" ]]; then
     # shellcheck disable=SC1090
     set -a; source "$HOME/.config/otacon/tts.env"; set +a
@@ -2020,6 +2093,8 @@ Environment=OTACON_LLM_MODEL=$RECOMMENDED_MODEL
 Environment=OTACON_TTS_PROVIDER=$TTS_PROVIDER
 Environment=OTACON_TTS_ENDPOINT=$TTS_ENDPOINT
 Environment=OTACON_SKIP_NVIDIA_SMI=${OTACON_SKIP_NVIDIA_SMI:-0}
+Environment="OTACON_WINDOWS_GPU_HINT=${WIN_GPU_HINT}"
+Environment="OTACON_WINDOWS_GPU_VRAM_GB=${WIN_GPU_VRAM}"
 ExecStart=$VPY -m installer.server
 Restart=always
 RestartSec=3
