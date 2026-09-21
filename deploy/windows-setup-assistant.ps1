@@ -3401,7 +3401,7 @@ function Step-RegisterWakeTask {
     @"
 @echo off
 title OtaconsKeep
-REM Quiet daily launch — never opens setup/repair/admin path.
+REM Quiet daily launch - never opens setup/repair/admin path.
 call "%LOCALAPPDATA%\OtaconsKeep\Launch-Otacon.cmd" 2>nul
 if errorlevel 1 (
   if exist "%LOCALAPPDATA%\OtaconsKeep\installer\deploy\install-desktop-launcher.ps1" (
