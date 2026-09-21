@@ -888,7 +888,7 @@ def _refresh_video_job(job: dict[str, Any], layout: Optional[StateLayout] = None
     files = _history_outputs(ep, str(job['prompt_id']))
     if files:
         job['status'] = 'completed'
-        job['stage'] = 'done'
+        job['stage'] = 'complete'
         job['outputs'] = files
         job['output_file'] = files[0]
         _upsert_job(job, layout)
@@ -1075,8 +1075,38 @@ def handle_workshop_get(
     if m:
         return _send_job_output(unquote(m.group(1)), layout, send_json, send_redirect, send_bytes)
 
-    # Soft stubs for modalities not fully wired yet — keep UI from hard-failing.
-    if rel.startswith('generate-v2/') or rel.startswith('generate-hidream'):
+    # Video status / output aliases — UI polls /generate-v2/<id> (same shape as image/music).
+    m = re.match(r'generate-v2/([^/]+)$', rel)
+    if m:
+        jid = unquote(m.group(1))
+        job = _get_job(jid, layout)
+        if job:
+            refreshed = _refresh_video_job(dict(job), layout)
+            # Workshop UI expects stage == 'complete' (not 'done').
+            if refreshed.get('status') == 'completed' and refreshed.get('stage') in ('done', 'complete', ''):
+                refreshed['stage'] = 'complete'
+            send_json(refreshed)
+            return True
+        try:
+            from expansion.jobs import JobStore
+            ej = JobStore(layout=layout).get(jid)
+        except Exception:
+            ej = None
+        if ej:
+            card = sync_expansion_job_to_workshop(ej, layout)
+            if card.get('status') == 'completed':
+                card['stage'] = 'complete'
+            send_json(card)
+            return True
+        send_json({'error': 'not found'}, 404)
+        return True
+
+    m = re.match(r'generate-v2/([^/]+)/output$', rel)
+    if m:
+        return _send_job_output(unquote(m.group(1)), layout, send_json, send_redirect, send_bytes)
+
+    # Remaining hidream stubs only — do not 404 real video jobs.
+    if rel.startswith('generate-hidream'):
         send_json({'error': 'job not found', 'expansion_stub': True}, 404)
         return True
 
@@ -1525,20 +1555,42 @@ def handle_workshop_write(
         except (TypeError, ValueError):
             width, height = 512, 320
         try:
-            frames = int(data.get('frames') or data.get('length') or 25)
-        except (TypeError, ValueError):
-            frames = 25
-        try:
             fps = int(data.get('fps') or 16)
         except (TypeError, ValueError):
             fps = 16
+        fps = max(8, min(fps, 24))
+        # UI FormData sends duration (seconds), not frames. Prefer explicit frames/length.
+        frames = None
+        for key in ('frames', 'length', 'num_frames'):
+            if data.get(key) not in (None, ''):
+                try:
+                    frames = int(data.get(key))
+                    break
+                except (TypeError, ValueError):
+                    pass
+        if frames is None:
+            dur_raw = data.get('duration')
+            if dur_raw in (None, ''):
+                dur_raw = data.get('seconds') or data.get('duration_sec')
+            try:
+                duration_sec = float(dur_raw) if dur_raw not in (None, '') else 2.0
+            except (TypeError, ValueError):
+                duration_sec = 2.0
+            duration_sec = max(1.0, min(duration_sec, 10.0))
+            frames = max(5, int(round(duration_sec * fps)))
         try:
             steps = int(data.get('steps') or 20)
         except (TypeError, ValueError):
             steps = 20
+        negative = str(
+            data.get('negative')
+            or data.get('negative_prompt')
+            or data.get('neg')
+            or ''
+        )
         job = _create_video_job(
             prompt=prompt,
-            negative=str(data.get('negative') or ''),
+            negative=negative,
             width=width,
             height=height,
             frames=frames,
@@ -1546,9 +1598,25 @@ def handle_workshop_write(
             steps=steps,
             layout=layout,
         )
+        # Surface duration for Workshop cards / progress UI.
+        try:
+            job['duration'] = round(float(job.get('frames') or frames) / float(fps), 2)
+            job['num_frames'] = job.get('frames') or frames
+            _upsert_job(job, layout)
+        except Exception:
+            pass
         code = 200 if job.get('status') != 'failed' else int(
             409 if job.get('soft_block') or job.get('action') == 'install_packs' else 502
         )
+        # Busy Comfy during an active Wan render is common on 8 GB — say so clearly.
+        err = str(job.get('error') or '')
+        if job.get('status') == 'failed' and 'not reachable' in err.lower():
+            job['error'] = (
+                'ComfyUI is busy or briefly offline (common while a Wan video is rendering). '
+                'Wait for the current render to finish, then try again — do not queue a second video yet.'
+            )
+            err = job['error']
+            _upsert_job(job, layout)
         send_json({
             'ok': job.get('status') != 'failed',
             'id': job['id'],
@@ -1556,8 +1624,8 @@ def handle_workshop_write(
             'job': job,
             'status': job.get('status'),
             'prompt_id': job.get('prompt_id') or '',
-            'error': job.get('error') or '',
-            'detail': job.get('error') or '',
+            'error': err,
+            'detail': err,
             'action': job.get('action') or '',
             'soft_block': bool(job.get('soft_block')),
         }, code)

@@ -1309,8 +1309,8 @@ def submit_video_job(
             'queued': False,
             'error': 'creative workflow submitter: ComfyUI not reachable',
             'detail': (
-                'Video generate needs a live ComfyUI. '
-                f'Last check: {health_detail}.'
+                'ComfyUI is busy or briefly offline (common while a Wan video is rendering). '
+                f'Last check: {health_detail}. Wait for the current render to finish before queuing another.'
             ),
             'studio_state': vs.state,
             'endpoint': ep,
