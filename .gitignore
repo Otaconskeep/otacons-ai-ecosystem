@@ -25,11 +25,13 @@ __pycache__/
 installer/bin/
 src-tauri/target/
 
-# OtaconsKeep remote-support: generated friend installers embed temporary Tailscale auth keys
-tools/remote-support/out/
+# Remote-support toolkit is PRIVATE (Otaconskeep/otacons-remote-support). Do not re-add here.
+tools/remote-support/
+docs/remote-support.md
+tests/test_remote_support.py
+tests/remote_support/
 OtaconsKeep-Remote-Setup-*.bat
 **/OtaconsKeep-Remote-Setup-*.bat
-# Owner-side RustDesk unattended passwords + access records (never commit)
-tools/remote-support/generated/owner/*
-!tools/remote-support/generated/owner/.gitignore
 *-RemoteAccess.txt
+SEND-TO-*.bat
+**/SEND-TO-*.bat
