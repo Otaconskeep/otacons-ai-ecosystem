@@ -36,6 +36,7 @@ BUNDLE_FILES = [
     "deploy/get-fix-codec.cmd",
     "deploy/find-ubuntu.ps1",
     "deploy/install-wake-task.ps1",
+    "deploy/install-desktop-launcher.ps1",
     "deploy/wake-otacon.ps1",
     "deploy/keep-ubuntu-awake.ps1",
     "deploy/download-one.ps1",

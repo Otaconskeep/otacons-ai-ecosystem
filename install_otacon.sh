@@ -1227,15 +1227,17 @@ if command_exists ss; then
     ok "Port $CHAT_PORT is free"
   fi
 fi
-# Download reachability
-if curl -fsSI --max-time 8 https://github.com >/dev/null 2>&1; then
-  ok "Network reachability: github.com"
+# Download reachability (this is the *Linux/WSL* stack — Windows downloads succeeding
+# does not prove this environment can reach GitHub).
+if curl -fsSI --max-time 8 https://github.com >/dev/null 2>&1 \
+   || (command_exists getent && getent hosts github.com >/dev/null 2>&1); then
+  ok "Network reachability (Linux/WSL): github.com"
 else
-  warn "Cannot reach github.com — clone/update may fail"
+  warn "Linux/WSL cannot reach github.com — clone/update will fail (Windows may still be online)."
   PREFLIGHT_FAIL=1
 fi
 if [[ "$PREFLIGHT_FAIL" == "1" ]]; then
-  die "Preflight failed (RAM/disk/network). Free resources or fix connectivity, then rerun. Log: $INSTALL_LOG"
+  die "Preflight failed (RAM/disk/network). If Windows downloads worked but this failed, fix WSL routing/DNS (.wslconfig / default route / VPN adapters), then rerun. Log: $INSTALL_LOG"
 fi
 
 # ------------------------------------------------------------------------------

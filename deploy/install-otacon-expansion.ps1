@@ -315,7 +315,29 @@ if ($out -match 'EXP_INSTALL_EXIT=(\d+)') {
 
 if ($installExit -ne 0 -and $installExit -ne 2) {
     Write-OtaconSay "Expansion foundation failed (exit $installExit). See log: $LogFile" "alert"
-    Write-Host "  Tip: finish Lite install first, then rerun Expansion Setup."
+    $tip = "See the expansion installer log for the Linux error, then rerun Expansion Setup."
+    $networkHint = $false
+    if ($out -match 'EXP_FAIL=wsl_network' -or $out -match 'EXP_FAIL=git_fetch' `
+        -or $out -match 'Could not resolve host' -or $out -match 'cannot_resolve_github' `
+        -or $out -match 'WSL/Linux cannot reach github' -or $installExit -eq 128) {
+        $networkHint = $true
+        $tip = (
+            "WSL/Linux cannot reach GitHub (DNS or default route). " +
+            "Windows downloads can succeed while WSL has no internet - fix WSL networking " +
+            "(.wslconfig / default route / VPN adapters), then rerun Expansion. " +
+            "This is not a missing Lite install."
+        )
+    } elseif ($out -match 'EXP_FAIL=missing_install_script') {
+        $tip = "Expansion install script missing from the bootstrap bundle. Re-download Expansion Setup and retry."
+    } elseif ($out -match 'Core is not installed' -or $out -match 'no otacon-ai-ecosystem') {
+        $tip = "Lite/Core was not found in WSL. Finish OtaconsKeep Lite first, then rerun Expansion Setup."
+    } elseif ($out -match 'virtual environment wasn.t found' -or $out -match 'Re-run Core') {
+        $tip = "Core's Python environment looks broken. Run OtaconsKeep-Setup.bat --fix-codec, then Expansion again."
+    }
+    Write-Host "  Tip: $tip"
+    if ($networkHint) {
+        Write-Host "  Note: Core was already healthy above - do not reinstall Lite for this error."
+    }
     exit 7
 }
 
@@ -426,6 +448,23 @@ if ($entitled) {
     Write-OtaconSay "Foundation installed. Entitlement is false - open entitlement API for the reason." "warn"
 }
 Write-ExpLog "SUCCESS foundation_ready=1 entitled=$entitled overall_core_ready=$ocr"
+
+# Desktop + Start Menu launcher (Lite may have created Open-Otacon.bat; Expansion upgrades label)
+$launcherPs1 = Join-Path $InstDir "deploy\install-desktop-launcher.ps1"
+if (-not (Test-Path -LiteralPath $launcherPs1)) {
+    $launcherPs1 = Join-Path (Join-Path (Resolve-RepoRoot) "deploy") "install-desktop-launcher.ps1"
+}
+if (Test-Path -LiteralPath $launcherPs1) {
+    $launchLabel = if ($entitled) { "OtaconsKeep Premium" } else { "OtaconsKeep" }
+    $launchUrl = if ($base) { "$base/" } else { "http://127.0.0.1:$Port/" }
+    try {
+        Write-OtaconSay "Adding a Desktop launcher so you can open the Keep in one click..." "work"
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcherPs1 `
+            -Port $Port -Url $launchUrl.TrimEnd('/') -Label $launchLabel | ForEach-Object { Write-ExpLog $_ }
+    } catch {
+        Write-ExpLog "desktop launcher warn: $($_.Exception.Message)"
+    }
+}
 
 if ($OpenBrowser -and -not $Unattended -and $env:OTACON_UNATTENDED -ne "1") {
     try { Start-Process "$base/" } catch {}

@@ -131,7 +131,14 @@ def handle_expansion_get(path: str, send_json, send_bytes=None) -> bool:
         try:
             from expansion.capabilities.studio_packs import packs_status, ensure_auto_install
             packs = packs_status(layout=layout, endpoint=endpoint or None, hw=hw)
-            if vs.state == 'READY' and packs.get('soft_block') and not packs.get('running'):
+            # Continue auto-pull while any profile pack is needed — not only when
+            # soft_block (Z-Image missing). Video/music must not stall after image.
+            _need_more = bool(packs.get('needed')) and not packs.get('ok')
+            if (
+                vs.state == 'READY'
+                and not packs.get('running')
+                and (packs.get('soft_block') or _need_more)
+            ):
                 auto = ensure_auto_install(layout=layout, hw=hw, studio_ready=True)
                 if auto.get('auto_started') or auto.get('running'):
                     packs = packs_status(layout=layout, endpoint=endpoint or None, hw=hw)

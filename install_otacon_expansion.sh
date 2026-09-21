@@ -204,11 +204,35 @@ VPY="$VENV_DIR/bin/python"
 ok "Reusing Core's Python environment: $VPY"
 
 # ------------------------------------------------------------------------------
+# WSL/Linux network preflight (Windows downloads ≠ WSL routes)
+# ------------------------------------------------------------------------------
+log "Checking WSL/Linux reachability to GitHub before repo sync"
+_wsl_net_ok=0
+if command_exists getent && getent hosts github.com >/dev/null 2>&1; then
+  _wsl_net_ok=1
+elif command_exists curl && curl -fsSI --max-time 8 https://github.com >/dev/null 2>&1; then
+  _wsl_net_ok=1
+elif command_exists git && git ls-remote --heads "$REPO_URL" HEAD >/dev/null 2>&1; then
+  _wsl_net_ok=1
+fi
+if [[ "$_wsl_net_ok" != "1" ]]; then
+  echo "EXP_FAIL=wsl_network"
+  echo "EXP_FAIL_DETAIL=cannot_resolve_github"
+  die "WSL/Linux cannot reach github.com (no DNS/default route). Windows may still download fine — these are separate stacks. Fix WSL networking (default route / .wslconfig / VPN adapters), then rerun Expansion. Log: $INSTALL_LOG"
+fi
+ok "WSL/Linux can resolve github.com"
+
+# ------------------------------------------------------------------------------
 # Repository sync (same repo Core already cloned -- expansion/ lives inside it)
 # ------------------------------------------------------------------------------
 log "Synchronizing the public repository"
 
-run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" fetch --prune origin
+if ! run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" fetch --prune origin; then
+  _git_ec=$?
+  echo "EXP_FAIL=git_fetch"
+  echo "EXP_FAIL_DETAIL=exit_${_git_ec}"
+  die "git fetch failed (exit ${_git_ec}). Usually WSL DNS/routing or GitHub unreachable — not a missing Lite install. Log: $INSTALL_LOG"
+fi
 CURRENT_BRANCH="$(run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" branch --show-current || true)"
 # Match Core installer: diverged trees (ahead/behind) must not die on exit 128.
 # Prefer release.json.commit from origin/main (strict pin); else origin/main tip.
@@ -520,6 +544,33 @@ if [[ -n "${VPY:-}" ]] && [[ -f "$INSTALL_DIR/core/hardware_profile.py" ]]; then
   EXP_STUDIO_AUTO="$(printf '%s\n' "$STUDIO_OUT" | sed -n '3p')"
   EXP_STUDIO_ASSETS="$(printf '%s\n' "$STUDIO_OUT" | sed -n '4p')"
   ok "Studio profile=${EXP_STUDIO_PROFILE:-?} comfy=${EXP_STUDIO_COMFY:-?} auto=${EXP_STUDIO_AUTO:-?} assets=${EXP_STUDIO_ASSETS:-none}"
+  # Kick hardware-matched creative packs (Z-Image + video + music) in the background
+  # when this PC is auto-install eligible. Does not wait for multi-GB downloads.
+  if [[ "${EXP_STUDIO_AUTO:-0}" == "1" ]]; then
+    log "Auto-starting creative pack downloads for profile assets: ${EXP_STUDIO_ASSETS:-all}"
+    PACK_KICK="$(
+      run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" PYTHONPATH="$INSTALL_DIR" \
+        "$VPY" -c "
+from expansion.capabilities.studio_packs import start_pack_install, packs_status
+from expansion.capabilities.studio_setup import studio_hardware_snapshot
+hw = studio_hardware_snapshot()
+st = packs_status(hw=hw)
+needed = list(st.get('needed') or [])
+if st.get('ok'):
+    print('started=0 running=0 needed=none detail=already_ok')
+elif st.get('running'):
+    print('started=0 running=1 needed=%s' % (','.join(needed) or 'none'))
+else:
+    out = start_pack_install(hw=hw, which=None)
+    print('started=%s running=%s needed=%s' % (out.get('started'), out.get('running'), ','.join(needed) or 'none'))
+" 2>/dev/null || echo 'started=0 running=0 needed=error'
+    )"
+    ok "Creative pack kick: ${PACK_KICK}"
+    echo "EXP_PACKS_KICK=${PACK_KICK}"
+  else
+    warn "Studio auto-install off for this hardware — packs stay UI-driven (Set Up Video Studio)."
+    echo "EXP_PACKS_KICK=skipped_auto_off"
+  fi
 fi
 echo "EXP_STUDIO_PROFILE=${EXP_STUDIO_PROFILE:-unknown}"
 

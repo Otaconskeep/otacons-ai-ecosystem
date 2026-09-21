@@ -1003,7 +1003,11 @@ def ensure_auto_install(
     hw: Optional[dict[str, Any]] = None,
     studio_ready: bool = False,
 ) -> dict[str, Any]:
-    """If Studio is READY and packs missing, kick hardware-matched downloads (no UI pick)."""
+    """If Studio is READY and packs missing, kick hardware-matched downloads (no UI pick).
+
+    Pulls the full profile set (Z-Image + video + music) when VRAM ≥ 6 GB.
+    Below 6 GB: image-only. Does **not** stop after Z-Image if video/music remain needed.
+    """
     layout = layout or resolve_layout()
     if hw is None:
         try:
@@ -1012,18 +1016,21 @@ def ensure_auto_install(
         except Exception:
             hw = {}
     status = packs_status(layout=layout, hw=hw)
-    if status.get('ok') or status.get('image_ready'):
+    needed = list(status.get('needed') or [])
+    if status.get('ok') or not needed:
         return {**status, 'auto_started': False, 'detail': 'packs already ready'}
     if status.get('running'):
         return {**status, 'auto_started': False, 'detail': 'already downloading'}
     if not studio_ready:
         return {**status, 'auto_started': False, 'detail': 'studio not READY'}
-    st = load_packs_state(layout)
-    if st.get('auto_kicked') and st.get('phase') not in ('FAILED', 'NOT_STARTED', '', None):
-        return {**status, 'auto_started': False, 'detail': 'auto already attempted'}
-    # ≤10 GB: image-unblock only (NVFP4 / INT8). Skip Wan/ACE/LTX until user asks.
     vram = float((hw or {}).get('marketed_vram_gb') or (hw or {}).get('vram_gb') or 0)
-    which = ['zimage'] if vram and vram < 12 else None
+    # <6 GB: image unblock only. 6 GB+ profiles include Wan 5B / ACE — pull them.
+    if vram and vram < 6:
+        which = ['zimage']
+    elif status.get('image_ready') and needed:
+        which = [p for p in needed if p != 'zimage'] or needed
+    else:
+        which = None  # full profile order (Z-Image first)
     out = start_pack_install(layout=layout, hw=hw, which=which)
     st = load_packs_state(layout)
     st['auto_kicked'] = True

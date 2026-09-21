@@ -163,6 +163,57 @@ class StudioPacksTests(unittest.TestCase):
             self.assertFalse(st['soft_block'])
             self.assertEqual(st['models_root_role'], 'host_staging_then_docker_cp')
 
+    def test_ensure_auto_install_continues_after_zimage(self):
+        """8 GB profiles must keep pulling wan/ace after Z-Image is ready."""
+        with TemporaryDirectory() as td:
+            calls = []
+
+            def fake_start(**kwargs):
+                calls.append(kwargs.get('which'))
+                return {'started': True, 'running': True}
+
+            status = {
+                'ok': False,
+                'image_ready': True,
+                'needed': ['wan', 'ace_step'],
+                'running': False,
+                'soft_block': False,
+            }
+            with mock.patch.object(sp, 'packs_status', return_value=status), \
+                 mock.patch.object(sp, 'start_pack_install', side_effect=fake_start), \
+                 mock.patch.object(sp, 'load_packs_state', return_value={}), \
+                 mock.patch.object(sp, 'save_packs_state'):
+                out = sp.ensure_auto_install(
+                    studio_ready=True,
+                    hw={'marketed_vram_gb': 8, 'vram_gb': 8},
+                )
+            self.assertTrue(out.get('auto_started') or out.get('started'))
+            self.assertEqual(calls, [['wan', 'ace_step']])
+
+    def test_ensure_auto_install_image_only_under_6gb(self):
+        calls = []
+
+        def fake_start(**kwargs):
+            calls.append(kwargs.get('which'))
+            return {'started': True, 'running': True}
+
+        status = {
+            'ok': False,
+            'image_ready': False,
+            'needed': ['zimage', 'wan'],
+            'running': False,
+            'soft_block': True,
+        }
+        with mock.patch.object(sp, 'packs_status', return_value=status), \
+             mock.patch.object(sp, 'start_pack_install', side_effect=fake_start), \
+             mock.patch.object(sp, 'load_packs_state', return_value={}), \
+             mock.patch.object(sp, 'save_packs_state'):
+            sp.ensure_auto_install(
+                studio_ready=True,
+                hw={'marketed_vram_gb': 4, 'vram_gb': 4},
+            )
+        self.assertEqual(calls, [['zimage']])
+
 
 if __name__ == '__main__':
     unittest.main()

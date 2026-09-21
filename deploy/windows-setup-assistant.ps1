@@ -3415,6 +3415,20 @@ echo Done. Press any key to close.
 pause >nul
 "@ | Set-Content -Path $fixBat -Encoding ASCII
     Write-KeepLog "wake task + Open-Otacon.bat + Fix-Otacon-Codec.bat registered ok=$(Test-WakeTaskRegistered)" -Stage "STARTING"
+    # Desktop + Start Menu clickable launcher (Open-Otacon.bat alone is easy to miss)
+    $deskPs1 = Join-Path $RepoRoot "deploy\install-desktop-launcher.ps1"
+    if (Test-Path -LiteralPath $deskPs1) {
+        try {
+            $deskOut = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $deskPs1 `
+                -Port $Port -Url ("http://127.0.0.1:{0}" -f $Port) -Label "OtaconsKeep" `
+                -KeepDir $KeepDir -OpenBat $openBat 2>&1
+            Write-KeepLog ("desktop launcher: {0}" -f ($deskOut | Out-String).Trim()) -Stage "STARTING"
+        } catch {
+            Write-KeepLog ("desktop launcher warn: {0}" -f $_.Exception.Message) -Level "WARN" -Stage "STARTING"
+        }
+    } else {
+        Write-KeepLog "desktop launcher script missing: $deskPs1" -Level "WARN" -Stage "STARTING"
+    }
     return (Test-WakeTaskRegistered)
 }
 
