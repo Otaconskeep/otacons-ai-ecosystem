@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.1.1",
-  "commit": "9bc7ea2f8a64bb87e94b0347ac7f5fe8635ef924",
+  "commit": "aaa72897de96031f1f897c106fc908d2fb03d008",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -10,7 +10,7 @@
   "python_preferred": "3.12",
   "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on 'main').",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
-  "installer_revision": "9bc7ea2f8a64bb87e94b0347ac7f5fe8635ef924",
+  "installer_revision": "aaa72897de96031f1f897c106fc908d2fb03d008",
   "files": [
     {
       "path": "install_otacon.bat",
@@ -39,13 +39,13 @@
     },
     {
       "path": "install_otacon.sh",
-      "sha256": "188b235def1cd7ba1ecf6f3d72d057c3562adc12bd44ae7e82836ae73e334d2a",
-      "bytes": 96108
+      "sha256": "7e1d890178eee2b28dd50f3ce0a90d05ff0c121e149a1fe9efb22f1ccda8be5c",
+      "bytes": 100260
     },
     {
       "path": "install_otacon_expansion.sh",
-      "sha256": "ba931f46c110a3c04dc4b8c84b20c571587be780a4cadae8c69bd73efc215807",
-      "bytes": 31373
+      "sha256": "b86fc50f36ecb131c9d523959651e0e52dee4f2898595dbe367cefc8835857a9",
+      "bytes": 33719
     },
     {
       "path": "deploy/bootstrap-fetch.ps1",
@@ -54,8 +54,8 @@
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
-      "sha256": "a0390084658b1b445b3d72adb3b1d3b4a55be0dc6b224c16f00fe94eb744db4e",
-      "bytes": 178349
+      "sha256": "b5bb6308f4c79275bcd72ca9a64d3a66c1b51637edb4a1439be5689d825e45bf",
+      "bytes": 210529
     },
     {
       "path": "deploy/repair-otacon-core.ps1",
@@ -64,8 +64,8 @@
     },
     {
       "path": "deploy/install-otacon-expansion.ps1",
-      "sha256": "bdf0ce31ad7f2a676fa3d704361dadf33c99844614f5a56620bba748bc557caa",
-      "bytes": 20475
+      "sha256": "1f1d41a01749f1b255b43be770c25a65163228c0b20a17409046e6ae06ca0ca3",
+      "bytes": 32007
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
@@ -74,8 +74,8 @@
     },
     {
       "path": "deploy/fix-otacon-gpu.ps1",
-      "sha256": "0f630e9cadea917977dec58f43507368b42dbcc043deb290a2d09a7f466b58d6",
-      "bytes": 10894
+      "sha256": "d68ff971d293853ea10a6d88ee0d32c0d99f6c234980d81dd4adcc569b6e937f",
+      "bytes": 12470
     },
     {
       "path": "deploy/get-fix-codec.cmd",
