@@ -301,9 +301,10 @@ Log: $LogFile
 2) DISK (LTX-2 / 24GB GPUs need ~100 GB free)
    - Free space on C: / WSL drive; avoid storing models on /mnt/c
 
-3) DOCKER (Video Studio / Comfy)
-   - Setup tries to install Docker Desktop automatically via winget
-   - If that fails: install from docker.com; enable WSL Integration + GPU
+3) DOCKER (Video Studio / Comfy / Home Assistant)
+   - Setup auto-installs via: winget -> official Installer.exe -> choco
+   - Then waits for docker info (engine Ready) before continuing
+   - If that still fails: docker.com + WSL Integration + reboot if asked
    - docker version inside your Ubuntu distro
    - Leave Docker Desktop Running before Set Up Video Studio
 
@@ -361,64 +362,194 @@ if ($freeGb -ge 0 -and $freeGb -lt 100) {
     try { Write-Host "  Press Enter to continue anyway..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 4 }
 }
 
-$dockerOk = $false
-try { if (Get-Command docker -ErrorAction SilentlyContinue) { $dockerOk = $true } } catch {}
-if (-not $dockerOk) {
-    $dd = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
-    if (Test-Path -LiteralPath $dd) { $dockerOk = $true }
+$dockerReady = $false
+function Update-ExpDockerPath {
+    try {
+        $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
+        $user = [Environment]::GetEnvironmentVariable("Path", "User")
+        if ($machine -or $user) { $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ";" }
+        foreach ($e in @(
+            (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin"),
+            (Join-Path $env:ProgramFiles "Docker\Docker"),
+            (Join-Path $env:ProgramData "DockerDesktop\version-bin")
+        )) {
+            if ($e -and (Test-Path -LiteralPath $e) -and ($env:Path -notlike "*$e*")) { $env:Path = "$e;$env:Path" }
+        }
+    } catch {}
 }
-if ($dockerOk) {
-    $ddExe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
-    if (Test-Path -LiteralPath $ddExe) {
-        try { Start-Process -FilePath $ddExe -ErrorAction SilentlyContinue | Out-Null } catch {}
+function Test-ExpDockerPresent {
+    Update-ExpDockerPath
+    try { if (Get-Command docker -ErrorAction SilentlyContinue) { return $true } } catch {}
+    foreach ($p in @(
+        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe")
+    )) { if ($p -and (Test-Path -LiteralPath $p)) { return $true } }
+    return $false
+}
+function Test-ExpDockerEngineReady {
+    Update-ExpDockerPath
+    try {
+        $docker = Get-Command docker -ErrorAction SilentlyContinue
+        if (-not $docker) { return $false }
+        $out = Join-Path $env:TEMP "otacon-exp-docker-info-out.txt"
+        $err = Join-Path $env:TEMP "otacon-exp-docker-info-err.txt"
+        $p = Start-Process -FilePath $docker.Source -ArgumentList @("info") -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $out -RedirectStandardError $err
+        return ($p.ExitCode -eq 0)
+    } catch { return $false }
+}
+function Start-ExpDockerDesktop {
+    $exe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
+    if (-not (Test-Path -LiteralPath $exe)) {
+        $exe = Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe"
     }
-} else {
+    if (-not (Test-Path -LiteralPath $exe)) { return $false }
+    try { Start-Process -FilePath $exe -ErrorAction SilentlyContinue | Out-Null } catch {}
+    try { Start-Service -Name "com.docker.service" -ErrorAction SilentlyContinue | Out-Null } catch {}
+    return $true
+}
+function Wait-ExpDockerEngineReady {
+    param([int]$TimeoutSec = 300, [int]$PollSec = 5)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    $n = 0
+    while ((Get-Date) -lt $deadline) {
+        $n++
+        [void](Start-ExpDockerDesktop)
+        Update-ExpDockerPath
+        if (Test-ExpDockerEngineReady) {
+            Write-ExpLog "Docker engine ready after ~$($n * $PollSec)s"
+            return $true
+        }
+        if (($n % 6) -eq 1) {
+            Write-Host ("  Still waiting for Docker engine... ({0}s elapsed)" -f ($n * $PollSec)) -ForegroundColor DarkCyan
+        }
+        Start-Sleep -Seconds $PollSec
+    }
+    return $false
+}
+
+Update-ExpDockerPath
+if (Test-ExpDockerPresent) {
+    [void](Start-ExpDockerDesktop)
+    if (Wait-ExpDockerEngineReady -TimeoutSec 120) { $dockerReady = $true }
+}
+
+if (-not $dockerReady -and -not (Test-ExpDockerPresent)) {
     Write-Host ""
     Write-Host " ################################################################" -ForegroundColor Cyan
     Write-Host " #  DOCKER DESKTOP MISSING - INSTALLING AUTOMATICALLY            #" -ForegroundColor Cyan
+    Write-Host " #  Path 1: winget  2: official installer  3: chocolatey         #" -ForegroundColor Cyan
     Write-Host " #  Leave this window open (several minutes)                     #" -ForegroundColor Yellow
     Write-Host " ################################################################" -ForegroundColor Cyan
     Write-Host ""
     Write-OtaconSay "Docker Desktop is required for Video Studio. I'm installing it for you..." "work"
+
+    # Path 1: winget
     $winget = $null
     try { $winget = (Get-Command winget -ErrorAction SilentlyContinue).Source } catch {}
-    $installed = $false
+    if (-not $winget) {
+        $wg = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\winget.exe"
+        if (Test-Path -LiteralPath $wg) { $winget = $wg }
+    }
     if ($winget) {
+        try {
+            Start-Process -FilePath $winget -ArgumentList @("source", "update", "--disable-interactivity") -Wait -PassThru -NoNewWindow | Out-Null
+        } catch {}
         try {
             $p = Start-Process -FilePath $winget -ArgumentList @(
                 "install", "-e", "--id", "Docker.DockerDesktop",
                 "--accept-package-agreements", "--accept-source-agreements",
-                "--disable-interactivity"
+                "--disable-interactivity", "--scope", "machine"
             ) -Wait -PassThru -NoNewWindow
             Write-ExpLog ("winget Docker.DockerDesktop exit={0}" -f $p.ExitCode)
-            if ($p.ExitCode -eq 0 -or $p.ExitCode -eq -1978335189) { $installed = $true }
         } catch {
             Write-ExpLog ("winget docker install error: {0}" -f $_.Exception.Message)
         }
+        Update-ExpDockerPath
     }
-    $dd2 = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
-    if (Test-Path -LiteralPath $dd2) { $installed = $true }
-    if ($installed) {
-        try { Start-Process -FilePath $dd2 -ErrorAction SilentlyContinue | Out-Null } catch {}
+
+    # Path 2: official silent installer
+    if (-not (Test-ExpDockerPresent)) {
+        $url = "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe"
+        $destDir = Join-Path $env:LOCALAPPDATA "OtaconsKeep\installer"
+        $dest = Join-Path $destDir "DockerDesktopInstaller.exe"
+        try { New-Item -ItemType Directory -Force -Path $destDir | Out-Null } catch {}
+        Write-OtaconSay "Downloading official Docker Desktop installer..." "work"
+        $dlOk = $false
+        try {
+            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                & curl.exe -L --retry 3 --retry-delay 2 -o $dest -- $url
+                if ((Test-Path -LiteralPath $dest) -and ((Get-Item -LiteralPath $dest).Length -gt 1MB)) { $dlOk = $true }
+            }
+        } catch {}
+        if (-not $dlOk) {
+            try {
+                Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec 600
+                if ((Test-Path -LiteralPath $dest) -and ((Get-Item -LiteralPath $dest).Length -gt 1MB)) { $dlOk = $true }
+            } catch {
+                Write-ExpLog ("direct docker download failed: {0}" -f $_.Exception.Message)
+            }
+        }
+        if ($dlOk) {
+            try {
+                $p2 = Start-Process -FilePath $dest -ArgumentList @(
+                    "install", "--quiet", "--accept-license", "--backend=wsl-2"
+                ) -Wait -PassThru -NoNewWindow
+                Write-ExpLog ("DockerDesktopInstaller exit={0}" -f $p2.ExitCode)
+            } catch {
+                Write-ExpLog ("DockerDesktopInstaller error: {0}" -f $_.Exception.Message)
+            }
+            Update-ExpDockerPath
+        }
+    }
+
+    # Path 3: chocolatey
+    if (-not (Test-ExpDockerPresent)) {
+        $choco = $null
+        try { $choco = (Get-Command choco -ErrorAction SilentlyContinue).Source } catch {}
+        if ($choco) {
+            try {
+                $p3 = Start-Process -FilePath $choco -ArgumentList @("install", "docker-desktop", "-y", "--no-progress") -Wait -PassThru -NoNewWindow
+                Write-ExpLog ("choco docker-desktop exit={0}" -f $p3.ExitCode)
+            } catch {
+                Write-ExpLog ("choco docker error: {0}" -f $_.Exception.Message)
+            }
+            Update-ExpDockerPath
+        }
+    }
+}
+
+if (Test-ExpDockerPresent) {
+    [void](Start-ExpDockerDesktop)
+    Write-OtaconSay "Waiting for Docker engine to become Ready..." "work"
+    if (Wait-ExpDockerEngineReady -TimeoutSec 360) {
+        $dockerReady = $true
         Write-Host " ################################################################" -ForegroundColor Green
-        Write-Host " #  DOCKER DESKTOP INSTALLED / STARTING                          #" -ForegroundColor Green
-        Write-Host " #  Enable WSL Integration if Docker asks; leave it Running      #" -ForegroundColor Yellow
+        Write-Host " #  DOCKER ENGINE READY                                          #" -ForegroundColor Green
         Write-Host " ################################################################" -ForegroundColor Green
+        Write-Host ""
+    } else {
+        Write-Host " ################################################################" -ForegroundColor Yellow
+        Write-Host " #  DOCKER INSTALLED - ENGINE NOT READY YET                      #" -ForegroundColor Yellow
+        Write-Host " #  Enable WSL Integration; reboot if Docker asks                #" -ForegroundColor Yellow
+        Write-Host " ################################################################" -ForegroundColor Yellow
         Write-Host ""
         try { Write-Host "  Press Enter when Docker Desktop shows Running (or to continue)..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 8 }
-    } else {
-        Write-Host ""
-        Write-Host " ################################################################" -ForegroundColor Red
-        Write-Host " #  !!!  ACTION REQUIRED - DOCKER  !!!" -ForegroundColor Red
-        Write-Host " #  AUTOMATIC INSTALL DID NOT FINISH" -ForegroundColor Yellow
-        Write-Host " ################################################################" -ForegroundColor Red
-        Write-Host "     Foundation can still install; Video Studio needs Docker." -ForegroundColor White
-        Write-Host "  >>> YOU MUST: install Docker Desktop from docker.com + WSL Integration" -ForegroundColor Yellow
-        Write-Host ("  Guide: {0}" -f $guidePath) -ForegroundColor DarkCyan
-        Write-Host " ################################################################" -ForegroundColor Red
-        Write-Host ""
-        try { Write-Host "  Press Enter to continue foundation install..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 4 }
+        if (Wait-ExpDockerEngineReady -TimeoutSec 90) { $dockerReady = $true }
     }
+} else {
+    Write-Host ""
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host " #  !!!  ACTION REQUIRED - DOCKER  !!!" -ForegroundColor Red
+    Write-Host " #  AUTOMATIC INSTALL DID NOT FINISH" -ForegroundColor Yellow
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host "     Tried winget + official installer + chocolatey." -ForegroundColor White
+    Write-Host "     Foundation can still install; Video Studio needs Docker." -ForegroundColor White
+    Write-Host "  >>> YOU MUST: install Docker Desktop from docker.com + WSL Integration" -ForegroundColor Yellow
+    Write-Host ("  Guide: {0}" -f $guidePath) -ForegroundColor DarkCyan
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host ""
+    try { Write-Host "  Press Enter to continue foundation install..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 4 }
 }
 
 # GPU hint: Expansion Studio packs need the same Windows->WSL bridge as Lite.

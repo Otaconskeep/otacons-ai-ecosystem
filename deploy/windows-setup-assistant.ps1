@@ -448,15 +448,21 @@ YOU MUST free space on the drive that holds your WSL files (usually C:).
 Prefer storing models inside WSL/Docker volumes - NOT under /mnt/c (slow/flaky).
 
 ==============================================================================
-4) DOCKER - Expansion Video Studio / ComfyUI
+4) DOCKER - Expansion Video Studio / ComfyUI / Home Assistant
 ==============================================================================
-YOU MUST:
-  A) OtaconsKeep Setup tries to install Docker Desktop automatically via winget
-  B) If that fails: install from https://www.docker.com/products/docker-desktop/
-  C) Enable WSL2 backend + WSL Integration for your Ubuntu distro
+Setup installs Docker Desktop AUTOMATICALLY from the command line:
+  Path 1) winget  Docker.DockerDesktop
+  Path 2) Official Docker Desktop Installer.exe (silent)
+  Path 3) Chocolatey docker-desktop (if choco is already on the PC)
+Then it starts Docker and waits for the engine (docker info) before continuing.
+YOU MUST only if auto-install still fails:
+  A) Click Yes on the Windows Admin / UAC prompt when Setup asks
+  B) Reboot if Docker's installer says reboot required, then re-run Setup
+  C) Enable WSL Integration: Docker Desktop -> Settings -> Resources -> WSL
   D) Confirm:  wsl -d <distro> -- docker version
   E) GPU: Docker Desktop -> Settings -> Resources -> use WSL2, then
      docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi
+Manual fallback URL: https://www.docker.com/products/docker-desktop/
 
 ==============================================================================
 5) ENTITLEMENT / PREMIUM LOGIN
@@ -574,90 +580,307 @@ function Test-DockerDesktopPresent {
     return $false
 }
 
-function Start-DockerDesktopIfPresent {
-    $exe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
-    if (-not (Test-Path -LiteralPath $exe)) {
-        $exe = Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe"
+function Get-DockerDesktopExe {
+    $paths = @(
+        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe")
+    )
+    foreach ($p in $paths) {
+        if ($p -and (Test-Path -LiteralPath $p)) { return $p }
     }
-    if (-not (Test-Path -LiteralPath $exe)) { return $false }
+    return $null
+}
+
+function Update-SessionPathFromRegistry {
+    <# Reload Machine+User PATH so freshly installed docker.exe is visible without reboot. #>
     try {
-        Start-Process -FilePath $exe -ErrorAction SilentlyContinue | Out-Null
-        Write-KeepLog "Started Docker Desktop exe=$exe" -Stage "DOCKER"
-        return $true
+        $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
+        $user = [Environment]::GetEnvironmentVariable("Path", "User")
+        if ($machine -or $user) {
+            $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ";"
+        }
+        $extra = @(
+            (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin"),
+            (Join-Path $env:ProgramFiles "Docker\Docker"),
+            (Join-Path $env:ProgramData "DockerDesktop\version-bin")
+        )
+        foreach ($e in $extra) {
+            if ($e -and (Test-Path -LiteralPath $e) -and ($env:Path -notlike "*$e*")) {
+                $env:Path = "$e;$env:Path"
+            }
+        }
     } catch {
-        Write-KeepLog "Start Docker Desktop failed: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+        Write-KeepLog "PATH refresh warn: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+    }
+}
+
+function Test-DockerEngineReady {
+    Update-SessionPathFromRegistry
+    try {
+        $docker = Get-Command docker -ErrorAction SilentlyContinue
+        if (-not $docker) { return $false }
+        $p = Start-Process -FilePath $docker.Source -ArgumentList @("info") -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput (Join-Path $env:TEMP "otacon-docker-info-out.txt") `
+            -RedirectStandardError (Join-Path $env:TEMP "otacon-docker-info-err.txt")
+        return ($p.ExitCode -eq 0)
+    } catch {
         return $false
     }
 }
 
-function Install-DockerDesktopBestEffort {
-    <#
-      Easiest path: if Docker Desktop is missing, install it via winget (admin).
-      Product expectation: Expansion Studio should not leave Docker as a manual homework item.
-      Returns: installed | already | started | failed | skipped_no_admin | skipped_no_winget
-    #>
-    if (Test-DockerDesktopPresent) {
-        [void](Start-DockerDesktopIfPresent)
-        return "already"
+function Start-DockerDesktopIfPresent {
+    $exe = Get-DockerDesktopExe
+    if (-not $exe) { return $false }
+    try {
+        Start-Process -FilePath $exe -ErrorAction SilentlyContinue | Out-Null
+        Write-KeepLog "Started Docker Desktop exe=$exe" -Stage "DOCKER"
+    } catch {
+        Write-KeepLog "Start Docker Desktop failed: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+        return $false
     }
-    Write-OtaconSay "Docker Desktop is missing. I'm installing it for you (needed for Video Studio)..." -Mood "work"
-    Write-KeepLog "Docker Desktop missing - attempting winget install" -Stage "DOCKER"
+    try { Start-Service -Name "com.docker.service" -ErrorAction SilentlyContinue | Out-Null } catch {}
+    return $true
+}
 
+function Enable-DockerWslFeaturesBestEffort {
+    <# Docker Desktop on Windows needs WSL2 + Virtual Machine Platform. #>
+    if (-not (Test-IsAdmin)) { return }
+    foreach ($feat in @("Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform")) {
+        try {
+            $state = (Get-WindowsOptionalFeature -Online -FeatureName $feat -ErrorAction SilentlyContinue).State
+            if ($state -eq "Enabled") {
+                Write-KeepLog "Windows feature $feat already Enabled" -Stage "DOCKER"
+                continue
+            }
+            Write-KeepLog "Enabling Windows feature $feat for Docker/WSL2" -Stage "DOCKER"
+            Write-OtaconSay "Enabling Windows feature $feat (needed for Docker)..." -Mood "work" -NoType
+            Enable-WindowsOptionalFeature -Online -FeatureName $feat -All -NoRestart -ErrorAction SilentlyContinue | Out-Null
+        } catch {
+            Write-KeepLog "Enable $feat warn: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+            try {
+                & dism.exe /online /enable-feature /featurename:$feat /all /norestart 2>$null | Out-Null
+            } catch {}
+        }
+    }
+}
+
+function Install-DockerDesktopViaWinget {
     $winget = $null
     try { $winget = (Get-Command winget -ErrorAction SilentlyContinue).Source } catch {}
     if (-not $winget) {
-        Show-ActionRequired -Topic "DOCKER" -Headline "DOCKER DESKTOP MISSING - WINGET NOT AVAILABLE" -Lines @(
-            "I tried to install Docker Desktop automatically, but winget is not on this PC.",
-            "Video Studio / Comfy need Docker Desktop with the WSL2 backend."
-        ) -MustDo "Install Docker Desktop from https://www.docker.com/products/docker-desktop/ then re-run Setup" -Pause -WriteGuide
-        return "skipped_no_winget"
+        # Common Win11 layout when PATH is stale in this session
+        foreach ($cand in @(
+            (Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\winget.exe"),
+            (Join-Path $env:ProgramFiles "WindowsApps\Microsoft.DesktopAppInstaller*\winget.exe")
+        )) {
+            $resolved = $null
+            try { $resolved = Get-Item -Path $cand -ErrorAction SilentlyContinue | Select-Object -First 1 } catch {}
+            if ($resolved -and $resolved.FullName) { $winget = $resolved.FullName; break }
+        }
     }
+    if (-not $winget) { return @{ ok = $false; reason = "no_winget" } }
 
-    if (-not (Ensure-Admin)) {
-        Show-ActionRequired -Topic "DOCKER" -Headline "DOCKER INSTALL NEEDS ADMINISTRATOR" -Lines @(
-            "I can install Docker Desktop for you, but Windows needs an Admin approval.",
-            "Click Yes on the UAC prompt when asked, or re-run Setup as Administrator."
-        ) -MustDo "Approve Admin / UAC, then press Enter so I can install Docker" -Pause -WriteGuide
-        if (-not (Ensure-Admin)) { return "skipped_no_admin" }
-    }
-
-    Write-Host ""
-    Write-Host " ################################################################" -ForegroundColor Cyan
-    Write-Host " #  INSTALLING DOCKER DESKTOP (automatic)                        #" -ForegroundColor Cyan
-    Write-Host " #  Leave this window open - first install can take several min  #" -ForegroundColor Yellow
-    Write-Host " ################################################################" -ForegroundColor Cyan
-    Write-Host ""
-
-    $ok = $false
     try {
-        $p = Start-Process -FilePath $winget -ArgumentList @(
-            "install", "-e", "--id", "Docker.DockerDesktop",
-            "--accept-package-agreements", "--accept-source-agreements",
-            "--disable-interactivity"
-        ) -Wait -PassThru -NoNewWindow
-        Write-KeepLog ("winget Docker.DockerDesktop exit={0}" -f $p.ExitCode) -Stage "DOCKER"
-        # 0 = ok, -1978335189 / other codes sometimes mean already installed
-        if ($p.ExitCode -eq 0 -or $p.ExitCode -eq -1978335189) { $ok = $true }
+        Write-KeepLog "winget source update (best effort)" -Stage "DOCKER"
+        Start-Process -FilePath $winget -ArgumentList @("source", "update", "--disable-interactivity") `
+            -Wait -PassThru -NoNewWindow | Out-Null
+    } catch {}
+
+    $ids = @("Docker.DockerDesktop", "Docker.DockerDesktop.Edge")
+    foreach ($id in $ids) {
+        try {
+            Write-KeepLog "winget install id=$id" -Stage "DOCKER"
+            $p = Start-Process -FilePath $winget -ArgumentList @(
+                "install", "-e", "--id", $id,
+                "--accept-package-agreements", "--accept-source-agreements",
+                "--disable-interactivity", "--scope", "machine"
+            ) -Wait -PassThru -NoNewWindow
+            $code = $p.ExitCode
+            Write-KeepLog ("winget {0} exit={1}" -f $id, $code) -Stage "DOCKER"
+            # 0 ok; -1978335189 already installed; -1978335135 no newer upgrade / ok-ish
+            if ($code -eq 0 -or $code -eq -1978335189 -or $code -eq -1978335135) {
+                return @{ ok = $true; reason = "winget:$id:$code" }
+            }
+            # Reboot required class (APPINSTALLER often 0x8A150101 / similar) - treat as soft ok if files appear
+            if (Test-DockerDesktopPresent) {
+                return @{ ok = $true; reason = "winget_present_after:$id:$code" }
+            }
+        } catch {
+            Write-KeepLog "winget $id threw: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+        }
+    }
+    return @{ ok = (Test-DockerDesktopPresent); reason = "winget_exhausted" }
+}
+
+function Install-DockerDesktopViaDirectDownload {
+    <# Official silent installer when winget is missing or blocked. #>
+    $url = "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe"
+    $destDir = Join-Path $env:LOCALAPPDATA "OtaconsKeep\installer"
+    $dest = Join-Path $destDir "DockerDesktopInstaller.exe"
+    try {
+        New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+    } catch {}
+    Write-OtaconSay "Downloading Docker Desktop installer (official)..." -Mood "work"
+    Write-KeepLog "Docker direct download -> $dest" -Stage "DOCKER"
+    $dlOk = $false
+    try {
+        # Prefer curl.exe (Win10+) for progress reliability; fall back to BITS/Invoke-WebRequest
+        $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if ($curl) {
+            & curl.exe -L --retry 3 --retry-delay 2 -o $dest -- $url
+            if ((Test-Path -LiteralPath $dest) -and ((Get-Item -LiteralPath $dest).Length -gt 1MB)) { $dlOk = $true }
+        }
     } catch {
-        Write-KeepLog "winget docker install threw: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+        Write-KeepLog "curl docker download warn: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+    }
+    if (-not $dlOk) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec 600
+            if ((Test-Path -LiteralPath $dest) -and ((Get-Item -LiteralPath $dest).Length -gt 1MB)) { $dlOk = $true }
+        } catch {
+            Write-KeepLog "Invoke-WebRequest docker download failed: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+            return @{ ok = $false; reason = "download_failed" }
+        }
+    }
+    if (-not $dlOk) { return @{ ok = $false; reason = "download_empty" } }
+
+    Write-OtaconSay "Running Docker Desktop silent install (can take several minutes)..." -Mood "work"
+    try {
+        $p = Start-Process -FilePath $dest -ArgumentList @(
+            "install", "--quiet", "--accept-license", "--backend=wsl-2"
+        ) -Wait -PassThru -NoNewWindow
+        Write-KeepLog ("DockerDesktopInstaller exit={0}" -f $p.ExitCode) -Stage "DOCKER"
+        # 0 success; 3010 often reboot-required but install completed
+        if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010 -or (Test-DockerDesktopPresent)) {
+            return @{ ok = $true; reason = ("direct:{0}" -f $p.ExitCode); reboot = ($p.ExitCode -eq 3010) }
+        }
+    } catch {
+        Write-KeepLog "DockerDesktopInstaller threw: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+    }
+    return @{ ok = (Test-DockerDesktopPresent); reason = "direct_exhausted" }
+}
+
+function Install-DockerDesktopViaChocolatey {
+    $choco = $null
+    try { $choco = (Get-Command choco -ErrorAction SilentlyContinue).Source } catch {}
+    if (-not $choco) { return @{ ok = $false; reason = "no_choco" } }
+    try {
+        Write-KeepLog "choco install docker-desktop" -Stage "DOCKER"
+        $p = Start-Process -FilePath $choco -ArgumentList @(
+            "install", "docker-desktop", "-y", "--no-progress"
+        ) -Wait -PassThru -NoNewWindow
+        Write-KeepLog ("choco docker-desktop exit={0}" -f $p.ExitCode) -Stage "DOCKER"
+        return @{ ok = (($p.ExitCode -eq 0) -or (Test-DockerDesktopPresent)); reason = ("choco:{0}" -f $p.ExitCode) }
+    } catch {
+        Write-KeepLog "choco docker threw: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
+        return @{ ok = $false; reason = "choco_error" }
+    }
+}
+
+function Wait-DockerEngineReady {
+    param(
+        [int]$TimeoutSec = 300,
+        [int]$PollSec = 5
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    $n = 0
+    while ((Get-Date) -lt $deadline) {
+        $n++
+        [void](Start-DockerDesktopIfPresent)
+        Update-SessionPathFromRegistry
+        if (Test-DockerEngineReady) {
+            Write-KeepLog "Docker engine ready after ~$($n * $PollSec)s" -Stage "DOCKER"
+            return $true
+        }
+        if (($n % 6) -eq 1) {
+            Write-Host ("  Still waiting for Docker engine... ({0}s)" -f [int]($TimeoutSec - ($deadline - (Get-Date)).TotalSeconds)) -ForegroundColor DarkCyan
+        }
+        Start-Sleep -Seconds $PollSec
+    }
+    Write-KeepLog "Docker engine NOT ready after ${TimeoutSec}s" -Level "WARN" -Stage "DOCKER"
+    return $false
+}
+
+function Install-DockerDesktopBestEffort {
+    <#
+      Easiest path: auto-install Docker Desktop via winget, official silent EXE,
+      or Chocolatey; then wait for the engine. Prefer continue-without-homework.
+      Returns: ready | installed | already | failed | skipped_no_admin | reboot_needed
+    #>
+    Update-SessionPathFromRegistry
+    $rebootHint = $false
+    if (Test-DockerDesktopPresent) {
+        [void](Start-DockerDesktopIfPresent)
+        if (Wait-DockerEngineReady -TimeoutSec 120) { return "ready" }
+        # Present but engine not up yet - keep going through start/wait below
     }
 
-    if (-not $ok -and -not (Test-DockerDesktopPresent)) {
-        Show-ActionRequired -Topic "DOCKER" -Headline "AUTOMATIC DOCKER INSTALL DID NOT FINISH" -Lines @(
-            "winget could not finish installing Docker Desktop.",
-            "Common causes: corporate block, SmartScreen, or needing a reboot mid-install."
-        ) -MustDo "Install Docker Desktop from docker.com, enable WSL Integration, reboot if asked, then re-run Setup" -Pause -WriteGuide
-        return "failed"
+    if (-not (Test-DockerDesktopPresent)) {
+        Write-OtaconSay "Docker Desktop is missing. I'm installing it for you (needed for Video Studio / Home Assistant)..." -Mood "work"
+        Write-KeepLog "Docker Desktop missing - automatic multi-path install" -Stage "DOCKER"
+
+        if (-not (Ensure-Admin)) {
+            Show-ActionRequired -Topic "DOCKER" -Headline "DOCKER INSTALL NEEDS ADMINISTRATOR" -Lines @(
+                "I can install Docker Desktop for you from the command line,",
+                "but Windows needs an Admin approval (UAC).",
+                "Click Yes on the UAC prompt when asked, or re-run Setup as Administrator."
+            ) -MustDo "Approve Admin / UAC, then press Enter so I can install Docker" -Pause -WriteGuide
+            if (-not (Ensure-Admin)) { return "skipped_no_admin" }
+        }
+
+        Enable-DockerWslFeaturesBestEffort
+
+        Write-Host ""
+        Write-Host " ################################################################" -ForegroundColor Cyan
+        Write-Host " #  INSTALLING DOCKER DESKTOP (automatic)                        #" -ForegroundColor Cyan
+        Write-Host " #  Path 1: winget  2: official installer  3: chocolatey         #" -ForegroundColor Cyan
+        Write-Host " #  Leave this window open - first install can take several min  #" -ForegroundColor Yellow
+        Write-Host " ################################################################" -ForegroundColor Cyan
+        Write-Host ""
+
+        $r1 = Install-DockerDesktopViaWinget
+        Write-KeepLog ("docker path1 winget -> {0}" -f ($r1.reason)) -Stage "DOCKER"
+        Update-SessionPathFromRegistry
+
+        if (-not (Test-DockerDesktopPresent)) {
+            $r2 = Install-DockerDesktopViaDirectDownload
+            Write-KeepLog ("docker path2 direct -> {0}" -f ($r2.reason)) -Stage "DOCKER"
+            if ($r2.reboot) { $rebootHint = $true }
+            Update-SessionPathFromRegistry
+        }
+
+        if (-not (Test-DockerDesktopPresent)) {
+            $r3 = Install-DockerDesktopViaChocolatey
+            Write-KeepLog ("docker path3 choco -> {0}" -f ($r3.reason)) -Stage "DOCKER"
+            Update-SessionPathFromRegistry
+        }
+
+        if (-not (Test-DockerDesktopPresent)) {
+            Show-ActionRequired -Topic "DOCKER" -Headline "AUTOMATIC DOCKER INSTALL DID NOT FINISH" -Lines @(
+                "Tried: winget, official Docker Desktop Installer.exe, and Chocolatey (if present).",
+                "Common causes: corporate block, SmartScreen, offline PC, or mid-install reboot required."
+            ) -MustDo "Install Docker Desktop from https://www.docker.com/products/docker-desktop/ , enable WSL Integration, reboot if asked, then re-run Setup" -Pause -WriteGuide
+            return "failed"
+        }
     }
 
     [void](Start-DockerDesktopIfPresent)
-    Show-ActionRequired -Topic "DOCKER" -Headline "DOCKER DESKTOP INSTALLED - FIRST START" -Lines @(
-        "Docker Desktop is installed (or was already present after install).",
-        "First launch can take a few minutes and may ask you to accept terms.",
+    Write-OtaconSay "Waiting for Docker engine to become Ready (first start can take a few minutes)..." -Mood "work"
+    if (Wait-DockerEngineReady -TimeoutSec 360) {
+        Write-OtaconSay "Docker engine is Ready." -Mood "ok"
+        return "ready"
+    }
+
+    Show-ActionRequired -Topic "DOCKER" -Headline "DOCKER INSTALLED - ENGINE NOT READY YET" -Lines @(
+        "Docker Desktop files are on this PC, but the engine is not answering yet.",
+        "First launch can take several minutes and may ask you to accept terms.",
         "Enable: Settings -> Resources -> WSL Integration -> your Ubuntu distro.",
-        "A Windows reboot is sometimes required after the first Docker install."
-    ) -MustDo "Leave Docker Desktop running until it says Running, then press Enter to continue" -Pause -WriteGuide `
-        -ContinueNote "Setup continues; Video Studio will work once Docker shows Running."
+        "A Windows reboot is sometimes required after the first Docker install.",
+        $(if ($rebootHint) { "Installer signaled reboot-required (exit 3010)." } else { "If Docker shows an error, reboot Windows once, then re-run Setup." })
+    ) -MustDo "Leave Docker Desktop open until it says Running (or reboot if it asks), then press Enter" -Pause -WriteGuide `
+        -ContinueNote "Setup continues; Video Studio / Home Assistant need Docker Running."
+
+    if (Wait-DockerEngineReady -TimeoutSec 90) { return "ready" }
     return "installed"
 }
 
@@ -697,9 +920,9 @@ function Invoke-InstallRiskPreflight {
     if ($ForExpansion -or $script:ForceInstall) {
         $dockerState = Install-DockerDesktopBestEffort
         Write-KeepLog "Docker preflight result=$dockerState" -Stage "DOCKER"
-    } elseif (-not (Test-DockerDesktopPresent)) {
-        # Lite-only: still try automatic install so Expansion later is painless.
-        Write-OtaconSay "Checking Docker Desktop (makes Expansion Video Studio easier later)..." -Mood "work" -NoType
+    } elseif (-not (Test-DockerDesktopPresent) -or -not (Test-DockerEngineReady)) {
+        # Lite: auto-install + wait so Expansion / HA later is painless.
+        Write-OtaconSay "Making sure Docker Desktop is installed and Ready (Video Studio / Home Assistant)..." -Mood "work" -NoType
         $dockerState = Install-DockerDesktopBestEffort
         Write-KeepLog "Docker lite preflight result=$dockerState" -Stage "DOCKER"
     }

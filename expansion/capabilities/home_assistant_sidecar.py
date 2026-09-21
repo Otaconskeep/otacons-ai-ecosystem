@@ -136,6 +136,12 @@ def ensure_home_assistant_sidecar(
     try:
         from expansion.capabilities.comfy_sidecar import probe_docker_engine
         docker_st = probe_docker_engine()
+        # Docker Desktop often needs a few minutes after first install / start.
+        wait_docker = float(os.environ.get('OTACON_HA_DOCKER_WAIT') or '180')
+        deadline = time.time() + max(0.0, wait_docker)
+        while not docker_st.get('ok') and time.time() < deadline:
+            time.sleep(5)
+            docker_st = probe_docker_engine()
     except Exception:
         docker_st = {'ok': False, 'detail': 'docker probe failed'}
     if not docker_st.get('ok'):
