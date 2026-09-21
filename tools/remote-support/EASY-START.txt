@@ -1,10 +1,18 @@
 OTACONSKEEP — EASIEST PATH
 
+IMPORTANT:
+Run the Make-*.bat files from inside the repo folder.
+Do NOT copy Make-Josh-Installer.bat alone to D:\ or Desktop.
+
+Full path looks like:
+  ...\otacons-ai-ecosystem\tools\remote-support\Make-Josh-Installer.bat
+
 YOU (once per friend):
-1. Double-click Make-Josh-Installer.bat  (or Make-Chris-Installer.bat)
-2. In the Tailscale page that opens: create a one-time key → copy it
-3. Paste the key in the window when asked
-4. Send the new file on your Desktop:  SEND-TO-JOSH.bat
+1. Open folder: otacons-ai-ecosystem\tools\remote-support\
+2. Double-click Make-Josh-Installer.bat  (or Make-Chris-Installer.bat)
+3. In the Tailscale page that opens: create a one-time key → copy it
+4. Paste the key in the window when asked
+5. Send the new file on your Desktop:  SEND-TO-JOSH.bat
 
 FRIEND:
 1. Open the file you sent

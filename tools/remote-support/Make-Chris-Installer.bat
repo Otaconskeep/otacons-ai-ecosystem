@@ -1,13 +1,32 @@
 @echo off
 REM ============================================================
-REM  YOU: double-click this to make Chris's installer.
+REM  YOU: double-click this INSIDE the repo folder:
+REM       otacons-ai-ecosystem\tools\remote-support\
+REM  Do NOT copy this BAT alone to Desktop/D:\ — it needs the
+REM  other files in this same folder.
 REM  Then send Desktop\SEND-TO-CHRIS.bat to Chris.
-REM  Chris: Run as administrator → Yes → Done.
 REM  Designed by Antonio G. Garcia // Otaconskeep
 REM ============================================================
 setlocal EnableExtensions
 title Make Chris installer - OtaconsKeep
 cd /d "%~dp0"
+
+if not exist "%~dp0Build-RemoteSupportInstaller.ps1" (
+  echo.
+  echo  [FAIL] Build-RemoteSupportInstaller.ps1 is missing next to this BAT.
+  echo.
+  echo  You must run this from the full repo folder:
+  echo    otacons-ai-ecosystem\tools\remote-support\Make-Chris-Installer.bat
+  echo.
+  echo  Do not copy Make-Chris-Installer.bat by itself to D:\ or Desktop.
+  echo  Open the GitHub repo folder on your PC, go to tools\remote-support,
+  echo  then double-click Make-Chris-Installer.bat there.
+  echo.
+  echo  Looking for: %~dp0Build-RemoteSupportInstaller.ps1
+  echo.
+  pause
+  exit /b 1
+)
 
 echo.
 echo  Making Chris's remote-support installer...
