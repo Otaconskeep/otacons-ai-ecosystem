@@ -185,6 +185,37 @@ class ComfySubmitTests(unittest.TestCase):
         self.assertEqual(g['98']['class_type'], 'EmptyAceStep1.5LatentAudio')
         self.assertEqual(g['106']['class_type'], 'SaveAudioMP3')
         self.assertEqual(g['94']['inputs']['tags'], 'warm synth pad')
+        # ACE node rejects keyscale '' and wants INT bpm.
+        self.assertEqual(g['94']['inputs']['keyscale'], 'C major')
+        self.assertIsInstance(g['94']['inputs']['bpm'], int)
+
+    def test_coerce_keyscale_empty_and_aliases(self):
+        self.assertEqual(cs._coerce_keyscale(''), 'C major')
+        self.assertEqual(cs._coerce_keyscale(None), 'C major')
+        self.assertEqual(cs._coerce_keyscale('a minor'), 'A minor')
+        self.assertEqual(cs._coerce_keyscale('garbage'), 'C major')
+
+    def test_music_workflow_status_probe_failed_not_missing(self):
+        with mock.patch.object(cs, '_studio_endpoint', return_value='http://127.0.0.1:8188'), \
+             mock.patch.object(cs, '_http_json', return_value=(0, {'error': 'reset'})):
+            out = cs.music_workflow_status()
+        self.assertFalse(out['ok'])
+        self.assertTrue(out.get('probe_failed'))
+        self.assertEqual(out.get('missing'), [])
+
+    def test_submit_music_probe_failed_does_not_start_install(self):
+        with mock.patch.object(cs, 'probe_video_studio') as pvs, \
+             mock.patch.object(cs, 'music_workflow_status', return_value={
+                 'ok': False, 'probe_failed': True, 'missing': [],
+                 'detail': 'Could not read checkpoints',
+             }), \
+             mock.patch('expansion.capabilities.video_studio.comfy_endpoint_healthy', return_value=(True, 'ok')), \
+             mock.patch('expansion.capabilities.studio_packs.start_pack_install') as install:
+            pvs.return_value = mock.Mock(state='READY', discovery={'endpoint': 'http://127.0.0.1:8188'})
+            out = cs.submit_music_job(tags='lofi beat')
+        self.assertFalse(out['ok'])
+        self.assertEqual(out.get('http_status'), 503)
+        install.assert_not_called()
 
     def test_submit_music_refuses_without_checkpoint(self):
         with mock.patch.object(cs, 'probe_video_studio') as pvs, \
@@ -201,6 +232,8 @@ class ComfySubmitTests(unittest.TestCase):
             out = cs.submit_music_job(tags='lofi beat')
         self.assertFalse(out['ok'])
         self.assertTrue(out.get('soft_block'))
+
+    def test_cancel_comfy_prompt_pending_deletes_queue(self):
         with mock.patch.object(cs, '_studio_endpoint', return_value='http://127.0.0.1:8188'), \
              mock.patch.object(cs, '_http_json') as http, \
              mock.patch.object(cs, '_history_outputs', return_value=[]):
@@ -236,6 +269,55 @@ class ReleaseInfoTests(unittest.TestCase):
         self.assertIn('repo_head', info)
         self.assertIn('detail', info)
         self.assertIn('feature pin', info['detail'].lower())
+
+
+    def test_build_wan_video_prompt_clamps_and_nodes(self):
+        g = cs.build_wan_video_prompt(positive='fox in snow', width=500, height=301, frames=20, steps=20)
+        self.assertEqual(g['75']['class_type'], 'Wan22ImageToVideoLatent')
+        self.assertEqual(g['71']['inputs']['type'], 'wan')
+        self.assertEqual(g['80']['class_type'], 'SaveVideo')
+        # spatial aligned to 16
+        self.assertEqual(g['75']['inputs']['width'] % 16, 0)
+        self.assertEqual(g['75']['inputs']['height'] % 16, 0)
+        # (length-1) % 4 == 0
+        self.assertEqual((g['75']['inputs']['length'] - 1) % 4, 0)
+        self.assertGreaterEqual(g['77']['inputs']['steps'], 15)
+
+    def test_list_models_retries_on_reset(self):
+        calls = {'n': 0}
+        def fake_http(method, url, body=None, timeout=8.0):
+            calls['n'] += 1
+            if calls['n'] < 2:
+                return 0, {'error': '[Errno 104] Connection reset by peer'}
+            return 200, ['wan2.2_ti2v_5B_fp16.safetensors']
+        with mock.patch.object(cs, '_http_json', side_effect=fake_http):
+            out = cs.list_models('http://127.0.0.1:8188', 'diffusion_models', retries=2)
+        self.assertEqual(out, ['wan2.2_ti2v_5B_fp16.safetensors'])
+        self.assertGreaterEqual(calls['n'], 2)
+
+    def test_history_outputs_includes_videos_key(self):
+        def fake_http(method, url, body=None, timeout=8.0):
+            return 200, {
+                'abc': {
+                    'outputs': {
+                        '80': {'videos': [{'filename': 'otacon_muse_video_00001_.mp4'}]},
+                    }
+                }
+            }
+        with mock.patch.object(cs, '_http_json', side_effect=fake_http):
+            files = cs._history_outputs('http://127.0.0.1:8188', 'abc')
+        self.assertEqual(files, ['otacon_muse_video_00001_.mp4'])
+
+    def test_submit_video_refuses_without_models(self):
+        with mock.patch.object(cs, 'probe_video_studio') as pvs, \
+             mock.patch.object(cs, 'video_workflow_status', return_value={
+                 'ok': False, 'detail': 'missing wan', 'missing': ['wan'],
+             }), \
+             mock.patch('expansion.capabilities.video_studio.comfy_endpoint_healthy', return_value=(True, 'ok')):
+            pvs.return_value = mock.Mock(state='READY', discovery={'endpoint': 'http://127.0.0.1:8188'})
+            out = cs.submit_video_job(prompt='test')
+        self.assertFalse(out['ok'])
+        self.assertEqual(out.get('action'), 'install_packs')
 
 
 if __name__ == '__main__':

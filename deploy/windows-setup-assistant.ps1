@@ -3400,9 +3400,17 @@ function Step-RegisterWakeTask {
     $openBat = Join-Path $KeepDir "Open-Otacon.bat"
     @"
 @echo off
-title Open Otacon Codec
-powershell -NoProfile -ExecutionPolicy Bypass -File "$assistant" -Open -RepoRoot "$RepoRoot"
-if errorlevel 1 pause
+title OtaconsKeep
+REM Quiet daily launch — never opens setup/repair/admin path.
+call "%LOCALAPPDATA%\OtaconsKeep\Launch-Otacon.cmd" 2>nul
+if errorlevel 1 (
+  if exist "%LOCALAPPDATA%\OtaconsKeep\installer\deploy\install-desktop-launcher.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%LOCALAPPDATA%\OtaconsKeep\installer\deploy\install-desktop-launcher.ps1" -Port $Port -Label "OtaconsKeep" >nul 2>&1
+    call "%LOCALAPPDATA%\OtaconsKeep\Launch-Otacon.cmd"
+  ) else (
+    start "" "http://127.0.0.1:$Port"
+  )
+)
 "@ | Set-Content -Path $openBat -Encoding ASCII
     $fixBat = Join-Path $KeepDir "Fix-Otacon-Codec.bat"
     @"

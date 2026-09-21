@@ -61,10 +61,19 @@ def _http_json(method: str, url: str, body: Optional[dict] = None, timeout: floa
         return 0, {'error': str(exc)}
 
 
-def list_models(endpoint: str, kind: str) -> list[str]:
-    code, data = _http_json('GET', f'{endpoint}/models/{kind}', timeout=8.0)
-    if code == 200 and isinstance(data, list):
-        return [str(x) for x in data]
+def list_models(endpoint: str, kind: str, *, retries: int = 2) -> list[str]:
+    """List Comfy models. Retries idempotent GETs on connection resets (Errno 104)."""
+    attempts = max(1, int(retries) + 1)
+    last_code = 0
+    for i in range(attempts):
+        code, data = _http_json('GET', f'{endpoint}/models/{kind}', timeout=8.0)
+        last_code = code
+        if code == 200 and isinstance(data, list):
+            return [str(x) for x in data]
+        # Brief backoff only between retries — do not sleep after final failure.
+        if i + 1 < attempts:
+            time.sleep(0.15 * (i + 1))
+    _ = last_code
     return []
 
 
@@ -577,7 +586,7 @@ def _history_outputs(endpoint: str, prompt_id: str) -> list[str]:
         for node_out in outputs.values():
             if not isinstance(node_out, dict):
                 continue
-            for key in ('images', 'audio', 'gifs', 'files'):
+            for key in ('images', 'audio', 'gifs', 'files', 'videos'):
                 for item in node_out.get(key) or []:
                     if isinstance(item, dict) and item.get('filename'):
                         files.append(str(item.get('filename')))
@@ -712,11 +721,58 @@ def annotate_jobs_with_queue_position(
 
 _DEFAULT_ACE_CKPT = 'ace_step_1.5_turbo_aio.safetensors'
 
+# TextEncodeAceStepAudio1.5 declares keyscale as COMBO with these 34 values —
+# no empty member and no default. Kept local to avoid a /object_info round-trip
+# on every submit; update if ACE-Step ships a new list.
+_ACE_KEYSCALES = (
+    'C major', 'C# major', 'Db major', 'D major', 'D# major', 'Eb major',
+    'E major', 'F major', 'F# major', 'Gb major', 'G major', 'G# major',
+    'Ab major', 'A major', 'A# major', 'Bb major', 'B major',
+    'C minor', 'C# minor', 'Db minor', 'D minor', 'D# minor', 'Eb minor',
+    'E minor', 'F minor', 'F# minor', 'Gb minor', 'G minor', 'G# minor',
+    'Ab minor', 'A minor', 'A# minor', 'Bb minor', 'B minor',
+)
+_DEFAULT_ACE_KEYSCALE = 'C major'
+
+
+def _coerce_keyscale(value: Optional[str]) -> str:
+    """Map free text / empty to a value the ACE node will actually accept."""
+    raw = str(value or '').strip()
+    if not raw:
+        return _DEFAULT_ACE_KEYSCALE
+    for opt in _ACE_KEYSCALES:
+        if raw.lower() == opt.lower():
+            return opt
+    return _DEFAULT_ACE_KEYSCALE
+
 
 def music_workflow_status(endpoint: Optional[str] = None) -> dict[str, Any]:
-    """Probe whether ACE-Step AIO checkpoint is indexed by ComfyUI."""
+    """Probe whether ACE-Step AIO checkpoint is indexed by ComfyUI.
+
+    Distinguishes probe failure (Comfy reset / non-200) from a truly missing
+    checkpoint so submitters do not kick a redundant multi-GB pack install.
+    """
     ep = (endpoint or _studio_endpoint()).rstrip('/')
-    ckpts = list_models(ep, 'checkpoints')
+    code, data = _http_json('GET', f'{ep}/models/checkpoints', timeout=8.0)
+    if code != 200 or not isinstance(data, list):
+        # One retry — connection resets under memory pressure are common and brief.
+        code, data = _http_json('GET', f'{ep}/models/checkpoints', timeout=8.0)
+    if code != 200 or not isinstance(data, list):
+        return {
+            'ok': False,
+            'probe_failed': True,
+            'modality': 'music',
+            'engine': 'ace-step-1.5',
+            'endpoint': ep,
+            'checkpoint': '',
+            'missing': [],  # do NOT claim the asset is absent
+            'assets_ready': False,
+            'detail': (
+                f'Could not read the ComfyUI checkpoint list (HTTP {code}). '
+                'This says nothing about whether the music pack is installed.'
+            ),
+        }
+    ckpts = [str(x) for x in data]
     hit = next(
         (c for c in ckpts if c == _DEFAULT_ACE_CKPT or c.endswith('/' + _DEFAULT_ACE_CKPT)),
         '',
@@ -726,6 +782,7 @@ def music_workflow_status(endpoint: Optional[str] = None) -> dict[str, Any]:
     ok = bool(hit)
     return {
         'ok': ok,
+        'probe_failed': False,
         'modality': 'music',
         'engine': 'ace-step-1.5',
         'endpoint': ep,
@@ -751,7 +808,7 @@ def build_ace_step_prompt(
     cfg: float = 1.0,
     checkpoint: str = _DEFAULT_ACE_CKPT,
     filename_prefix: str = 'otacon_music',
-    key_scale: str = '',
+    key_scale: str = _DEFAULT_ACE_KEYSCALE,
     time_signature: str = '4',
     language: str = 'en',
     cfg_scale: float = 2.0,
@@ -774,11 +831,11 @@ def build_ace_step_prompt(
                 'tags': tags_s,
                 'lyrics': lyrics_s,
                 'seed': seed_i,
-                'bpm': bpm_v,
+                'bpm': int(round(bpm_v)),  # node declares INT, not FLOAT
                 'duration': seconds,
                 'timesignature': str(time_signature or '4'),
                 'language': str(language or 'en'),
-                'keyscale': str(key_scale or ''),
+                'keyscale': _coerce_keyscale(key_scale),
                 'generate_audio_codes': True,
                 'cfg_scale': float(cfg_scale),
                 'temperature': 0.85,
@@ -859,6 +916,19 @@ def submit_music_job(
             'http_status': 503,
         }
     probe = music_workflow_status(ep)
+    if probe.get('probe_failed'):
+        # Could not read the asset list. Do not claim the pack is missing and do
+        # not kick a redundant multi-GB install — just say the probe failed.
+        return {
+            'ok': False,
+            'queued': False,
+            'error': 'creative workflow submitter: ComfyUI asset probe failed',
+            'detail': probe.get('detail') or 'ComfyUI checkpoint list unreachable.',
+            'http_status': 503,
+            'studio_state': vs.state,
+            'endpoint': ep,
+            'workflow': probe,
+        }
     if not probe.get('ok'):
         try:
             from expansion.capabilities.studio_packs import soft_block_payload, start_pack_install
@@ -1039,6 +1109,321 @@ def cancel_comfy_prompt(
         'prompt_id': pid,
         'endpoint': ep,
     }
+
+
+# ---------------------------------------------------------------------------
+# Wan 2.2 TI2V (text-to-video) — Expansion Workshop / Creative
+# ---------------------------------------------------------------------------
+
+_DEFAULT_WAN_UNET = 'wan2.2_ti2v_5B_fp16.safetensors'
+_DEFAULT_WAN_CLIP = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
+_DEFAULT_WAN_VAE = 'wan2.2_vae.safetensors'
+
+
+def _align_wan_frames(frames: int) -> int:
+    """Wan latent length must satisfy (length - 1) % 4 == 0."""
+    n = max(5, int(frames))
+    while (n - 1) % 4 != 0:
+        n += 1
+    return min(n, 81)
+
+
+def _align_wan_spatial(px: int) -> int:
+    """Wan spatial dims must be multiples of 16."""
+    n = max(16, int(px))
+    return (n // 16) * 16
+
+
+def video_workflow_status(endpoint: Optional[str] = None) -> dict[str, Any]:
+    """Probe whether Wan 2.2 TI2V assets are indexed by ComfyUI."""
+    ep = (endpoint or _studio_endpoint()).rstrip('/')
+    unets = list_models(ep, 'diffusion_models') or list_models(ep, 'unet')
+    clips = list_models(ep, 'text_encoders') or list_models(ep, 'clip')
+    vaes = list_models(ep, 'vae')
+    unet = next(
+        (u for u in unets if u == _DEFAULT_WAN_UNET or u.endswith('/' + _DEFAULT_WAN_UNET) or 'wan2.2_ti2v' in u.lower()),
+        '',
+    )
+    clip = next(
+        (c for c in clips if c == _DEFAULT_WAN_CLIP or c.endswith('/' + _DEFAULT_WAN_CLIP) or 'umt5_xxl' in c.lower()),
+        '',
+    )
+    vae = next(
+        (v for v in vaes if v == _DEFAULT_WAN_VAE or v.endswith('/' + _DEFAULT_WAN_VAE) or 'wan2.2_vae' in v.lower()),
+        '',
+    )
+    ready = bool(unet and clip and vae)
+    missing = []
+    if not unet:
+        missing.append('diffusion_models/wan2.2_ti2v_5B_fp16.safetensors')
+    if not clip:
+        missing.append('text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors')
+    if not vae:
+        missing.append('vae/wan2.2_vae.safetensors')
+    return {
+        'ok': ready,
+        'modality': 'video',
+        'engine': 'wan-2.2-5b',
+        'endpoint': ep,
+        'unet': unet,
+        'clip': clip,
+        'vae': vae,
+        'missing': missing,
+        'assets_ready': ready,
+        'detail': (
+            'Wan 2.2 TI2V assets indexed by ComfyUI'
+            if ready
+            else ('Studio connected, but video workflow models are not installed yet: ' + ', '.join(missing))
+        ),
+    }
+
+
+def build_wan_video_prompt(
+    *,
+    positive: str,
+    negative: str = '',
+    width: int = 512,
+    height: int = 320,
+    frames: int = 25,
+    fps: int = 16,
+    steps: int = 20,
+    cfg: float = 5.0,
+    seed: Optional[int] = None,
+    unet: str = _DEFAULT_WAN_UNET,
+    clip: str = _DEFAULT_WAN_CLIP,
+    vae: str = _DEFAULT_WAN_VAE,
+    filename_prefix: str = 'otacon_muse_video',
+) -> dict[str, Any]:
+    """API-format Wan 2.2 TI2V graph (text-to-video)."""
+    seed_i = int(seed) if seed is not None else random.randint(1, 2**31 - 1)
+    w = _align_wan_spatial(width)
+    h = _align_wan_spatial(height)
+    length = _align_wan_frames(frames)
+    fps_i = max(8, min(int(fps), 24))
+    steps_i = max(15, min(int(steps), 40))
+    cfg_f = float(cfg) if cfg else 5.0
+    neg = (negative or '').strip() or (
+        'low quality, worst quality, deformed, distorted, watermark, text, blurry'
+    )
+    # Node ids chosen to stay clear of Z-Image / ACE graphs.
+    return {
+        '70': {
+            'class_type': 'UNETLoader',
+            'inputs': {'unet_name': unet, 'weight_dtype': 'default'},
+        },
+        '71': {
+            'class_type': 'CLIPLoader',
+            'inputs': {'clip_name': clip, 'type': 'wan', 'device': 'default'},
+        },
+        '72': {
+            'class_type': 'VAELoader',
+            'inputs': {'vae_name': vae},
+        },
+        '73': {
+            'class_type': 'CLIPTextEncode',
+            'inputs': {'text': positive, 'clip': ['71', 0]},
+        },
+        '74': {
+            'class_type': 'CLIPTextEncode',
+            'inputs': {'text': neg, 'clip': ['71', 0]},
+        },
+        '75': {
+            'class_type': 'Wan22ImageToVideoLatent',
+            'inputs': {
+                'width': w,
+                'height': h,
+                'length': length,
+                'batch_size': 1,
+                'vae': ['72', 0],
+            },
+        },
+        '76': {
+            'class_type': 'ModelSamplingSD3',
+            'inputs': {'model': ['70', 0], 'shift': 8.0},
+        },
+        '77': {
+            'class_type': 'KSampler',
+            'inputs': {
+                'seed': seed_i,
+                'steps': steps_i,
+                'cfg': cfg_f,
+                'sampler_name': 'uni_pc',
+                'scheduler': 'simple',
+                'denoise': 1.0,
+                'model': ['76', 0],
+                'positive': ['73', 0],
+                'negative': ['74', 0],
+                'latent_image': ['75', 0],
+            },
+        },
+        '78': {
+            'class_type': 'VAEDecode',
+            'inputs': {'samples': ['77', 0], 'vae': ['72', 0]},
+        },
+        '79': {
+            'class_type': 'CreateVideo',
+            'inputs': {'images': ['78', 0], 'fps': fps_i},
+        },
+        '80': {
+            'class_type': 'SaveVideo',
+            'inputs': {
+                'video': ['79', 0],
+                'filename_prefix': filename_prefix,
+                'format': 'auto',
+                'codec': 'auto',
+            },
+        },
+    }
+
+
+def submit_video_job(
+    *,
+    prompt: str,
+    negative: str = '',
+    tuning: Optional[dict] = None,
+    endpoint: Optional[str] = None,
+    client_id: str = 'otacon-expansion-muse-video',
+) -> dict[str, Any]:
+    """Submit Wan 2.2 TI2V to ComfyUI. Never claims queued without a real prompt_id."""
+    from expansion.capabilities.video_studio import comfy_endpoint_healthy
+
+    vs = probe_video_studio(clear_stale=False)
+    disc = vs.discovery or {}
+    ep = (endpoint or disc.get('endpoint') or _studio_endpoint()).rstrip('/')
+    ok, health_detail = comfy_endpoint_healthy(ep, timeout=4.0)
+    if not ok:
+        try:
+            from expansion.capabilities.comfy_sidecar import detect_local_comfy
+            detected = detect_local_comfy(timeout=2.0)
+            cand = str((detected or {}).get('endpoint') or '').rstrip('/')
+            if cand:
+                ok2, detail2 = comfy_endpoint_healthy(cand, timeout=4.0)
+                if ok2:
+                    ep = cand
+                    ok, health_detail = True, detail2
+        except Exception:
+            pass
+    if not ok:
+        return {
+            'ok': False,
+            'queued': False,
+            'error': 'creative workflow submitter: ComfyUI not reachable',
+            'detail': (
+                'Video generate needs a live ComfyUI. '
+                f'Last check: {health_detail}.'
+            ),
+            'studio_state': vs.state,
+            'endpoint': ep,
+            'http_status': 503,
+        }
+    probe = video_workflow_status(ep)
+    if not probe.get('ok'):
+        missing = probe.get('missing') or []
+        return {
+            'ok': False,
+            'queued': False,
+            'soft_block': True,
+            'action': 'install_packs',
+            'error': 'creative_packs_needed',
+            'detail': probe.get('detail') or (
+                'Wan video packs are not installed yet. Tap Install packs in The Workshop.'
+            ),
+            'missing': missing,
+            'http_status': 409,
+            'studio_state': vs.state,
+            'endpoint': ep,
+            'workflow': probe,
+        }
+
+    tuning = tuning if isinstance(tuning, dict) else {}
+    width, height = 512, 320
+    res = str(tuning.get('resolution') or '').lower()
+    if 'x' in res:
+        try:
+            a, b = res.lower().split('x', 1)
+            width, height = int(a), int(b)
+        except ValueError:
+            pass
+    aspect = str(tuning.get('aspect') or '')
+    if aspect == '16:9':
+        width, height = 704, 400
+    elif aspect == '9:16':
+        width, height = 400, 704
+    elif aspect == '1:1':
+        width, height = 480, 480
+    try:
+        frames = int(tuning.get('frames') or tuning.get('length') or 25)
+    except (TypeError, ValueError):
+        frames = 25
+    try:
+        fps = int(tuning.get('fps') or 16)
+    except (TypeError, ValueError):
+        fps = 16
+    try:
+        steps = int(tuning.get('steps') or 20)
+    except (TypeError, ValueError):
+        steps = 20
+    try:
+        cfg = float(tuning.get('cfg') or 5)
+    except (TypeError, ValueError):
+        cfg = 5.0
+    seed = tuning.get('seed')
+    try:
+        seed_i = int(seed) if seed not in (None, '', 'random') else None
+    except (TypeError, ValueError):
+        seed_i = None
+
+    graph = build_wan_video_prompt(
+        positive=prompt,
+        negative=negative,
+        width=width,
+        height=height,
+        frames=frames,
+        fps=fps,
+        steps=steps,
+        cfg=cfg,
+        seed=seed_i,
+        unet=probe['unet'],
+        clip=probe['clip'],
+        vae=probe['vae'],
+    )
+    code, data = _http_json(
+        'POST',
+        f'{ep}/prompt',
+        {'prompt': graph, 'client_id': client_id},
+        timeout=90.0,
+    )
+    prompt_id = ''
+    if isinstance(data, dict):
+        prompt_id = str(data.get('prompt_id') or '')
+    if code != 200 or not prompt_id:
+        err = ''
+        if isinstance(data, dict):
+            err = str(data.get('error') or data.get('node_errors') or data)
+        return {
+            'ok': False,
+            'queued': False,
+            'soft_block': True,
+            'error': 'comfy_prompt_not_accepted',
+            'detail': (
+                'ComfyUI did not accept the Wan video graph — usually a missing custom node. '
+                f'Detail: {err}'
+            )[:500],
+            'http_status': 502,
+            'endpoint': ep,
+            'workflow': probe,
+        }
+    return {
+        'ok': True,
+        'queued': True,
+        'prompt_id': prompt_id,
+        'endpoint': ep,
+        'engine': 'wan-2.2-5b',
+        'modality': 'video',
+        'workflow': probe,
+        'http_status': 200,
+    }
+
 
 
 def ensure_creative_poller() -> None:

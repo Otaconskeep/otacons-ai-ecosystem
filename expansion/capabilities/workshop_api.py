@@ -319,6 +319,102 @@ def sync_expansion_job_to_workshop(job: Any, layout: Optional[StateLayout] = Non
     return _upsert_job(card, layout)
 
 
+
+def promote_workshop_job_to_expansion(
+    job: dict[str, Any],
+    *,
+    layout: Optional[StateLayout] = None,
+    modality: str = 'image',
+) -> Optional[Any]:
+    """Mirror Workshop-created jobs into JobStore so /creative lists them.
+
+    /creative and War Room read Expansion JobStore; Workshop UI historically
+    wrote only workshop_jobs.json — successful renders looked like silent fails.
+    """
+    if not isinstance(job, dict) or not job.get('id'):
+        return None
+    try:
+        from expansion.capabilities.comfy_submit import ensure_creative_poller
+        from expansion.events import new_event
+        from expansion.jobs import Job, JobStatus, JobStore, JOB_SCHEMA_VERSION
+        from expansion.pipeline import LivingPipeline
+    except Exception:
+        return None
+    ensure_creative_poller()
+    layout = layout or resolve_layout()
+    store = JobStore(layout=layout)
+    jid = str(job['id'])
+    existing = store.get(jid)
+    prompt = str(job.get('prompt') or job.get('tags') or '').strip()
+    engine = {
+        'image': 'z-image-turbo',
+        'video': 'wan-2.2-5b',
+        'music': 'ace-step-1.5',
+    }.get(modality, modality)
+    request = f"[Muse Studio · {modality} · {engine}] {prompt}"[:2000]
+    pid = str(job.get('prompt_id') or '')
+    ep = str(job.get('endpoint') or '')
+    if existing is None:
+        # Create with the Workshop id so both stores share one key.
+        ej = Job(
+            schema_version=JOB_SCHEMA_VERSION,
+            job_id=jid if jid.startswith('job_') else jid,
+            requester='user_primary',
+            coordinator='aria',
+            assigned_agent='muse',
+            domain='creative',
+            priority=5,
+            status=JobStatus.QUEUED.value,
+            created_at=float(job.get('created_at') or time.time()),
+            request=request,
+        )
+        store.update(ej)
+        created = new_event(
+            'job.created', actor='aria', subject='muse',
+            payload={'job_id': ej.job_id, 'domain': 'creative', 'request': request,
+                     'comfy_prompt_id': pid, 'workshop': True},
+        )
+        try:
+            LivingPipeline().apply_event(created, write_diary=False)
+        except Exception:
+            pass
+        store.transition(ej.job_id, JobStatus.ASSIGNED.value, event_id=created.event_id)
+        evidence = []
+        if pid:
+            evidence.append(f'comfy:prompt_id={pid}')
+        if ep:
+            evidence.append(f'comfy:endpoint={ep}')
+        if job.get('status') == 'failed':
+            store.transition(
+                ej.job_id, JobStatus.FAILED.value,
+                error=str(job.get('error') or 'workshop submit failed'),
+                event_id=created.event_id,
+            )
+        elif pid:
+            store.transition(
+                ej.job_id, JobStatus.RUNNING.value,
+                evidence=evidence, event_id=created.event_id,
+            )
+        return store.get(ej.job_id)
+    # Update existing
+    if job.get('status') == 'completed':
+        files = job.get('outputs') or ([job['output_file']] if job.get('output_file') else [])
+        store.transition(
+            jid, JobStatus.COMPLETE.value,
+            result=f"ComfyUI outputs: {', '.join(str(f) for f in files[:6])}",
+            evidence=list(existing.evidence or []) + [f'comfy:output={f}' for f in files[:8]],
+            confidence=0.9,
+        )
+    elif job.get('status') == 'failed':
+        store.transition(jid, JobStatus.FAILED.value, error=str(job.get('error') or 'failed'))
+    elif pid and existing.status in (JobStatus.QUEUED.value, JobStatus.ASSIGNED.value):
+        evidence = list(existing.evidence or [])
+        if pid and f'comfy:prompt_id={pid}' not in evidence:
+            evidence.append(f'comfy:prompt_id={pid}')
+        store.transition(jid, JobStatus.RUNNING.value, evidence=evidence)
+    return store.get(jid)
+
+
 def _expansion_jobs_as_workshop(layout: Optional[StateLayout] = None) -> list[dict[str, Any]]:
     try:
         from expansion.capabilities.comfy_submit import (
@@ -448,6 +544,14 @@ def _health() -> dict[str, Any]:
         'image_ready': image_ready,
         'video_ready': video_ready,
         'music_ready': music_ready,
+        # Keep has the full movie/projects worker; Expansion Workshop UI is
+        # Keep-parity but the backend is not ported yet. Surface that honestly
+        # so the UI can hide One-click Movie instead of offering a 501 path.
+        'projects_ready': False,
+        'projects_detail': (
+            'Project / movie production API is Keep-parity UI-ready; '
+            'Expansion worker wiring is not shipped yet.'
+        ),
         'preferred_mode': 'image' if (image_ready and not video_ready) else 'video',
         'packs_aria': packs.get('aria') or '',
     }
@@ -515,6 +619,10 @@ def _create_image_job(
             'stage': 'failed',
         })
         _upsert_job(job, layout)
+        try:
+            promote_workshop_job_to_expansion(job, layout=layout, modality='image')
+        except Exception:
+            pass
         return job
 
     job.update({
@@ -524,6 +632,10 @@ def _create_image_job(
         'endpoint': submitted.get('endpoint') or '',
     })
     _upsert_job(job, layout)
+    try:
+        promote_workshop_job_to_expansion(job, layout=layout, modality='image')
+    except Exception:
+        pass
     return job
 
 
@@ -539,6 +651,10 @@ def _refresh_image_job(job: dict[str, Any], layout: Optional[StateLayout] = None
         job['outputs'] = files
         job['output_file'] = files[0]
         _upsert_job(job, layout)
+        try:
+            promote_workshop_job_to_expansion(job, layout=layout, modality='image')
+        except Exception:
+            pass
     return job
 
 
@@ -600,6 +716,10 @@ def _create_music_job(
         'duration': submitted.get('duration') or duration,
     })
     _upsert_job(job, layout)
+    try:
+        promote_workshop_job_to_expansion(job, layout=layout, modality='music')
+    except Exception:
+        pass
     return job
 
 
@@ -688,6 +808,97 @@ def _send_job_output(
     return _proxy(files[0], endpoint_from_job(ej))
 
 
+
+def _create_video_job(
+    *,
+    prompt: str,
+    negative: str = '',
+    width: int = 512,
+    height: int = 320,
+    frames: int = 25,
+    fps: int = 16,
+    steps: int = 20,
+    layout: Optional[StateLayout] = None,
+) -> dict[str, Any]:
+    from expansion.capabilities.comfy_submit import submit_video_job
+
+    job_id = uuid.uuid4().hex[:12]
+    now = time.time()
+    job = {
+        'id': job_id,
+        'type': 'video_v1',
+        'job_type': 'video_v1',
+        'status': 'queued',
+        'prompt': prompt,
+        'negative': negative,
+        'width': width,
+        'height': height,
+        'frames': frames,
+        'fps': fps,
+        'agent_id': 'workshop',
+        'created_at': now,
+        'created_ts': now,
+        'stage': 'submitting',
+    }
+    _upsert_job(job, layout)
+    submitted = submit_video_job(
+        prompt=prompt,
+        negative=negative,
+        tuning={
+            'resolution': f'{width}x{height}',
+            'frames': frames,
+            'fps': fps,
+            'steps': steps,
+            'cfg': 5,
+        },
+    )
+    if not submitted.get('ok') or not submitted.get('prompt_id'):
+        job.update({
+            'status': 'failed',
+            'error': submitted.get('detail') or submitted.get('error') or 'video packs or Comfy not ready',
+            'soft_block': bool(submitted.get('soft_block')),
+            'action': submitted.get('action') or '',
+            'stage': 'failed',
+        })
+        _upsert_job(job, layout)
+        try:
+            promote_workshop_job_to_expansion(job, layout=layout, modality='video')
+        except Exception:
+            pass
+        return job
+    job.update({
+        'status': 'running',
+        'stage': 'comfy',
+        'prompt_id': submitted['prompt_id'],
+        'endpoint': submitted.get('endpoint') or '',
+    })
+    _upsert_job(job, layout)
+    try:
+        promote_workshop_job_to_expansion(job, layout=layout, modality='video')
+    except Exception:
+        pass
+    return job
+
+
+def _refresh_video_job(job: dict[str, Any], layout: Optional[StateLayout] = None) -> dict[str, Any]:
+    if job.get('status') in ('completed', 'failed', 'cancelled') or not job.get('prompt_id'):
+        return job
+    from expansion.capabilities.comfy_submit import _history_outputs, _studio_endpoint
+    ep = job.get('endpoint') or _studio_endpoint()
+    files = _history_outputs(ep, str(job['prompt_id']))
+    if files:
+        job['status'] = 'completed'
+        job['stage'] = 'done'
+        job['outputs'] = files
+        job['output_file'] = files[0]
+        _upsert_job(job, layout)
+        try:
+            promote_workshop_job_to_expansion(job, layout=layout, modality='video')
+        except Exception:
+            pass
+    return job
+
+
 def handle_workshop_get(
     path: str,
     send_json: SendJson,
@@ -742,7 +953,14 @@ def handle_workshop_get(
             send_bytes(data, mime, name)
         return True
     if rel == 'jobs':
-        local = [_refresh_image_job(dict(j), layout) for j in _workshop_jobs(layout)[:80]]
+        local = []
+        for j in _workshop_jobs(layout)[:80]:
+            jj = dict(j)
+            jt = str(jj.get('type') or jj.get('job_type') or '')
+            if jt.startswith('video'):
+                local.append(_refresh_video_job(jj, layout))
+            else:
+                local.append(_refresh_image_job(jj, layout))
         merged: dict[str, dict[str, Any]] = {}
         for j in _expansion_jobs_as_workshop(layout) + local:
             jid = str(j.get('id') or '')
@@ -1280,32 +1498,80 @@ def handle_workshop_write(
         })
         return True
 
-    # Video generate — honest soft response until modality submitters land.
+    # Video generate — Wan 2.2 TI2V text-to-video (image-conditioned variants: 501).
     if rel in (
-        'generate', 'generate-v2', 'generate-v2-start-end', 'generate-v2-auto-start-end',
-        'generate-v2-direct-t2v', 'generate-h3', 'generate-hidream-v1',
+        'generate-v2-start-end', 'generate-v2-auto-start-end',
+        'generate-h3', 'generate-hidream-v1',
     ) and method == 'POST':
-        from expansion.capabilities.studio_packs import packs_status
-        packs = packs_status()
         send_json({
             'ok': False,
-            'error': 'modality_pack_or_submitter',
+            'error': 'submitter_not_implemented',
             'detail': (
-                packs.get('aria')
-                or 'Video generate uses the same Workshop UI; install video packs for this GPU. '
-                   'Image and music generate when their packs are ready.'
+                'This video mode needs an image-conditioned Wan graph that is not wired yet. '
+                'Use text-to-video Generate (or generate-v2 / generate-v2-direct-t2v) instead.'
             ),
-            'soft_block': True,
-            'action': 'install_packs',
-            'packs': packs.get('packs') or {},
-        }, 409)
+            'projects_ready': False,
+        }, 501)
+        return True
+
+    if rel in ('generate', 'generate-v2', 'generate-v2-direct-t2v') and method == 'POST':
+        prompt = str(data.get('prompt') or data.get('positive') or '').strip()
+        if not prompt:
+            send_json({'ok': False, 'error': 'prompt required'}, 400)
+            return True
+        try:
+            width = int(data.get('width') or 512)
+            height = int(data.get('height') or 320)
+        except (TypeError, ValueError):
+            width, height = 512, 320
+        try:
+            frames = int(data.get('frames') or data.get('length') or 25)
+        except (TypeError, ValueError):
+            frames = 25
+        try:
+            fps = int(data.get('fps') or 16)
+        except (TypeError, ValueError):
+            fps = 16
+        try:
+            steps = int(data.get('steps') or 20)
+        except (TypeError, ValueError):
+            steps = 20
+        job = _create_video_job(
+            prompt=prompt,
+            negative=str(data.get('negative') or ''),
+            width=width,
+            height=height,
+            frames=frames,
+            fps=fps,
+            steps=steps,
+            layout=layout,
+        )
+        code = 200 if job.get('status') != 'failed' else int(
+            409 if job.get('soft_block') or job.get('action') == 'install_packs' else 502
+        )
+        send_json({
+            'ok': job.get('status') != 'failed',
+            'id': job['id'],
+            'job_id': job['id'],
+            'job': job,
+            'status': job.get('status'),
+            'prompt_id': job.get('prompt_id') or '',
+            'error': job.get('error') or '',
+            'detail': job.get('error') or '',
+            'action': job.get('action') or '',
+            'soft_block': bool(job.get('soft_block')),
+        }, code)
         return True
 
     if rel.startswith('projects') and method == 'POST':
         send_json({
             'ok': False,
             'error': 'movie_production_pending',
-            'detail': 'Project / movie production API is Keep-parity UI-ready; worker wiring follows.',
+            'detail': (
+                'Project / movie production is not wired in Expansion yet '
+                '(Keep-parity UI only). Image, video, and music generate still work.'
+            ),
+            'projects_ready': False,
         }, 501)
         return True
 

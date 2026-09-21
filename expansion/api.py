@@ -871,30 +871,44 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
         vs = probe_video_studio()
         endpoint = ((vs.discovery or {}).get('endpoint') or 'http://127.0.0.1:8188')
 
-        if modality != 'image':
+        submitted = None
+        if modality == 'image':
+            submitted = submit_image_job(
+                prompt=prompt,
+                negative=negative,
+                tuning=tuning if isinstance(tuning, dict) else {},
+                endpoint=endpoint,
+            )
+        elif modality == 'video':
+            from expansion.capabilities.comfy_submit import submit_video_job
+            submitted = submit_video_job(
+                prompt=prompt,
+                negative=negative,
+                tuning=tuning if isinstance(tuning, dict) else {},
+                endpoint=endpoint,
+            )
+        elif modality == 'music':
+            from expansion.capabilities.comfy_submit import submit_music_job
+            tun = tuning if isinstance(tuning, dict) else {}
+            submitted = submit_music_job(
+                tags=prompt,
+                lyrics=str(tun.get('lyrics') or ''),
+                duration_sec=float(tun.get('duration') or 60),
+                bpm=tun.get('bpm'),
+                tuning=tun,
+                endpoint=endpoint,
+            )
+        else:
             send_json({
                 'ok': False,
                 'queued': False,
-                'soft_block': True,
-                'action': 'install_packs',
-                'error': 'creative_packs_needed',
-                'detail': (
-                    f'{modality.title()} packs are not ready yet — install creative packs '
-                    f'in The Workshop. Generate stays quiet until then. ComfyUI is '
-                    f'{"READY" if vs.state == "READY" else vs.state} at {endpoint}.'
-                ),
+                'error': 'modality_not_supported',
+                'detail': f'{modality.title()} generate is not wired on this surface yet.',
                 'modality': modality,
                 'studio_state': vs.state,
                 'endpoint': endpoint,
-            }, 409)
+            }, 501)
             return True
-
-        submitted = submit_image_job(
-            prompt=prompt,
-            negative=negative,
-            tuning=tuning if isinstance(tuning, dict) else {},
-            endpoint=endpoint,
-        )
         if not submitted.get('ok') or not submitted.get('prompt_id'):
             status = int(submitted.get('http_status') or 409)
             payload = {
@@ -919,9 +933,14 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             return True
 
         prompt_id = str(submitted['prompt_id'])
+        _engine_default = {
+            'image': 'z-image-turbo',
+            'video': 'wan-2.2-5b',
+            'music': 'ace-step-1.5',
+        }.get(modality) or modality
         request = (
             f'[Muse Studio · {modality}'
-            + f' · {engine or "z-image-turbo"}'
+            + f' · {engine or _engine_default}'
             + f'] {prompt}'
         )
         if negative:

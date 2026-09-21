@@ -52,13 +52,20 @@ if /I "%OTACON_UNATTENDED%"=="1" (
 if not exist "%LOGDIR%" mkdir "%LOGDIR%" >nul 2>&1
 >>"%LOGFILE%" echo [%DATE% %TIME%] [BAT] Expansion Setup begin unattended=%OTACON_UNATTENDED%
 
-REM Dev tree: only when this bat lives next to deploy helpers AND foundation script
-if exist "%~dp0deploy\install-otacon-expansion.ps1" if exist "%~dp0deploy\wsl-bash-file.ps1" if exist "%~dp0install_otacon_expansion.sh" (
+REM Dev tree: ONLY when explicitly opted in. Local helpers next to this bat used to
+REM skip GitHub refresh and strand users on stale scripts (Crist OneDrive path).
+REM Set OTACON_DEV_TREE=1 to force local checkout scripts.
+if /I "%OTACON_DEV_TREE%"=="1" if exist "%~dp0deploy\install-otacon-expansion.ps1" if exist "%~dp0deploy\wsl-bash-file.ps1" if exist "%~dp0install_otacon_expansion.sh" (
   echo.
-  echo  [OTACON] Dev tree detected - running Expansion installer from this folder.
+  echo  [OTACON] OTACON_DEV_TREE=1 - running Expansion installer from this folder.
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0deploy\install-otacon-expansion.ps1" -RepoRoot "%~dp0" %OPEN_BROWSER% %UNATTENDED_SW%
   set "RC=!ERRORLEVEL!"
   goto DONE
+)
+if exist "%~dp0deploy\install-otacon-expansion.ps1" if exist "%~dp0deploy\wsl-bash-file.ps1" if exist "%~dp0install_otacon_expansion.sh" (
+  echo.
+  echo  [OTACON] Local Expansion helpers found next to this bat - still refreshing from GitHub.
+  echo           Set OTACON_DEV_TREE=1 only if you intentionally want local scripts.
 )
 
 echo.
