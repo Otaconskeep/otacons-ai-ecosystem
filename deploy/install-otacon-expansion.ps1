@@ -313,6 +313,10 @@ Log: $LogFile
 5) GPU
    - Fix-Otacon-GPU.bat; never install Linux nvidia drivers inside WSL
 
+6) HOME ASSISTANT
+   - Expansion starts otacon-homeassistant on http://127.0.0.1:8123 after Docker
+   - Open UI once, create account, paste long-lived token in Ops -> Home Assistant
+
 Discord: https://discord.gg/cZDeqECzX
 "@
 try {

@@ -190,13 +190,40 @@ def probe_home_assistant(layout: Optional[StateLayout] = None) -> CapabilityRepo
     if cfg.get('token_configured'):
         keys.append('token')
     disc = {**cfg, 'auto_install': True}
+    # Managed local container may already be up with URL saved but no token yet.
+    if cfg.get('url') and not cfg.get('token_configured'):
+        try:
+            from expansion.capabilities.home_assistant_sidecar import (
+                DEFAULT_ENDPOINT,
+                ha_endpoint_healthy,
+            )
+            local = (cfg.get('url') or '').rstrip('/') in (
+                DEFAULT_ENDPOINT.rstrip('/'),
+                'http://localhost:8123',
+            )
+            if local:
+                up, det = ha_endpoint_healthy(cfg['url'], timeout=1.5)
+                if up:
+                    disc['managed_container'] = True
+                    disc['user_action'] = 'onboard_token'
+                    return CapabilityReport(
+                        CAPABILITY_ID, OWNER_AGENT, CapabilityState.NEEDS_CREDENTIAL.value,
+                        detail=(
+                            'Home Assistant container is running at '
+                            f"{cfg['url']} ({det}). Open that URL, finish onboarding, "
+                            'then paste a long-lived access token into Expansion Ops.'
+                        ),
+                        config_keys_present=keys, discovery=disc,
+                    )
+        except Exception:
+            pass
     if not cfg.get('url') or not cfg.get('token_configured'):
         disc['user_action'] = 'credential'
         return CapabilityReport(
             CAPABILITY_ID, OWNER_AGENT, CapabilityState.NEEDS_CREDENTIAL.value,
             detail=(
-                'Home Assistant is supported. Otacon needs your HA URL and a '
-                'long-lived access token once — then it can verify and wire entities.'
+                'Home Assistant is supported. Otacon can start a local Docker container '
+                'automatically; you still paste a long-lived access token once after onboarding.'
             ),
             config_keys_present=keys, discovery=disc,
         )

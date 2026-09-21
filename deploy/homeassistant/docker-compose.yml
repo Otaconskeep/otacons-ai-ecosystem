@@ -1,0 +1,20 @@
+# Otacon Expansion — managed local Home Assistant (Container).
+# Start: docker compose -f deploy/homeassistant/docker-compose.yml up -d
+# UI: http://127.0.0.1:8123
+#
+# Docker Desktop / WSL: use published ports (host networking is unreliable there).
+# After first boot, open the UI, create the owner account, then paste a
+# long-lived access token into Expansion Ops → Home Assistant.
+services:
+  otacon-homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: otacon-homeassistant
+    ports:
+      - "8123:8123"
+    restart: unless-stopped
+    environment:
+      - TZ=UTC
+    volumes:
+      - otacon-ha-config:/config
+volumes:
+  otacon-ha-config:

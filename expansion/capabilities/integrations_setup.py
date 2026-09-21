@@ -16,6 +16,7 @@ from expansion.capabilities.discord_n8n import (
     mark_discord_guild_authorized,
 )
 from expansion.capabilities.home_assistant import (
+    load_ha_config,
     probe_home_assistant,
     save_ha_config,
     verify_home_assistant,
@@ -132,6 +133,57 @@ def configure_integration(
         return out
 
     if which in ('home_assistant', 'ha', 'hass'):
+        from expansion.capabilities.home_assistant_sidecar import ensure_home_assistant_sidecar
+
+        # Easiest path: if caller did not supply credentials, deploy the managed
+        # container first (same pattern as n8n), then ask only for the token.
+        deploy = None
+        if not url.strip() and not token.strip():
+            deploy = ensure_home_assistant_sidecar(layout=layout)
+            if not deploy.get('ok'):
+                report = probe_home_assistant(layout)
+                return {
+                    'ok': False,
+                    'component': 'home_assistant',
+                    'error': deploy.get('error') or 'Home Assistant container deploy failed',
+                    'deploy': deploy,
+                    'state': report.state,
+                    'detail': report.detail,
+                    'prompt': {
+                        'url': 'Home Assistant URL (auto: http://127.0.0.1:8123 after Docker)',
+                        'token': 'Long-lived access token (after HA onboarding)',
+                    },
+                    'checklist': [
+                        {'id': 'docker', 'label': 'Docker available', 'done': deploy.get('action') != 'docker_missing'},
+                        {'id': 'deploy', 'label': 'HA container deployed', 'done': False},
+                        {'id': 'token', 'label': 'Token stored securely', 'done': False},
+                    ],
+                }
+            # Container up — still need token unless already saved.
+            if not load_ha_config(layout).get('token_configured'):
+                report = probe_home_assistant(layout)
+                return {
+                    'ok': True,
+                    'component': 'home_assistant',
+                    'deploy': deploy,
+                    'state': report.state,
+                    'detail': report.detail,
+                    'discovery': report.discovery,
+                    'prompt': {
+                        'url': deploy.get('endpoint') or 'http://127.0.0.1:8123',
+                        'token': 'Long-lived access token (Profile → Long-Lived Access Tokens)',
+                    },
+                    'checklist': [
+                        {'id': 'docker', 'label': 'Docker available', 'done': True},
+                        {'id': 'deploy', 'label': 'HA container deployed', 'done': True},
+                        {'id': 'ui', 'label': 'HA UI answering', 'done': True},
+                        {'id': 'token', 'label': 'Token stored securely', 'done': False},
+                        {'id': 'verify', 'label': 'Connection verified', 'done': False},
+                    ],
+                }
+
+        if not url.strip():
+            url = str((deploy or {}).get('endpoint') or load_ha_config(layout).get('url') or '')
         if not url.strip() and not token.strip():
             report = probe_home_assistant(layout)
             return {
@@ -141,7 +193,7 @@ def configure_integration(
                 'state': report.state,
                 'detail': report.detail,
                 'prompt': {
-                    'url': 'Home Assistant URL (e.g. http://homeassistant.local:8123)',
+                    'url': 'Home Assistant URL (e.g. http://127.0.0.1:8123)',
                     'token': 'Long-lived access token',
                 },
             }
@@ -149,18 +201,20 @@ def configure_integration(
             save_ha_config(url, token=token, layout=layout)
         except ValueError as exc:
             return {'ok': False, 'component': 'home_assistant', 'error': str(exc)}
-        verified = verify_home_assistant(layout=layout)
+        verified = verify_home_assistant(layout=layout) if token.strip() or load_ha_config(layout).get('token_configured') else {'ok': False}
         report = probe_home_assistant(layout)
         return {
             'ok': bool(verified.get('ok')),
             'component': 'home_assistant',
+            'deploy': deploy,
             'verify': verified,
             'state': report.state,
             'detail': report.detail,
             'discovery': report.discovery,
             'checklist': [
+                {'id': 'docker', 'label': 'Docker / HA container', 'done': True},
                 {'id': 'url', 'label': 'HA URL saved', 'done': True},
-                {'id': 'token', 'label': 'Token stored securely', 'done': True},
+                {'id': 'token', 'label': 'Token stored securely', 'done': bool(load_ha_config(layout).get('token_configured'))},
                 {'id': 'verify', 'label': 'Connection verified', 'done': bool(verified.get('ok'))},
                 {
                     'id': 'entities',

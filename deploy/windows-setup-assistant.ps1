@@ -498,6 +498,17 @@ Installer may select LTX-2 packs for 24GB+ cards. If Workshop video still
 asks for Wan packs, run Fix-Otacon-GPU.bat after update, and check the site
 for the latest Expansion release. Report the mismatch with TROUBLESHOOTING.txt.
 
+==============================================================================
+10) HOME ASSISTANT (Docker container)
+==============================================================================
+After Docker Desktop is Running, Expansion starts otacon-homeassistant on
+http://127.0.0.1:8123 automatically.
+YOU MUST (once):
+  A) Open http://127.0.0.1:8123 and finish HA onboarding
+  B) Profile -> Long-Lived Access Tokens -> Create Token
+  C) Paste the token in Expansion Ops -> Home Assistant Configure
+Re-run Expansion Setup if the container was skipped (Docker not ready yet).
+
 Discord: https://discord.gg/cZDeqECzX
 "@
     try {

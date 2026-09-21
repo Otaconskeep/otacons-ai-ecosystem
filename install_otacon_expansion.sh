@@ -615,6 +615,55 @@ fi
 echo "EXP_STUDIO_PROFILE=${EXP_STUDIO_PROFILE:-unknown}"
 
 # ------------------------------------------------------------------------------
+# Home Assistant + n8n sidecars (Docker) — easiest Expansion path
+# ------------------------------------------------------------------------------
+EXP_HA_STATE=skipped
+EXP_N8N_STATE=skipped
+if [[ -n "${VPY:-}" ]]; then
+  log "Ensuring managed Home Assistant container (after Docker)"
+  HA_OUT="$(
+    run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" PYTHONPATH="$INSTALL_DIR" \
+      "$VPY" -c "
+from expansion.capabilities.home_assistant_sidecar import ensure_home_assistant_sidecar
+r = ensure_home_assistant_sidecar(wait_sec=120)
+print('ok=%s action=%s endpoint=%s token=%s' % (
+    int(bool(r.get('ok'))), r.get('action'), r.get('endpoint') or '',
+    int(bool(r.get('token_configured'))),
+))
+if r.get('error'):
+    print('error=%s' % (str(r.get('error'))[:200],))
+" 2>/dev/null || echo 'ok=0 action=error'
+  )"
+  ok "Home Assistant sidecar: ${HA_OUT}"
+  echo "EXP_HA_KICK=${HA_OUT}"
+  case "$HA_OUT" in
+    *ok=1*) EXP_HA_STATE=ready ;;
+    *docker_missing*) EXP_HA_STATE=no_docker ;;
+    *) EXP_HA_STATE=degraded ;;
+  esac
+  log "Ensuring managed n8n container (after Docker)"
+  N8N_OUT="$(
+    run_as_owner "$OWNER" -- env HOME="$OWNER_HOME" PYTHONPATH="$INSTALL_DIR" \
+      "$VPY" -c "
+from expansion.capabilities.n8n_sidecar import ensure_n8n_sidecar
+r = ensure_n8n_sidecar(wait_sec=90)
+print('ok=%s action=%s endpoint=%s' % (int(bool(r.get('ok'))), r.get('action'), r.get('endpoint') or ''))
+if r.get('error'):
+    print('error=%s' % (str(r.get('error'))[:200],))
+" 2>/dev/null || echo 'ok=0 action=error'
+  )"
+  ok "n8n sidecar: ${N8N_OUT}"
+  echo "EXP_N8N_KICK=${N8N_OUT}"
+  case "$N8N_OUT" in
+    *ok=1*) EXP_N8N_STATE=ready ;;
+    *docker_missing*) EXP_N8N_STATE=no_docker ;;
+    *) EXP_N8N_STATE=degraded ;;
+  esac
+fi
+echo "EXP_HA_STATE=$EXP_HA_STATE"
+echo "EXP_N8N_STATE=$EXP_N8N_STATE"
+
+# ------------------------------------------------------------------------------
 # Final summary
 # ------------------------------------------------------------------------------
 FINAL_STATE=READY
@@ -683,12 +732,12 @@ printf '  - Migration contract: docs/KEEP_EXPANSION_MIGRATION.md\n'
 printf '\033[1;33mFeature matrix (this install):\033[0m\n'
 printf '  - Foundation roster/schema     : installed (verified by this script)\n'
 printf '  - Entitled surfaces (War Room) : check /api/expansion/entitlement after restart\n'
-printf '  - Optional Discord/HA/n8n      : auto-install from Ops (credentials only when required)\n'
+printf '  - Optional Discord/HA/n8n      : HA+n8n containers auto-start when Docker is ready\n'
 printf '\n'
 printf '\033[1;33mRecommended next (Otacon can finish these):\033[0m\n'
 printf '  [ ] Discord         — Ops → Configure Discord (paste bot token once)\n'
-printf '  [ ] Home Assistant  — Ops → Connect HA (URL + long-lived token once)\n'
-printf '  [ ] n8n             — Ops → Install n8n (Docker; no credential for base)\n'
+printf '  [ ] Home Assistant  — open http://127.0.0.1:8123, onboard, paste long-lived token in Ops\n'
+printf '  [ ] n8n             — open http://127.0.0.1:5678 (container auto-installed with Expansion)\n'
 printf '  API: POST /api/expansion/integrations/configure  {\"component\":\"discord|home_assistant|n8n\"}\n'
 printf '  - Page Builder                 : page registry metadata only (not a page factory)\n'
 printf '  - Full status and roadmap      : %s\n' "$SPEC_URL"
