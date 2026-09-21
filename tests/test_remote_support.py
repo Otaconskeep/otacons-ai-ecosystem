@@ -276,5 +276,23 @@ $env:USERPROFILE = '{td}'
         self.assertIn("OtaconsKeep-RustDesk-Tailscale", t)
         self.assertIn("privacy-mode", t)
 
+    def test_owner_make_bats_exist_and_call_builder(self):
+        for name in ("Make-Josh-Installer.bat", "Make-Chris-Installer.bat"):
+            p = RS / name
+            self.assertTrue(p.is_file(), name)
+            text = p.read_text(encoding="utf-8", errors="replace")
+            self.assertIn("Build-RemoteSupportInstaller.ps1", text)
+            self.assertIn("-CopyToDesktop", text)
+        friend = RS / "Make-Friend-Installer.bat"
+        self.assertTrue(friend.is_file())
+        friend_text = friend.read_text(encoding="utf-8", errors="replace")
+        self.assertIn("Make-Josh-Installer.bat", friend_text)
+        self.assertIn("Make-Chris-Installer.bat", friend_text)
+        josh = (RS / "Make-Josh-Installer.bat").read_text(encoding="utf-8", errors="replace")
+        self.assertIn("SEND-TO-JOSH", josh)
+        easy = (RS / "EASY-START.txt").read_text(encoding="utf-8", errors="replace")
+        self.assertIn("Make-Josh-Installer.bat", easy)
+        self.assertIn("SEND-TO-JOSH.bat", easy)
+
 if __name__ == "__main__":
     unittest.main()

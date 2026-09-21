@@ -1,0 +1,17 @@
+OTACONSKEEP — EASIEST PATH
+
+YOU (once per friend):
+1. Double-click Make-Josh-Installer.bat  (or Make-Chris-Installer.bat)
+2. In the Tailscale page that opens: create a one-time key → copy it
+3. Paste the key in the window when asked
+4. Send the new file on your Desktop:  SEND-TO-JOSH.bat
+
+FRIEND:
+1. Open the file you sent
+2. Run as administrator → Yes
+3. Done
+
+YOU AFTER THEY FINISH:
+  ssh Josh@otacon-josh
+
+(That Make-*.bat updates/replaces the friend installer each time you run it.)

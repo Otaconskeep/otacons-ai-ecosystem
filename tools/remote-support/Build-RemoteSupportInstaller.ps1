@@ -16,7 +16,10 @@ param(
     [string]$OutputDir,
     [string]$PublicKeyPath,
     [switch]$DryRun,
-    [switch]$VerboseKey
+    [switch]$VerboseKey,
+    [switch]$CopyToDesktop,
+    [switch]$OpenOutput,
+    [switch]$OpenTailscaleKeysPage
 )
 
 Set-StrictMode -Version Latest
@@ -77,8 +80,15 @@ if ($VerboseKey) {
     Write-Host ("       Preview: {0}" -f $preview) -ForegroundColor DarkGray
 }
 
+if ($OpenTailscaleKeysPage) {
+    Write-Host 'Opening Tailscale auth-keys page in your browser…' -ForegroundColor Cyan
+    try { Start-Process 'https://login.tailscale.com/admin/settings/keys' } catch {}
+    Write-Host 'Create a one-time / reusable=off key, copy it, then paste below.' -ForegroundColor DarkGray
+    Write-Host ''
+}
+
 if (-not $AuthKey) {
-    $AuthKey = Read-SecurePlain 'Enter temporary single-use Tailscale auth key'
+    $AuthKey = Read-SecurePlain 'Paste Tailscale auth key (only thing you type)'
 }
 $AuthKey = $AuthKey.Trim()
 if ([string]::IsNullOrWhiteSpace($AuthKey)) { throw 'Tailscale auth key is required' }
@@ -131,6 +141,17 @@ $outBat = Join-Path $OutputDir ("OtaconsKeep-Remote-Setup-{0}.bat" -f $safeName)
 # Ensure CRLF
 $crlf = $bat -replace "(?<!\r)\n", "`r`n"
 [IO.File]::WriteAllText($outBat, $crlf, (New-Object System.Text.UTF8Encoding $false))
+
+$desktopBat = $null
+if ($CopyToDesktop) {
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    if ([string]::IsNullOrWhiteSpace($desktop)) { $desktop = Join-Path $env:USERPROFILE 'Desktop' }
+    if (-not (Test-Path -LiteralPath $desktop)) {
+        New-Item -ItemType Directory -Force -Path $desktop | Out-Null
+    }
+    $desktopBat = Join-Path $desktop ("SEND-TO-{0}.bat" -f $safeName.ToUpperInvariant())
+    Copy-Item -LiteralPath $outBat -Destination $desktopBat -Force
+}
 
 $ownerDir = Join-Path $here 'generated\owner'
 if (-not (Test-Path -LiteralPath $ownerDir)) {
@@ -189,41 +210,30 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 [IO.File]::WriteAllText($ownerFile, ($ownerBody -replace "(?<!\r)\n", "`r`n"), $utf8)
 
 Write-Host ''
-Write-Host 'Generated:' -ForegroundColor Green
-Write-Host ("  {0}" -f (Split-Path -Leaf $outBat))
+Write-Host '============================================================' -ForegroundColor Green
+Write-Host ("  SEND THIS FILE TO {0}:" -f $Recipient.ToUpperInvariant()) -ForegroundColor Green
+if ($desktopBat) {
+    Write-Host ("  {0}" -f $desktopBat) -ForegroundColor Green
+} else {
+    Write-Host ("  {0}" -f $outBat) -ForegroundColor Green
+}
+Write-Host '============================================================' -ForegroundColor Green
 Write-Host ''
-Write-Host 'Owner access record:' -ForegroundColor Green
-Write-Host ("  {0}" -f (Split-Path -Leaf $ownerFile))
-Write-Host ("  {0}" -f $ownerFile) -ForegroundColor DarkGray
+Write-Host 'Also saved:' -ForegroundColor DarkGray
+Write-Host ("  {0}" -f $outBat) -ForegroundColor DarkGray
+Write-Host ("  Owner record (KEEP PRIVATE): {0}" -f $ownerFile) -ForegroundColor DarkGray
 Write-Host ''
-Write-Host '[PASS] Installer written' -ForegroundColor Green
-Write-Host ("       {0}" -f $outBat)
+Write-Host ("{0} only needs to: Run as administrator → Yes → Done." -f $Recipient) -ForegroundColor Cyan
 Write-Host ''
-Write-Host 'WARNING:' -ForegroundColor Yellow
-Write-Host 'This generated installer contains a temporary Tailscale enrollment credential' -ForegroundColor Yellow
-Write-Host 'and embeds a unique RustDesk unattended password for this machine only.' -ForegroundColor Yellow
-Write-Host 'Send the BAT only to the intended recipient.' -ForegroundColor Yellow
-Write-Host 'Keep the owner access record private on YOUR PC. Never commit it.' -ForegroundColor Yellow
-Write-Host 'Delete the BAT after successful enrollment.' -ForegroundColor Yellow
-Write-Host ''
-Write-Host 'Friend steps (Josh/Chris):' -ForegroundColor Cyan
-Write-Host '  1. Download the BAT'
-Write-Host '  2. Right-click -> Run as administrator'
-Write-Host '  3. Click Yes on UAC'
-Write-Host '  4. Wait for REMOTE ACCESS READY'
-Write-Host ''
-Write-Host 'Then on YOUR PC:' -ForegroundColor Cyan
-Write-Host '  tailscale status'
-Write-Host ''
-Write-Host 'TERMINAL:' -ForegroundColor Cyan
+Write-Host 'After they finish, on YOUR PC:' -ForegroundColor Cyan
 Write-Host ("  ssh {0}@{1}" -f $SshUser, $Alias)
-Write-Host ''
-Write-Host 'REMOTE SCREEN:' -ForegroundColor Cyan
-Write-Host '  Open RustDesk.'
-Write-Host ("  Connect directly to: {0}" -f $Alias)
-Write-Host '  If hostname direct-access is unsupported, use the friend Tailscale 100.x.x.x address.'
-Write-Host '  Port: 21118'
-Write-Host ("  Password: see {0}" -f (Split-Path -Leaf $ownerFile))
+Write-Host ("  RustDesk → {0}  port 21118  (password in owner record)" -f $Alias)
+
+if ($OpenOutput) {
+    $reveal = if ($desktopBat) { $desktopBat } else { $outBat }
+    try { Start-Process explorer.exe -ArgumentList ('/select,"{0}"' -f $reveal) } catch {}
+}
+
 if ($DryRun) {
     Write-Host ''
     Write-Host 'Note: -DryRun on the builder does not strip secrets; friend BAT still enrolls unless they pass -DryRun.' -ForegroundColor DarkGray

@@ -59,39 +59,26 @@ ssh Josh@otacon-josh
 - Friend must **not** create a RustDesk account, sign in, read you an ID/password, or click Accept every session.
 - This is **authorized remote technical support**, not hidden monitoring. Friend consents by running the installer.
 
-## Owner workflow (you)
+## Owner workflow (you) — least work
 
-### Josh
+### Josh (double-click)
 
-1. In the Tailscale admin console, create a **temporary one-off / pre-approved** auth key.
-2. On your Windows PC (PowerShell):
-
-```powershell
-cd <repo>
-.\tools\remote-support\Build-RemoteSupportInstaller.ps1
-```
-
-3. Enter:
-
-- Recipient: `Josh`
-- Alias: `otacon-josh` (default suggestion)
-- Windows user: `Josh`
-- Temporary Tailscale auth key (typed hidden)
-
-4. Builder finds your public key automatically (`id_ed25519.pub` preferred) and generates a unique RustDesk password.
-5. Output (gitignored):
+1. On your Windows PC, open:
 
 ```text
-Generated:
-  OtaconsKeep-Remote-Setup-Josh.bat
-
-Owner access record:
-  Josh-RemoteAccess.txt
-  tools/remote-support/generated/owner/Josh-RemoteAccess.txt
+tools\remote-support\Make-Josh-Installer.bat
 ```
 
-6. Send **only the BAT** to Josh (chat/USB). Keep the owner access record private.
-7. After Josh finishes, on your PC:
+2. Double-click it.
+3. Tailscale opens in your browser → create a **one-time** auth key → copy it → paste when asked.
+4. A fresh friend installer is written/updated on your Desktop:
+
+```text
+Desktop\SEND-TO-JOSH.bat
+```
+
+5. Send **that Desktop file** to Josh (chat/USB). Keep `tools\remote-support\generated\owner\Josh-RemoteAccess.txt` private on your PC.
+6. After Josh finishes, on your PC:
 
 ```powershell
 tailscale status
@@ -109,16 +96,19 @@ REMOTE SCREEN: Open RustDesk → connect directly to `otacon-josh` (or fallback 
 
 9. **Delete** `OtaconsKeep-Remote-Setup-Josh.bat` after successful enrollment.
 
-### Chris
+### Chris (double-click)
 
-Same steps with a **different** generated RustDesk password:
+Same idea — double-click:
 
-- Recipient: `Chris`
-- Alias: `otacon-chris`
-- Windows user: `Chris`
-- Output BAT: `OtaconsKeep-Remote-Setup-Chris.bat`
-- Owner record: `Chris-RemoteAccess.txt`
-- Connect: `ssh Chris@otacon-chris`
+```text
+tools\remote-support\Make-Chris-Installer.bat
+```
+
+Then send `Desktop\SEND-TO-CHRIS.bat`. Connect later with `ssh Chris@otacon-chris`.
+
+Or use `Make-Friend-Installer.bat` and pick 1/2.
+
+See also `tools/remote-support/EASY-START.txt`.
 
 ### Owner discovery helpers
 
@@ -164,7 +154,8 @@ No Tailscale account. No email. No browser login. No SSH setup. No RustDesk acco
 
 | Path | Role |
 |---|---|
-| `tools/remote-support/Build-RemoteSupportInstaller.ps1` | Owner builder |
+| `tools/remote-support/Make-Josh-Installer.bat` / `Make-Chris-Installer.bat` | **You double-click these** (easiest) |
+| `tools/remote-support/Build-RemoteSupportInstaller.ps1` | Owner builder (used by the Make-*.bat files) |
 | `tools/remote-support/templates/RemoteSupportBootstrap.ps1` | Friend bootstrap template |
 | `tools/remote-support/RemoteSupport.Common.ps1` | Shared pure helpers |
 | `tools/remote-support/Disable-SSH-PasswordAuth.ps1` | Optional post-verify hardening |
