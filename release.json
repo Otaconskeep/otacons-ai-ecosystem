@@ -94,8 +94,8 @@
     },
     {
       "path": "deploy/install-desktop-launcher.ps1",
-      "sha256": "d0a87ea3b93bbc25f1a93b182821b0662faa2aa0d3bbaee8df91dfad8eb6182a",
-      "bytes": 6338
+      "sha256": "70a377e2f1518a4077e5d6a0ed6ac60fc403275400630e5d6eb1d5587b4ba729",
+      "bytes": 6335
     },
     {
       "path": "deploy/otacon-launcher.ico",
