@@ -140,6 +140,14 @@ Your Ubuntu environment, your Otacon install directory, your venv, and all
 your data are left exactly as they are; this only stops Otacon from
 starting automatically, it doesn't remove Otacon itself.
 
+
+## Remote support (Tailscale + SSH)
+
+For helping a friend (Josh, Chris, …) without exposing SSH to the internet, see **[docs/remote-support.md](docs/remote-support.md)**.
+
+Owner builds `OtaconsKeep-Remote-Setup-<Name>.bat` (gitignored). Friend runs one elevated BAT → **REMOTE ACCESS READY**. You connect with `ssh <user>@otacon-<name>` over Tailscale.
+
+
 ## Otacon Core, Otacon Expansion, the Keep Blueprint, and Otaconskeep Services
 
 | | **Otacon Core** (this repo) | **Otacon Expansion** | **Keep Blueprint** | **Otaconskeep Services** |

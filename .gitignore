@@ -24,3 +24,8 @@ __pycache__/
 .idea/
 installer/bin/
 src-tauri/target/
+
+# OtaconsKeep remote-support: generated friend installers embed temporary Tailscale auth keys
+tools/remote-support/out/
+OtaconsKeep-Remote-Setup-*.bat
+**/OtaconsKeep-Remote-Setup-*.bat
