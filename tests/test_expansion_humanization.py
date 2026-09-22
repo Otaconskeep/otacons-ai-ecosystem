@@ -108,11 +108,28 @@ class HumanizationCase(unittest.TestCase):
         self.assertTrue(reply.startswith('I '), msg=repr(reply))
         self.assertFalse(reply.lower().startswith('is '), msg=repr(reply))
         self.assertTrue(reply[0].isupper() or reply.startswith('I'))
+        # Property: first-person throughout — not just the opening token.
+        self.assertNotRegex(reply, r'(?i)\b(she|he|herself|himself)\b', msg=repr(reply))
+        self.assertNotRegex(reply, r'(?i)\bdoes the work\b', msg=repr(reply))
 
     def test_first_personize_name_is_becomes_i_am(self):
         out = _first_personize('Aria is the household\'s first voice.', name='Aria')
         self.assertTrue(out.startswith('I am '), msg=repr(out))
         self.assertNotRegex(out, r'(?i)^is\s')
+
+    def test_first_personize_body_pronouns(self):
+        raw = (
+            'Aria is the household\'s first voice: she stitches Vector into one answer '
+            'and still does the work herself. If their attention drifts because she stalled, '
+            'the world tilts.'
+        )
+        out = _first_personize(raw, name='Aria')
+        self.assertTrue(out.startswith('I am '), msg=repr(out))
+        self.assertNotRegex(out, r'(?i)\b(she|he|herself|himself)\b', msg=repr(out))
+        self.assertIn('myself', out.lower())
+        self.assertIn('I stitch', out)
+        self.assertNotRegex(out, r'(?i)\bdoes the work myself\b')
+        self.assertRegex(out, r'(?i)\b(still )?do the work myself\b')
 
     def test_spoken_self_state_no_telemetry(self):
         line = spoken_self_state({'stress': 0.7, 'attachment': 0.8, 'jealousy': 0.5})

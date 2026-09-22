@@ -315,6 +315,30 @@ def is_biography_or_taste_query(message: str) -> bool:
     ))
 
 
+def _verb_for_i(verb: str) -> str:
+    """Rough 3rd-person singular → I-form for biography rewrites."""
+    v = verb or ''
+    if not v:
+        return v
+    low = v.lower()
+    irregular = {
+        'is': 'am', 'was': 'was', 'were': 'was',
+        'has': 'have', 'does': 'do', 'goes': 'go',
+        'stitches': 'stitch', 'does': 'do',
+    }
+    if low in irregular:
+        out = irregular[low]
+    elif low.endswith('ies') and len(low) > 3:
+        out = low[:-3] + 'y'
+    elif low.endswith(('ches', 'shes', 'sses', 'xes', 'zes')) and len(low) > 4:
+        out = low[:-2]
+    elif low.endswith('s') and not low.endswith(('ss', 'us', 'is', 'as', 'os')):
+        out = low[:-1]
+    else:
+        out = low
+    return out[:1].upper() + out[1:] if v[0].isupper() else out
+
+
 def _first_personize(text: str, *, name: str = '') -> str:
     s = (text or '').strip()
     if not s:
@@ -342,6 +366,24 @@ def _first_personize(text: str, *, name: str = '') -> str:
     for a, b in reps:
         s = s.replace(a, b)
     s = re.sub(r'\bshe treats\b', 'I treat', s, flags=re.I)
+    # Reflexives first so "herself" is not partially eaten by her→my.
+    s = re.sub(r'\bherself\b', 'myself', s, flags=re.I)
+    s = re.sub(r'\bhimself\b', 'myself', s, flags=re.I)
+    s = re.sub(r'\bthemselves\b', 'myself', s, flags=re.I)
+    # "she stitches" / "she stalled" / "he does" → I-form
+    s = re.sub(
+        r'\b([Ss]he|[Hh]e)\s+(\w+)\b',
+        lambda m: 'I ' + _verb_for_i(m.group(2)),
+        s,
+    )
+    # Remaining possessive/object her/him about the speaker.
+    s = re.sub(r'\bher\b', 'my', s, flags=re.I)
+    s = re.sub(r'\bhim\b', 'me', s, flags=re.I)
+    s = re.sub(r'\bhers\b', 'mine', s, flags=re.I)
+    # Orphan 3rd-person verbs left after pronoun rewrite ("still does the work myself").
+    s = re.sub(r'\bstill does\b', 'still do', s, flags=re.I)
+    s = re.sub(r'\bdoes the work myself\b', 'do the work myself', s, flags=re.I)
+    s = re.sub(r'\bdoes\b(?=[^.?!]*\bmyself\b)', 'do', s, flags=re.I)
     # Guard: never emit a leading lowercase verb fragment like "is the…".
     if s and s[0].islower() and not s.startswith('I '):
         s = 'I ' + s
