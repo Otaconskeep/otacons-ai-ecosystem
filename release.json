@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
-  "installer_version": "1.3.7",
-  "commit": "ec8837ab18f9148b50425ba3eb8906d710eb865a",
+  "installer_version": "1.3.8",
+  "commit": "13e4545b517518976721349938781d057cf61fd1",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -10,7 +10,7 @@
   "python_preferred": "3.12",
   "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on main). Soft-update of the ecosystem tree tracks origin/main tip, not this commit field.",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
-  "installer_revision": "899d4333c83d2875f4e878d6132fc2dc30d200ad",
+  "installer_revision": "13e4545b517518976721349938781d057cf61fd1",
   "files": [
     {
       "path": "install_otacon.bat",
@@ -54,8 +54,8 @@
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
-      "sha256": "8adfcbde9aa20f942d6ac72d73dbc0e6f94b80b1bff3b8753ddd936c4d133aab",
-      "bytes": 230414
+      "sha256": "35b2e647812e9ed1d5e7ad4fa23434fb82ebc3045f182068bee1e294bae54cdc",
+      "bytes": 237169
     },
     {
       "path": "deploy/repair-otacon-core.ps1",
@@ -64,8 +64,8 @@
     },
     {
       "path": "deploy/install-otacon-expansion.ps1",
-      "sha256": "c108a5cb1e121cd9b60531e8be47cc2723613e32f3675828e8b0c1f706b45b2f",
-      "bytes": 43171
+      "sha256": "d175c309ed2af9abe531754da2aeb095ef1a5931b7e72ec6d0cdd4ce5bbac6e9",
+      "bytes": 47743
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.3.7 - Fix WSL GPU false negative: detect /dev/dxg /proc/libcuda passthrough when nvidia-smi name is empty, and stop sending healthy GPU hosts to Fix-Otacon-GPU.bat. Soft-update tracks origin/main tip."
+  "notes": "Otacon v1.3.8 - GPU probe before Docker; log raw WSL output; probe failure is unknown (not absent) so YOU MUST Fix-Otacon-GPU no longer fires during Docker WSL churn. Soft-update tracks origin/main tip."
 }
