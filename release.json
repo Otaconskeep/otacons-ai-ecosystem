@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
-  "installer_version": "1.3.8",
-  "commit": "a5861a9c66631519ea75c08b30b7d51d82f300d4",
+  "installer_version": "1.3.9",
+  "commit": "6b694061c4cadd221bb79a61d86fef119e7f398b",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -10,7 +10,7 @@
   "python_preferred": "3.12",
   "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on main). Soft-update of the ecosystem tree tracks origin/main tip, not this commit field.",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
-  "installer_revision": "13e4545b517518976721349938781d057cf61fd1",
+  "installer_revision": "6b694061c4cadd221bb79a61d86fef119e7f398b",
   "files": [
     {
       "path": "install_otacon.bat",
@@ -24,8 +24,8 @@
     },
     {
       "path": "OtaconExpansion-Setup.bat",
-      "sha256": "3c57ac1a90d227050571bc7178e68ff25eb5642c10edc76ad8b24f6431834922",
-      "bytes": 8128
+      "sha256": "3a98e0dd3302b8cdbccb0262ce7cc01a3967be0152c0b30f99d4e0a1586ecc4a",
+      "bytes": 8129
     },
     {
       "path": "Reinstall-Otacon.bat",
@@ -39,13 +39,13 @@
     },
     {
       "path": "install_otacon.sh",
-      "sha256": "3dc05d4792f7eecd2bc8f4f2530d0bb9718735b94c255948e70bd910db12b92e",
-      "bytes": 101382
+      "sha256": "a18ed45de0fd8ace63450f813764344e794b6947b726510b3bf8fa5e2a349773",
+      "bytes": 103355
     },
     {
       "path": "install_otacon_expansion.sh",
-      "sha256": "a6103e710a3903769038108b0157c0f3c795e1ffeb3a92661e30e5b2742bb11b",
-      "bytes": 35250
+      "sha256": "f0bd8ac27962736ba8f26425b573c85877056c27424db7703d7074fffcefe12c",
+      "bytes": 37184
     },
     {
       "path": "deploy/bootstrap-fetch.ps1",
@@ -64,8 +64,8 @@
     },
     {
       "path": "deploy/install-otacon-expansion.ps1",
-      "sha256": "d175c309ed2af9abe531754da2aeb095ef1a5931b7e72ec6d0cdd4ce5bbac6e9",
-      "bytes": 47743
+      "sha256": "9a3e4ae8f68d14f1ff52f62220f1a265722b2fdc5bc1332d121b74b4eafb0665",
+      "bytes": 48213
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
@@ -74,8 +74,8 @@
     },
     {
       "path": "deploy/fix-otacon-gpu.ps1",
-      "sha256": "10ae3cab04745d2a8eee8e62a77362c31432a997cc550e63c4397ed361e5051e",
-      "bytes": 13219
+      "sha256": "7c725dac882c3c323a64e475462560c16af1632001a0f895560bdeb08fbadca6",
+      "bytes": 13834
     },
     {
       "path": "deploy/get-fix-codec.cmd",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.3.8 - GPU probe before Docker; log raw WSL output; probe failure is unknown (not absent) so YOU MUST Fix-Otacon-GPU no longer fires during Docker WSL churn. Soft-update tracks origin/main tip."
+  "notes": "Otacon v1.3.9 - Soft-update preserves dirty local edits (stash + backup branch + soft-update-backups README) before reset --hard; optional OTACON_SOFT_UPDATE_ABORT_IF_DIRTY=1. Soft-update still tracks origin/main tip."
 }
