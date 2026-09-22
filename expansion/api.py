@@ -470,6 +470,22 @@ def handle_expansion_get(path: str, send_json, send_bytes=None) -> bool:
         payload['recent_tool_actions'] = ToolGateway().recent(limit=25)
         send_json(payload)
         return True
+    if path == '/api/expansion/world-model':
+        from expansion.entitlement import EntitlementGate
+        from expansion.world_model import get_world_model
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'})
+            return True
+        send_json(get_world_model().get_world_state())
+        return True
+    if path == '/api/expansion/route-learning':
+        from expansion.entitlement import EntitlementGate
+        from expansion.route_learning import pool_summary
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'})
+            return True
+        send_json(pool_summary())
+        return True
     if path == '/api/expansion/policy':
         from expansion.entitlement import EntitlementGate
         from expansion.policy import PolicyEngine
@@ -1204,6 +1220,28 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             send_json(out)
         except Exception as exc:
             send_json({'error': {'code': 'AUTONOMY_TICK_FAILED', 'message': str(exc)}}, 500)
+        return True
+    if path == '/api/expansion/route-learning/ingest':
+        from expansion.entitlement import EntitlementGate
+        from expansion.route_learning import ingest_keeproute_exchange
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        out = ingest_keeproute_exchange(
+            prompt=(data.get('prompt') or '').strip(),
+            response=(data.get('response') or data.get('reply') or '').strip(),
+            agent=(data.get('agent') or '').strip(),
+            model=(data.get('model') or '').strip(),
+            source=(data.get('source') or 'keeproute').strip(),
+            mission_id=(data.get('mission_id') or '').strip(),
+            success=bool(data.get('success', True)),
+            error=(data.get('error') or '').strip(),
+            classification=(data.get('classification') or '').strip(),
+            paid_or_local=(data.get('paid_or_local') or '').strip(),
+            extra=data.get('extra') if isinstance(data.get('extra'), dict) else None,
+        )
+        code = 200 if out.get('ok') else 400
+        send_json(out, code)
         return True
     if path == '/api/expansion/tools/invoke':
         from dataclasses import asdict as _asdict

@@ -113,6 +113,7 @@ def _default_item(job_id: str, stage: str = 'BACKLOG') -> dict:
         'attempt': 0,
         'retry_budget': DEFAULT_RETRY_BUDGET,
         'discovered_by': '',
+        'proposal_source': '',
         'coordination_plan': [],
         'peer_reviews': [],
         'research_refs': [],
@@ -195,6 +196,7 @@ def job_to_card(job: Job, layout: Optional[StateLayout] = None) -> dict:
         'attempt': item.get('attempt', 0),
         'retry_budget': item.get('retry_budget', DEFAULT_RETRY_BUDGET),
         'discovered_by': item.get('discovered_by') or '',
+        'proposal_source': item.get('proposal_source') or '',
         'coordination_plan': list(item.get('coordination_plan') or []),
         'peer_reviews': list(item.get('peer_reviews') or []),
         'research_refs': list(item.get('research_refs') or []),
@@ -245,12 +247,30 @@ def build_autonomy_dashboard(layout: Optional[StateLayout] = None, *, limit: int
     ]
     retrying = [c for c in cards if c['stage'] == 'REWORK']
     agents_working = {c['owner'] for c in in_progress if c['owner'] != 'unassigned'}
+    world_payload = {}
+    route_payload = {}
+    try:
+        from expansion.route_learning import pool_summary
+        from expansion.world_model import get_world_model
+        route_payload = pool_summary(layout)
+        wm = get_world_model(layout).get_world_state()
+        world_payload = {
+            'risks': len(wm.get('risks') or []),
+            'insights': len(wm.get('insights') or []),
+            'domains': len(wm.get('domains') or []),
+            'trace_entities': len(wm.get('trace_stats') or {}),
+            'global_pool': True,
+        }
+    except Exception:
+        world_payload = {'available': False}
     return {
         'surface': 'keep_autonomy',
         'model': 'observe_not_approve',
         'note': (
             'Keep Autonomy — agents manage work under policy. '
-            'Owner role is oversight and hard-boundary escalation, not routine approval.'
+            'Owner role is oversight and hard-boundary escalation, not routine approval. '
+            'KeepRoute/OmniRoute outcomes feed a global learning pool → world model → '
+            'world_model:* REX proposals.'
         ),
         'metrics': {
             'agents_working': len(agents_working),
@@ -264,10 +284,14 @@ def build_autonomy_dashboard(layout: Optional[StateLayout] = None, *, limit: int
             'hard_blockers': len(hard_blocked),
             'research_sessions': sum(1 for c in cards if c['stage'] == 'RESEARCHING'),
             'repairs_performed': sum(1 for c in cards if c['stage'] == 'REWORK' or c.get('attempt', 0) > 0),
+            'world_model_risks': world_payload.get('risks', 0),
+            'route_learning_records': route_payload.get('records', 0),
         },
         'agents_working_ids': sorted(agents_working),
         'hard_blockers': hard_blocked[:12],
         'policy': PolicyEngine(layout).summary(),
+        'world_model': world_payload,
+        'route_learning': route_payload,
     }
 
 
@@ -360,6 +384,7 @@ def queue_rex_job(
     priority: int = 5,
     parent_job: str = '',
     coordination_plan: Optional[list] = None,
+    proposal_source: str = '',
 ) -> Job:
     """Create work in BACKLOG/READY — agents discover; humans rarely queue."""
     layout = layout or resolve_layout()
@@ -375,6 +400,8 @@ def queue_rex_job(
     )
     item = _default_item(job.job_id, stage if stage in dict(REX_STAGES) or stage == HARD_BLOCK_STAGE else 'BACKLOG')
     item['discovered_by'] = discovered_by or ''
+    if proposal_source:
+        item['proposal_source'] = str(proposal_source)
     if coordination_plan:
         item['coordination_plan'] = list(coordination_plan)
     if parent_job:
@@ -409,6 +436,7 @@ def discover_work(
     layout: Optional[StateLayout] = None,
     priority: int = 5,
     assigned_agent: Optional[str] = None,
+    proposal_source: str = '',
 ) -> Job:
     """Agent observes a problem and creates REX work under policy."""
     layout = layout or resolve_layout()
@@ -428,6 +456,7 @@ def discover_work(
         discovered_by=actor,
         stage='BACKLOG',
         priority=priority,
+        proposal_source=proposal_source,
     )
 
 

@@ -111,7 +111,7 @@ def prioritize_backlog(layout: StateLayout, *, actor: str = 'aria') -> list:
 
 
 def detect_work(layout: StateLayout) -> list:
-    """Sentry/Vector-style autonomous discovery from local signals."""
+    """Sentry/Vector-style autonomous discovery from local + world-model signals."""
     created = []
     tools = ToolGateway(layout)
     # Security scan → discover if findings
@@ -142,6 +142,59 @@ def detect_work(layout: StateLayout) -> list:
         )
         created.append(job.job_id)
 
+    # KeepRoute / OmniRoute world-model risks → REX (source world_model:*)
+    created.extend(_detect_world_model_work(layout))
+    return created
+
+
+def _detect_world_model_work(layout: StateLayout) -> list:
+    """Spawn REX jobs from operational world-model risks (global learning pool)."""
+    created = []
+    try:
+        from expansion.world_model import get_world_model
+        wm = get_world_model(layout)
+        proposals = wm.proposals_from_risks(min_score=0.35, limit=3)
+    except Exception:
+        return created
+
+    store = JobStore(layout)
+    existing_srcs = set()
+    existing_texts = set()
+    for job in store.list(limit=120):
+        card = job_to_card(job, layout)
+        if card.get('stage') in ('DONE', 'CANCELLED'):
+            continue
+        src = (card.get('proposal_source') or '').strip()
+        if src:
+            existing_srcs.add(src)
+        existing_texts.add((job.request or '')[:160].lower())
+
+    for prop in proposals:
+        src = prop.get('source') or 'world_model:risk'
+        # Deduplicate by source type + problem fingerprint
+        key = f"{src}:{(prop.get('problem') or '')[:80]}"
+        if key in existing_srcs or any(
+            (prop.get('problem') or '')[:60].lower() in t for t in existing_texts if t
+        ):
+            continue
+        actor = 'vector'
+        domain = prop.get('domain') or 'infrastructure'
+        if domain == 'security':
+            actor = 'sentry'
+        elif domain in ('records', 'research'):
+            actor = 'ledger'
+        priority = 2 if float(prop.get('score') or 0) >= 0.7 else 3
+        job = discover_work(
+            actor,
+            prop.get('proposal') or prop.get('problem') or 'World-model risk',
+            domain=domain,
+            layout=layout,
+            priority=priority,
+            proposal_source=key,
+        )
+        created.append(job.job_id)
+        existing_srcs.add(key)
+        existing_texts.add((job.request or '')[:160].lower())
     return created
 
 

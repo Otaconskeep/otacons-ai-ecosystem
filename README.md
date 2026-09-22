@@ -14,7 +14,7 @@
 
 ## Project REX ↔ KeepRoute learning
 
-Operator Keep: KeepRoute/OmniRoute exchanges can feed a **global** learning pool → world model → REX proposals. Public Expansion today ships REX job-board stages without that world-model autonomy feed. Details: [docs/REX_KEEPROUTE_LEARNING.md](docs/REX_KEEPROUTE_LEARNING.md) · [site § REX learning](https://otaconskeep.github.io/keeproute/#rex-learning).
+Operator Keep and **public Expansion Premium (v1.3.2+)** share the same idea: KeepRoute/OmniRoute exchanges feed a **global** learning pool → world model → `world_model:*` REX proposals. Details: [docs/REX_KEEPROUTE_LEARNING.md](docs/REX_KEEPROUTE_LEARNING.md) · [site § REX learning](https://otaconskeep.github.io/keeproute/#rex-learning).
 ## Otacon v1.3.1
 
 System-level capability-parity acceptance suite against isolated real Keep engines. Run: `KEEP_REFERENCE_ROOT=… python3 scripts/acceptance_gate.py`. Evidence: `tests/parity/out/acceptance_report.json`.

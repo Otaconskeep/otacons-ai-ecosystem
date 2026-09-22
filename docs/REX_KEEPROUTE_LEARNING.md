@@ -1,29 +1,32 @@
 # Project REX ↔ KeepRoute / OmniRoute learning
 
-**Status:** Operator Keep verified · public Expansion package **does not** ship this loop yet  
-**Privacy:** This doc is architecture-only. No private Keep memories, hostnames, or live risk text.
+**Status:** Ships in **Otacon Expansion Premium** (v1.3.2+) · same loop verified earlier on operator Keep  
+**Privacy:** Architecture-only. No private Keep memories, hostnames, or live risk text.
 
 ## Verdict
 
-| Question | Answer (operator Keep) |
+| Question | Answer |
 |---|---|
 | Does KeepRoute/OmniRoute aid REX R&D? | **Yes** — exchange outcomes become learning records |
-| Does it drive REX? | **Yes** — world-model risks/insights are proposal sources (`world_model:*`) |
+| Does it drive REX? | **Yes** — world-model risks/insights become `world_model:*` proposal sources on the REX board |
 | Does it make REX smarter over time? | **Yes** — success dilutes stale failure signal; failures become risk entries |
-| Global or local? | **Global per Keep install** — shared learning pool; `domain: keeproute` is a tag, not a silo |
+| Global or local? | **Global per Expansion install** — shared pool under user learning data; `domain: keeproute` is a tag, not a silo |
 
-## Public install gap (verified)
+## Public Premium path (v1.3.2+)
 
-Scanned `otacons-ai-ecosystem` Python tree for `world_model` / `record_resolution`: **0 hits**.
-
-| Surface | What ships today |
+| Module | Role |
 |---|---|
-| Public KeepRoute 1.0 | Mission orchestration on OmniRoute |
-| Public Expansion `expansion/rex.py` | Job-board stage machine (BACKLOG→DONE) |
-| Public Expansion learning | Per-agent claims / chat learning — **not** KeepRoute world-model feed |
+| `expansion/route_learning.py` | `record_resolution` / `ingest_keeproute_exchange` → shared records + traces |
+| `expansion/world_model.py` | Rebuilds risks / insights / per-entity stats from that pool |
+| `expansion/autonomy_loop.py` | On detect tick, spawns REX jobs tagged `world_model:*` |
+| API | `POST /api/expansion/route-learning/ingest` · `GET /api/expansion/world-model` |
+| KeepRoute UI | Optional `OTACON_EXPANSION_URL` / vault `expansion_url` → fail-open POST after each mission |
 
-Site honesty table: https://otaconskeep.github.io/keeproute/#rex-learning
+## Wire-up
 
-## Product implication
+1. Run Expansion Premium (entitled roster).
+2. Point KeepRoute at it: `export OTACON_EXPANSION_URL=http://127.0.0.1:<expansion-port>` (or set vault `expansion_url`).
+3. Run missions through KeepRoute / OmniRoute — outcomes land in the global pool.
+4. REX autonomy tick (`POST /api/expansion/rex/tick`) discovers world-model risks as board work.
 
-Chris / Josh Premium soft-updates get Expansion REX **board stages** and KeepRoute **missions** (if they install KeepRoute). They do **not** automatically get the operator Keep’s KeepRoute→world-model→REX autonomy loop until that stack is clean-room productized into the public packages.
+Site: https://otaconskeep.github.io/keeproute/#rex-learning
