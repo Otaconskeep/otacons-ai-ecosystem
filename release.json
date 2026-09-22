@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
-  "installer_version": "1.3.4",
-  "commit": "49d2bc2eefc4fc54dcf7a1d50fa611c0e9d1bd6b",
+  "installer_version": "1.3.5",
+  "commit": "00da36f8fb9b2a2fe9c30963f152dd41202aeb2c",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -19,8 +19,8 @@
     },
     {
       "path": "OtaconsKeep-Setup.bat",
-      "sha256": "16294de5c20b353ed21627869f83aded2138aed1afb07624285fa4ace6851539",
-      "bytes": 19643
+      "sha256": "ae92fb8facfa900cc0ff09a8a0c397a080227ab8f95b9a569aabc647e544631d",
+      "bytes": 19890
     },
     {
       "path": "OtaconExpansion-Setup.bat",
@@ -49,13 +49,13 @@
     },
     {
       "path": "deploy/bootstrap-fetch.ps1",
-      "sha256": "01de72c1b76eeb67259fc006f4d23f3a56acfc3377ff61d0a415d3c3494bcbcd",
-      "bytes": 32014
+      "sha256": "4c98a71347000a9ce1a7fd3d8110ed1e3db7166ec1495d30984ce4eb6fc9f531",
+      "bytes": 31625
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
-      "sha256": "1ce974ada0ac5b73ea487381c9aafaaf54260bcd4f773daccb518884e68ce430",
-      "bytes": 223640
+      "sha256": "e9c3ba5a5901caf4376c2d28d50f7a13d2600760b049963c26c6938941a1831b",
+      "bytes": 223668
     },
     {
       "path": "deploy/repair-otacon-core.ps1",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.3.4 \u2014 Controlled-pilot REX governance in Expansion (domain allowlist, before/after DoD, auto-rollback graduation streak, restart-safe bootstrap). Soft-update tracks origin/main tip."
+  "notes": "Otacon v1.3.5 \u2014 Fix Windows Setup: PowerShell 5.1 parse errors in windows-setup-assistant.ps1 (winget::), bootstrap Environment.Exit, BAT honors EXIT_CODE=1. Soft-update tracks origin/main tip."
 }
