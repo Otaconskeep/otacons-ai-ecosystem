@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from expansion.persist import atomic_write_json, read_json
@@ -473,13 +474,29 @@ def definition_of_done(
         status_only = (
             not result_l
             or result_l.startswith('executed ')
-            or result_l.startswith('autonomous close')
+            or (
+                result_l.startswith('autonomous close')
+                and 'deliverable:' not in result_l
+                and '## answers' not in result_l
+            )
         )
         has_deliverable = bool(
-            ev.get('deliverable_path')
+            (ev.get('deliverable_path') and ev.get('synthesis_ok') is not False)
             or any(str(x).startswith('deliverable:') for x in evidence)
-            or (not status_only and len((result or '').strip()) >= 80)
+            or (not status_only and '## answers' in result_l)
         )
+        # Link-dump / chrome-only files must not pass (Keep: research ≠ shipped).
+        if ev.get('synthesis_ok') is False:
+            has_deliverable = False
+        if has_deliverable and ev.get('deliverable_path'):
+            try:
+                body = Path(str(ev['deliverable_path'])).read_text(encoding='utf-8')
+                if 'Next: turn sourced notes into an actionable plan' in body:
+                    has_deliverable = False
+                if '## Answers' not in body:
+                    has_deliverable = False
+            except Exception:
+                pass
         checks['deliverable'] = has_deliverable
 
     # Derived confidence — job.confidence defaults to 0.0 and was never written,

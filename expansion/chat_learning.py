@@ -251,7 +251,6 @@ def _ack_task(agent_id: str, request: str, job_id: str) -> str:
         f'(job {job_id}; READY — not complete until researched/verified).'
     )
 
-
 def before_reply(
     agent_id: str,
     user_message: str,
@@ -385,7 +384,9 @@ def before_reply(
                 proposal_source='chat_delegation',
             )
             job_id = job.job_id
+            board_owner = job.assigned_agent or owner or assignee
             out['rex_stage'] = job_to_card(job, layout).get('stage')
+            out['assigned_agent'] = board_owner
         except Exception:
             job_out = pipe.create_and_run_job(
                 request,
@@ -396,10 +397,11 @@ def before_reply(
             )
             job = job_out.get('job')
             job_id = getattr(job, 'job_id', '') if job else ''
+            board_owner = assignee
         ev = new_event(
             'job.delegated',
             actor='user',
-            subject=assignee,
+            subject=board_owner,
             payload={
                 'text': msg,
                 'intent': 'task',
@@ -418,16 +420,16 @@ def before_reply(
             'journal_ids': applied.get('journal_ids') or [],
             'job_id': job_id,
             'intercept': True,
-            'reply': _ack_task(assignee, request, job_id or 'pending'),
+            'reply': _ack_task(board_owner, request, job_id or 'pending'),
         })
         try:
             engine.observe(
-                assignee,
+                board_owner,
                 f'operator delegated task: {request}',
                 learning_type='operational',
                 evidence_ids=[out['event_id'] or job_id],
                 scope='private',
-                actor=assignee,
+                actor=board_owner,
             )
         except Exception:
             pass

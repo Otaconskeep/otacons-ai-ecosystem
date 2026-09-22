@@ -144,6 +144,12 @@ def bootstrap_runtime_state(layout: Optional[StateLayout] = None) -> dict:
         entitled = bool(ent.expansion_entitled)
     except Exception:
         entitled = False
+    # Eager pilot poison scrub — do not wait for the first autonomy tick.
+    try:
+        from expansion.pilot_governance import scrub_poisoned_pilot_closes
+        scrub_poisoned_pilot_closes(layout)
+    except Exception:
+        pass
     return {
         'agents': agent_ids,
         'emotions': emotions.list_agent_ids(),

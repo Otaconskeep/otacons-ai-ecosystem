@@ -85,6 +85,7 @@ class ChatLearningCase(unittest.TestCase):
         self.assertEqual(card['stage'], 'READY')
         self.assertEqual(card['domain'], 'research')
         self.assertEqual(job.assigned_agent, 'ledger')
+        self.assertIn('for ledger', pre['reply'])
 
     def test_apology_and_insult_emit_typed_events(self):
         apo = before_reply('aria', 'I am sorry for insulting you', layout=self.layout)

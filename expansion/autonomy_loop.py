@@ -62,13 +62,80 @@ def _patch_item(layout: StateLayout, job_id: str, mut_fn) -> dict:
 
 
 def _add_research(layout: StateLayout, job_id: str, ref: dict, actor: str) -> None:
+    """Append a research ref, deduping by URL (keep richest non-chrome snippet)."""
+    from expansion.research_deliverable import dedupe_research_refs
+
     def _m(item):
         refs = list(item.get('research_refs') or [])
         refs.append({**ref, 'at': time.time(), 'by': actor})
-        item['research_refs'] = refs[-30:]
+        item['research_refs'] = dedupe_research_refs(refs)[-30:]
         _append_trace(item, actor, 'research', ref.get('title') or ref.get('url') or '')
 
     _patch_item(layout, job_id, _m)
+
+
+def _synthesize_research_deliverable(layout: StateLayout, job: Job, agent: str) -> Optional[dict]:
+    """Write a sourced answers markdown file — research closes need real synthesis."""
+    from expansion.research_deliverable import write_research_deliverable
+
+    card = job_to_card(job, layout)
+    refs = list(card.get('research_refs') or [])
+    if not refs:
+        return None
+    return write_research_deliverable(
+        layout,
+        job_id=job.job_id,
+        request=job.request or '',
+        agent=agent,
+        refs=refs,
+    )
+
+
+def step_research(layout: StateLayout, job: Job) -> dict:
+    tools = ToolGateway(layout)
+    agent = _researcher_for(job.domain, job.assigned_agent)
+    card = job_to_card(job, layout)
+    if card['stage'] == 'READY':
+        advance_stage(job.job_id, 'RESEARCHING', actor=agent, layout=layout)
+
+    q = job.request[:160]
+    search = tools.invoke(agent, 'web.search', query=q)
+    actions = [search.action_id]
+    research_hits = 0
+    if search.ok:
+        results = search.data.get('results') or []
+        research_hits = len(results)
+        for hit in results[:3]:
+            tools.invoke(agent, 'research.record', **hit)
+            url = (hit.get('url') or '').strip()
+            title = hit.get('title') or ''
+            snippet = hit.get('snippet') or ''
+            # One ref per URL: prefer fetched body when useful, else search snippet.
+            if url:
+                fetched = tools.invoke(agent, 'web.fetch', url=url)
+                actions.append(fetched.action_id)
+                if fetched.ok:
+                    body = (fetched.data.get('snippet') or '')[:800]
+                    from expansion.research_deliverable import is_chrome_snippet
+                    if body and not is_chrome_snippet(body):
+                        snippet = body
+                        title = fetched.data.get('title_guess') or title or url
+            _add_research(layout, job.job_id, {
+                'title': title or url or '',
+                'url': url,
+                'snippet': snippet,
+            }, agent)
+    # Only count a successful search (with hits) as evidence — 0-hit must not
+    # inflate the evidence bag toward a fake close.
+    if search.ok and research_hits > 0:
+        _add_evidence(layout, JobStore(layout).get(job.job_id), search.action_id)
+    return {
+        'stage': 'RESEARCHING',
+        'actions': actions,
+        'ok': bool(search.ok and research_hits > 0),
+        'research_hits': research_hits,
+        'search_error': '' if search.ok else (search.error or search.summary),
+    }
 
 
 def _add_evidence(layout: StateLayout, job: Job, evidence_id: str) -> Job:
@@ -209,88 +276,6 @@ def _researcher_for(domain: str, assigned: str) -> str:
     return assigned or 'vector'
 
 
-def _synthesize_research_deliverable(layout: StateLayout, job: Job, agent: str) -> Optional[str]:
-    """Write a sourced findings markdown file — research closes need a deliverable."""
-    card = job_to_card(job, layout)
-    refs = list(card.get('research_refs') or [])
-    if not refs:
-        return None
-    out_dir = layout.user_jobs / 'deliverables'
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f'{job.job_id}.md'
-    lines = [
-        f'# Research: {(job.request or "")[:200]}',
-        '',
-        f'_Job `{job.job_id}` · agent `{agent}` · {len(refs)} source(s)_',
-        '',
-        '## Sourced findings',
-        '',
-    ]
-    for i, ref in enumerate(refs[:12], 1):
-        title = (ref.get('title') or 'Untitled').strip()
-        url = (ref.get('url') or '').strip()
-        snip = (ref.get('snippet') or '').strip()[:400]
-        lines.append(f'{i}. **{title}**')
-        if url:
-            lines.append(f'   - Source: {url}')
-        if snip:
-            lines.append(f'   - Note: {snip}')
-        lines.append('')
-    lines.extend([
-        '## Synthesis notes',
-        '',
-        '- Findings above were gathered via policy-gated web.search / web.fetch.',
-        '- Next: turn sourced notes into an actionable plan against the original request.',
-        '',
-    ])
-    path.write_text('\n'.join(lines), encoding='utf-8')
-    return str(path)
-
-
-def step_research(layout: StateLayout, job: Job) -> dict:
-    tools = ToolGateway(layout)
-    agent = _researcher_for(job.domain, job.assigned_agent)
-    card = job_to_card(job, layout)
-    if card['stage'] == 'READY':
-        advance_stage(job.job_id, 'RESEARCHING', actor=agent, layout=layout)
-
-    q = job.request[:160]
-    search = tools.invoke(agent, 'web.search', query=q)
-    actions = [search.action_id]
-    research_hits = 0
-    if search.ok:
-        results = search.data.get('results') or []
-        research_hits = len(results)
-        for hit in results[:3]:
-            _add_research(layout, job.job_id, {
-                'title': hit.get('title') or '',
-                'url': hit.get('url') or '',
-                'snippet': hit.get('snippet') or '',
-            }, agent)
-            tools.invoke(agent, 'research.record', **hit)
-            if hit.get('url'):
-                fetched = tools.invoke(agent, 'web.fetch', url=hit['url'])
-                actions.append(fetched.action_id)
-                if fetched.ok:
-                    _add_research(layout, job.job_id, {
-                        'title': fetched.data.get('title_guess') or hit.get('url'),
-                        'url': hit.get('url') or '',
-                        'snippet': (fetched.data.get('snippet') or '')[:400],
-                    }, agent)
-    # Only count a successful search (with hits) as evidence — 0-hit must not
-    # inflate the evidence bag toward a fake close. Do not repo.search the first
-    # word of the request (that produced repo.search('Research') / ('journal') noise).
-    if search.ok and research_hits > 0:
-        _add_evidence(layout, JobStore(layout).get(job.job_id), search.action_id)
-    return {
-        'stage': 'RESEARCHING',
-        'actions': actions,
-        'ok': bool(search.ok and research_hits > 0),
-        'research_hits': research_hits,
-        'search_error': '' if search.ok else (search.error or search.summary),
-    }
-
-
 def step_plan_assign(layout: StateLayout, job: Job) -> dict:
     owner = job.assigned_agent or route_domain(job.domain)
     plan = [
@@ -347,6 +332,7 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
     actions = []
     deliverable_path = None
     summary_body = ''
+    synth_meta = None
     before_snapshot = {
         'stage': card.get('stage'),
         'evidence_count': len(card.get('evidence') or []),
@@ -385,48 +371,69 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
         svc = tools.invoke('sentry', 'services.inspect')
         actions.append(svc)
     elif job.domain in ('records', 'research', 'continuity'):
-        # Prefer real research artifacts; synthesize a written deliverable.
-        # Do not repo.search the first word of the request (noise) or journal-only close.
-        q = (job.request or 'research')[:160]
-        search = tools.invoke('ledger', 'web.search', query=q)
-        actions.append(search)
-        if search.ok:
-            results = search.data.get('results') or []
-            for hit in results[:3]:
-                _add_research(layout, job.job_id, {
-                    'title': hit.get('title') or '',
-                    'url': hit.get('url') or '',
-                    'snippet': hit.get('snippet') or '',
-                }, agent)
-                if hit.get('url'):
-                    fetched = tools.invoke('ledger', 'web.fetch', url=hit['url'])
-                    actions.append(fetched)
-                    if fetched.ok:
-                        _add_research(layout, job.job_id, {
-                            'title': fetched.data.get('title_guess') or hit.get('url'),
-                            'url': hit.get('url') or '',
-                            'snippet': (fetched.data.get('snippet') or '')[:400],
-                        }, agent)
-            if results:
-                _add_evidence(layout, job, search.action_id)
-        deliverable_path = _synthesize_research_deliverable(layout, job, agent)
+        # Prefer existing research_refs from step_research; only search if empty.
+        # Never re-append duplicate URL refs — that produced 2×/4× link dumps.
+        card_now = job_to_card(job, layout)
+        existing_refs = list(card_now.get('research_refs') or [])
+        if not existing_refs:
+            q = (job.request or 'research')[:160]
+            search = tools.invoke('ledger', 'web.search', query=q)
+            actions.append(search)
+            if search.ok:
+                from expansion.research_deliverable import is_chrome_snippet
+                results = search.data.get('results') or []
+                for hit in results[:3]:
+                    url = (hit.get('url') or '').strip()
+                    title = hit.get('title') or ''
+                    snippet = hit.get('snippet') or ''
+                    if url:
+                        fetched = tools.invoke('ledger', 'web.fetch', url=url)
+                        actions.append(fetched)
+                        if fetched.ok:
+                            body = (fetched.data.get('snippet') or '')[:800]
+                            if body and not is_chrome_snippet(body):
+                                snippet = body
+                                title = fetched.data.get('title_guess') or title or url
+                    _add_research(layout, job.job_id, {
+                        'title': title or url or '',
+                        'url': url,
+                        'snippet': snippet,
+                    }, agent)
+                if results:
+                    _add_evidence(layout, job, search.action_id)
+        else:
+            # Reuse prior research_refs — do not re-hit the web (avoids 2×/4× dumps).
+            pass
+        synth = _synthesize_research_deliverable(layout, job, agent)
+        synth_meta = synth
+        deliverable_path = (synth or {}).get('path') if synth else None
         summary_body = ''
-        if deliverable_path:
-            try:
-                summary_body = Path(deliverable_path).read_text(encoding='utf-8')[:1200]
-            except OSError:
-                summary_body = f'Research deliverable written to {deliverable_path}'
+        if synth and synth.get('path') and synth.get('synthesis_ok'):
+            summary_body = (
+                f"{(synth.get('body') or '')[:1200]}\n\n"
+                f"Deliverable: {synth['path']}"
+            )
+            if synth.get('desktop_path'):
+                summary_body += f"\nDesktop copy: {synth['desktop_path']}"
             tools.invoke(
                 'ledger', 'journal.write',
-                text=f'Research deliverable for {job.job_id}: {deliverable_path}',
+                text=f'Research deliverable for {job.job_id}: {synth["path"]}',
                 job_id=job.job_id,
                 result='deliverable_written',
             )
-            _add_evidence(layout, job, f'deliverable:{deliverable_path}')
+            _add_evidence(layout, job, f'deliverable:{synth["path"]}')
+        elif synth and synth.get('path') and not synth.get('synthesis_ok'):
+            tools.invoke(
+                'ledger', 'journal.write',
+                text=f'Research synthesis weak for {job.job_id}: {synth["path"]}',
+                job_id=job.job_id,
+                result='synthesis_weak',
+            )
+            deliverable_path = None  # DoD must not pass on chrome-only dumps
         else:
             tools.invoke(
                 'ledger', 'journal.write',
-                text=f'Research incomplete for {job.job_id} — no sources yet',
+                text=f'Research incomplete for {job.job_id} — no synthesizable sources',
                 job_id=job.job_id,
                 result='no_sources',
             )
@@ -438,6 +445,8 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
 
     # Mark execution result on job
     ok = any(a.ok for a in actions) if actions else False
+    if job.domain in ('records', 'research', 'continuity') and (summary_body or deliverable_path):
+        ok = True
     store = JobStore(layout)
     j = store.get(job.job_id)
     after_snapshot = {
@@ -480,6 +489,11 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
                 )
                 if deliverable_path:
                     ev['deliverable_path'] = deliverable_path
+                if synth_meta:
+                    ev['synthesis_ok'] = bool(synth_meta.get('synthesis_ok'))
+                    ev['unique_sources'] = synth_meta.get('unique_sources')
+                    if synth_meta.get('desktop_path'):
+                        ev['desktop_path'] = synth_meta['desktop_path']
                 item['implementation_evidence'] = ev
                 _append_trace(item, agent, 'pilot_evidence', 'before/after recorded')
                 items[job.job_id] = item
@@ -493,7 +507,7 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
     advance_stage(job.job_id, 'VERIFYING', actor=agent, layout=layout, note=j.result if j else '')
     return {
         'stage': 'VERIFYING',
-        'actions': [a.action_id for a in actions],
+        'actions': [getattr(a, 'action_id', '') for a in actions],
         'ok': ok,
         'pilot_gate': gate,
     }
@@ -574,10 +588,23 @@ def step_verify(layout: StateLayout, job: Job) -> dict:
             )
         except Exception:
             learning_out = None
+        # Preserve research synthesis in job.result — never replace with a 27-char status.
+        close_result = f'Autonomous close — {reason}'
+        try:
+            prior = JobStore(layout).get(job.job_id)
+            prior_text = (prior.result if prior else '') or ''
+            if prior_text and not prior_text.startswith('Autonomous close') and len(prior_text) >= 80:
+                close_result = f'{close_result}\n\n{prior_text[:1400]}'
+            item = get_item(job.job_id, layout) or {}
+            dpath = (item.get('implementation_evidence') or {}).get('deliverable_path')
+            if dpath and 'Deliverable:' not in close_result:
+                close_result = f'{close_result}\nDeliverable: {dpath}'
+        except Exception:
+            pass
         out = close_with_follow_up(
             job.job_id,
             actor='aria',
-            result=f'Autonomous close — {reason}',
+            result=close_result,
             follow_up_request=follow,
             follow_up_domain='records' if follow else '',
             layout=layout,

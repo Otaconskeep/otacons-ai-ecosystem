@@ -204,20 +204,55 @@ class PilotGovernanceCase(unittest.TestCase):
         self.assertFalse(bare['passed'])
         self.assertIn('deliverable', bare['missing'])
 
-        good = definition_of_done(
-            domain='research',
-            evidence=['tool_abc', 'before:x', 'after:y', 'deliverable:/tmp/plan.md'],
-            result='# Research plan\n\n## Sourced findings\n\n1. Trend guide',
-            peer_reviews=[{'verdict': 'pass', 'reviewer': 'sentry'}],
-            research_refs=[{'title': 'Trend guide', 'url': 'https://example.com'}],
-            implementation_evidence={
-                'before_metric': 1,
-                'after_metric': 2,
-                'deliverable_path': '/tmp/plan.md',
-            },
-            layout=self.layout,
-        )
-        self.assertTrue(good['passed'], good)
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'plan.md'
+            path.write_text(
+                '# Research plan\n\n## Answers\n\n### trends?\n'
+                '- **Trend guide** — https://example.com\n'
+                '  - Vintage washes and bold typography lead 2026.\n',
+                encoding='utf-8',
+            )
+            good = definition_of_done(
+                domain='research',
+                evidence=['tool_abc', 'before:x', 'after:y', f'deliverable:{path}'],
+                result=f'# Research plan\n\n## Answers\n\nDeliverable: {path}',
+                peer_reviews=[{'verdict': 'pass', 'reviewer': 'sentry'}],
+                research_refs=[{'title': 'Trend guide', 'url': 'https://example.com'}],
+                implementation_evidence={
+                    'before_metric': 1,
+                    'after_metric': 2,
+                    'deliverable_path': str(path),
+                    'synthesis_ok': True,
+                },
+                layout=self.layout,
+            )
+            self.assertTrue(good['passed'], good)
+
+            dump = Path(td) / 'dump.md'
+            dump.write_text(
+                '# Research\n\n## Sourced findings\n\n1. x\n\n'
+                '## Synthesis notes\n\n'
+                '- Next: turn sourced notes into an actionable plan against the original request.\n',
+                encoding='utf-8',
+            )
+            bad = definition_of_done(
+                domain='research',
+                evidence=['tool_abc', 'before:x', 'after:y', f'deliverable:{dump}'],
+                result='Autonomous close — verified',
+                peer_reviews=[{'verdict': 'pass', 'reviewer': 'sentry'}],
+                research_refs=[{'title': 'Trend guide', 'url': 'https://example.com'}],
+                implementation_evidence={
+                    'before_metric': 1,
+                    'after_metric': 2,
+                    'deliverable_path': str(dump),
+                    'synthesis_ok': True,
+                },
+                layout=self.layout,
+            )
+            self.assertFalse(bad['passed'])
+            self.assertIn('deliverable', bad['missing'])
 
     def test_bootstrap_preserves_pilot(self):
         save_status({
