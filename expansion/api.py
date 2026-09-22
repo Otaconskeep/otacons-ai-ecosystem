@@ -474,6 +474,10 @@ def handle_expansion_get(path: str, send_json, send_bytes=None) -> bool:
         from expansion.launchpad import build_launchpad
         send_json(build_launchpad())
         return True
+    if path == '/api/expansion/pilot':
+        from expansion.pilot_governance import status_payload
+        send_json(status_payload())
+        return True
     if path == '/api/expansion/world-model':
         from expansion.entitlement import EntitlementGate
         from expansion.world_model import get_world_model
@@ -1246,6 +1250,17 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
         )
         code = 200 if out.get('ok') else 400
         send_json(out, code)
+        return True
+    if path == '/api/expansion/pilot/enable':
+        from expansion.entitlement import EntitlementGate
+        from expansion.pilot_governance import enable_controlled_pilot, status_payload
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        enable_controlled_pilot(
+            graduation_min=int(data.get('graduation_min') or 3),
+        )
+        send_json({'ok': True, 'pilot': status_payload()})
         return True
     if path == '/api/expansion/tools/invoke':
         from dataclasses import asdict as _asdict

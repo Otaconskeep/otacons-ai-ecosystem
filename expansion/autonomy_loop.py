@@ -272,7 +272,30 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
     if card['stage'] == 'ASSIGNED':
         advance_stage(job.job_id, 'IN_PROGRESS', actor=agent, layout=layout)
 
+    # Controlled pilot: default-deny implementation domains
+    try:
+        from expansion.pilot_governance import dispatch_gate, bootstrap_pilot
+        bootstrap_pilot(layout)
+        gate = dispatch_gate(domain=job.domain, stage='IN_PROGRESS', layout=layout)
+        if not gate.get('allow'):
+            advance_stage(
+                job.job_id, HARD_BLOCK_STAGE, actor='aria', layout=layout,
+                note=gate.get('error') or gate.get('kind') or 'pilot dispatch denied',
+            )
+            return {
+                'stage': HARD_BLOCK_STAGE,
+                'ok': False,
+                'pilot_gate': gate,
+            }
+    except Exception:
+        gate = {'allow': True, 'kind': 'pilot_unavailable'}
+
     actions = []
+    before_snapshot = {
+        'stage': card.get('stage'),
+        'evidence_count': len(card.get('evidence') or []),
+        'research_count': len(card.get('research_refs') or []),
+    }
     # Domain execution
     if job.domain in ('infrastructure', 'systems', 'technical', 'coordination'):
         rs = tools.invoke(agent, 'repo.search', query=(job.request.split() or ['job'])[0][:48])
@@ -321,11 +344,44 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
     ok = any(a.ok for a in actions) if actions else False
     store = JobStore(layout)
     j = store.get(job.job_id)
+    after_snapshot = {
+        'actions': len(actions),
+        'ok_actions': sum(1 for a in actions if a.ok),
+        'fail_actions': sum(1 for a in actions if not a.ok),
+    }
     if j:
         j.result = (
             f'Executed {len(actions)} tool action(s); '
             f'ok={sum(1 for a in actions if a.ok)} fail={sum(1 for a in actions if not a.ok)}'
         )
+        # Pilot DoD substrate: before/after evidence tags + structured blob on meta
+        try:
+            from expansion.pilot_governance import attach_before_after
+            ev_ids = list(j.evidence or [])
+            ev_ids.append(f'before:evidence={before_snapshot["evidence_count"]}')
+            ev_ids.append(f'after:actions={after_snapshot["actions"]}:ok={after_snapshot["ok_actions"]}')
+            j.evidence = ev_ids[-40:]
+            # Stash structured before/after on rex meta via decision_trace note
+            from expansion.rex import get_item, _update_meta, _append_trace
+
+            def _mut(data):
+                data = data or {'schema_version': 1, 'items': {}}
+                items = data.setdefault('items', {})
+                item = dict(items.get(job.job_id) or get_item(job.job_id, layout) or {'job_id': job.job_id})
+                item['implementation_evidence'] = attach_before_after(
+                    item.get('implementation_evidence'),
+                    before_state=before_snapshot,
+                    after_state=after_snapshot,
+                    before_metric=before_snapshot.get('evidence_count'),
+                    after_metric=after_snapshot.get('ok_actions'),
+                )
+                _append_trace(item, agent, 'pilot_evidence', 'before/after recorded')
+                items[job.job_id] = item
+                return data
+
+            _update_meta(layout, _mut)
+        except Exception:
+            pass
         store.update(j)
 
     advance_stage(job.job_id, 'VERIFYING', actor=agent, layout=layout, note=j.result if j else '')
@@ -333,6 +389,7 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
         'stage': 'VERIFYING',
         'actions': [a.action_id for a in actions],
         'ok': ok,
+        'pilot_gate': gate,
     }
 
 
@@ -356,6 +413,25 @@ def step_verify(layout: StateLayout, job: Job) -> dict:
 
     card = job_to_card(JobStore(layout).get(job.job_id), layout)
     ready, reason = verification_ready(card)
+    # Controlled pilot DoD (before/after + non-weak verify)
+    dod = None
+    try:
+        from expansion.pilot_governance import definition_of_done, record_pilot_close, auto_rollback_job
+        item = get_item(job.job_id, layout)
+        dod = definition_of_done(
+            domain=job.domain,
+            evidence=card.get('evidence'),
+            result=job.result or '',
+            peer_reviews=card.get('peer_reviews'),
+            research_refs=card.get('research_refs'),
+            implementation_evidence=item.get('implementation_evidence'),
+            layout=layout,
+        )
+        if not dod.get('passed'):
+            ready = False
+            reason = 'pilot DoD failed: ' + ','.join(dod.get('missing') or ['unknown'])
+    except Exception:
+        dod = None
     learning_out = None
     if ready:
         follow = ''
@@ -384,6 +460,15 @@ def step_verify(layout: StateLayout, job: Job) -> dict:
             layout=layout,
         )
         try:
+            from expansion.pilot_governance import record_pilot_close
+            if dod and dod.get('pilot_scope'):
+                record_pilot_close(
+                    job_id=job.job_id, clean=True,
+                    reason='dod_passed', layout=layout,
+                )
+        except Exception:
+            pass
+        try:
             from expansion.journal import JournalStore, new_journal_entry
             JournalStore(layout).append(new_journal_entry(
                 agent_id='aria',
@@ -402,9 +487,10 @@ def step_verify(layout: StateLayout, job: Job) -> dict:
             'follow_up': out['follow_up'].job_id if out.get('follow_up') else None,
             'reason': reason,
             'learning': learning_out,
+            'dod': dod,
         }
 
-    # Repair path — negative learning signal
+    # Repair path — negative learning + pilot auto-rollback / streak reset
     try:
         from expansion.learning import learn_from_autonomy_outcome
         learn_from_autonomy_outcome(
@@ -417,8 +503,19 @@ def step_verify(layout: StateLayout, job: Job) -> dict:
         )
     except Exception:
         pass
-    advance_stage(job.job_id, 'REWORK', actor=reviewer, layout=layout, note=reason)
-    return {'stage': 'REWORK', 'closed': False, 'reason': reason}
+    rollback = None
+    try:
+        from expansion.pilot_governance import auto_rollback_job
+        rollback = auto_rollback_job(job.job_id, layout=layout, reason=reason)
+    except Exception:
+        advance_stage(job.job_id, 'REWORK', actor=reviewer, layout=layout, note=reason)
+    return {
+        'stage': 'REWORK',
+        'closed': False,
+        'reason': reason,
+        'dod': dod,
+        'rollback': rollback,
+    }
 
 
 def process_job(layout: StateLayout, job: Job) -> dict:
@@ -472,6 +569,12 @@ def autonomy_tick(
 ) -> dict:
     """One full autonomy cycle: detect → prioritize → process active work."""
     layout = layout or resolve_layout()
+    try:
+        from expansion.pilot_governance import bootstrap_pilot, status_payload
+        bootstrap_pilot(layout)
+        pilot = status_payload(layout)
+    except Exception:
+        pilot = None
     PolicyEngine(layout).seed_defaults()
     started = time.time()
     discovered = detect_work(layout) if detect else []
@@ -502,8 +605,9 @@ def autonomy_tick(
         'processed': processed,
         'metrics': board.get('metrics') or {},
         'tool_actions': ToolGateway(layout).recent(limit=20),
+        'pilot': pilot,
         'note': (
             'Autonomy tick executed policy-gated research/execution/verify/close. '
-            'Escalation only on HARD_BLOCKED.'
+            'Controlled pilot gates implementation domains; escalation on HARD_BLOCKED.'
         ),
     }

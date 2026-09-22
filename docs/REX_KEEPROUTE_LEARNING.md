@@ -30,3 +30,16 @@
 4. REX autonomy tick (`POST /api/expansion/rex/tick`) discovers world-model risks as board work.
 
 Site: https://otaconskeep.github.io/keeproute/#rex-learning
+
+## Controlled pilot governance (v1.3.4+)
+
+Clean-room port of Keep's controlled-pilot loop into Expansion:
+
+| Control | Module |
+|---|---|
+| Domain allowlist dispatch | `expansion/pilot_governance.py` → `dispatch_gate` |
+| Hard-blocked production domains | same |
+| Before/after DoD | `definition_of_done` (wired in autonomy verify) |
+| Auto-rollback + streak reset | `auto_rollback_job` / `record_pilot_close` |
+| Restart-safe bootstrap | `bootstrap_pilot` (no silent re-freeze) |
+| API | `GET /api/expansion/pilot` · `POST /api/expansion/pilot/enable` |

@@ -263,6 +263,12 @@ def build_autonomy_dashboard(layout: Optional[StateLayout] = None, *, limit: int
         }
     except Exception:
         world_payload = {'available': False}
+    pilot_payload = None
+    try:
+        from expansion.pilot_governance import status_payload as pilot_status
+        pilot_payload = pilot_status(layout)
+    except Exception:
+        pilot_payload = None
     return {
         'surface': 'keep_autonomy',
         'model': 'observe_not_approve',
@@ -270,7 +276,7 @@ def build_autonomy_dashboard(layout: Optional[StateLayout] = None, *, limit: int
             'Keep Autonomy — agents manage work under policy. '
             'Owner role is oversight and hard-boundary escalation, not routine approval. '
             'KeepRoute/OmniRoute outcomes feed a global learning pool → world model → '
-            'world_model:* REX proposals.'
+            'world_model:* REX proposals. Controlled pilot gates implementation domains.'
         ),
         'metrics': {
             'agents_working': len(agents_working),
@@ -286,12 +292,14 @@ def build_autonomy_dashboard(layout: Optional[StateLayout] = None, *, limit: int
             'repairs_performed': sum(1 for c in cards if c['stage'] == 'REWORK' or c.get('attempt', 0) > 0),
             'world_model_risks': world_payload.get('risks', 0),
             'route_learning_records': route_payload.get('records', 0),
+            'pilot_streak': (pilot_payload or {}).get('graduation', {}).get('streak', 0),
         },
         'agents_working_ids': sorted(agents_working),
         'hard_blockers': hard_blocked[:12],
         'policy': PolicyEngine(layout).summary(),
         'world_model': world_payload,
         'route_learning': route_payload,
+        'pilot': pilot_payload,
     }
 
 
