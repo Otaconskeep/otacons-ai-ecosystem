@@ -1,0 +1,116 @@
+{
+  "generated_at": 1790089252.1354992,
+  "elapsed_sec": 32.26,
+  "gates": {
+    "state_transition_parity": 0.95,
+    "relationship_transition_parity": 0.95,
+    "formula9_agreement": 0.95,
+    "persistence": 1.0,
+    "privacy_hits": 0
+  },
+  "gate_pass": true,
+  "differential": {
+    "scenario_count": 106,
+    "scenarios_passed": 106,
+    "scenario_pass_rate": 1.0,
+    "state_transition_parity": 1.0,
+    "relationship_transition_parity": 1.0,
+    "formula9_agreement": 1.0
+  },
+  "persistence": {
+    "pass": true,
+    "checks": {
+      "happiness_survived": true,
+      "mood_survived": true,
+      "ally_survived": true,
+      "prefs_survived": true,
+      "refs_survived": true,
+      "ally_grew": true,
+      "state_file_exists": true
+    },
+    "ally": 0.6641,
+    "refs": 50,
+    "prefs": {
+      "prefer_statement": "short answers"
+    }
+  },
+  "privacy": {
+    "count": 0,
+    "pass": true,
+    "sample": []
+  },
+  "model_independence": {
+    "pass": true
+  },
+  "silent_failures": {
+    "pass": true,
+    "critical_offenders": [],
+    "all_offenders_count": 16
+  },
+  "matrix": [
+    {
+      "layer": "Hermes behavioral pipeline",
+      "real_keep": "executor+hermes path",
+      "premium": "behavior_pipeline+policy",
+      "parity": "PASS",
+      "evidence": "scenario_pass_rate=1.0; silent_critical={'pass': True, 'critical_offenders': [], 'all_offenders_count': 16}"
+    },
+    {
+      "layer": "StateEngine Formula 4/7/8",
+      "real_keep": "continuity.state_engine",
+      "premium": "expansion.continuity.state_engine",
+      "parity": "PASS",
+      "evidence": "parity=1.0000 gate=0.95"
+    },
+    {
+      "layer": "RelationshipEngine Formula 5",
+      "real_keep": "continuity.relationship",
+      "premium": "expansion.continuity.relationship",
+      "parity": "PASS",
+      "evidence": "parity=1.0000"
+    },
+    {
+      "layer": "MemoryEngine Formula 9",
+      "real_keep": "continuity.memory_engine",
+      "premium": "expansion.continuity.memory_engine",
+      "parity": "PASS",
+      "evidence": "agreement=1.0000"
+    },
+    {
+      "layer": "Conversational affect",
+      "real_keep": "continuity.conversational_affect",
+      "premium": "expansion.continuity.conversational_affect",
+      "parity": "PASS",
+      "evidence": "measured via state deltas under affect events"
+    },
+    {
+      "layer": "Persistence across restart",
+      "real_keep": "agent_states.json etc.",
+      "premium": "owner-local agent_states+prefs+memory",
+      "parity": "PASS",
+      "evidence": "{\"happiness_survived\": true, \"mood_survived\": true, \"ally_survived\": true, \"prefs_survived\": true, \"refs_survived\": true, \"ally_grew\": true, \"state_file_exists\": true}"
+    },
+    {
+      "layer": "Model-independence of policy",
+      "real_keep": "Keep logic owns behavior",
+      "premium": "policy stable across model classes",
+      "parity": "PASS",
+      "evidence": "small/medium/strong labels"
+    },
+    {
+      "layer": "Privacy gate",
+      "real_keep": "N/A (reference isolated)",
+      "premium": "public release scan",
+      "parity": "PASS",
+      "evidence": "hits=0"
+    },
+    {
+      "layer": "Silent failure removal",
+      "real_keep": "logged failures",
+      "premium": "LayerGuard+health",
+      "parity": "PASS",
+      "evidence": "critical_offenders=[]"
+    }
+  ],
+  "failure_sample": []
+}

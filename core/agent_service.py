@@ -106,24 +106,46 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
         pass
     # Hermes personality runtime — final scrub + layered fallback if thin
     try:
-        from expansion.hermes.personality_runtime import (
-            apply_final_persona_safety_scrub,
-            render_persona_text_via_hermes,
+        from expansion.hermes.behavior_pipeline import run_post_generation
+        pre = agent.get('_hermes_pre') or (agent.get('_chat_learning') or {}).get('_hermes_pre') or {}
+        if not pre:
+            from expansion.hermes.behavior_pipeline import run_pre_generation
+            from expansion.state_layout import resolve_layout
+            pre = run_pre_generation(human_id, message, layout=resolve_layout())
+        post = run_post_generation(
+            human_id, message, text or '', pre,
         )
-        rendered = render_persona_text_via_hermes(
-            human_id, message, candidate_text=text,
-        )
-        intent = (rendered or {}).get('intent_class') or 'general'
-        if len((text or '').split()) >= 25:
-            scrubbed = apply_final_persona_safety_scrub(text, human_id, intent)
-            if scrubbed:
-                text = scrubbed
-            elif rendered.get('text'):
+        if post.get('text'):
+            text = post['text']
+        if post.get('layers_failed'):
+            from expansion.continuity.health import record_failure
+            record_failure(
+                'final_render',
+                'layers_failed:' + ','.join(post.get('layers_failed') or []),
+                detail='agent_service',
+            )
+    except Exception as exc:
+        from expansion.continuity.health import record_failure
+        record_failure('final_render', exc, detail='agent_service')
+        try:
+            from expansion.hermes.personality_runtime import (
+                apply_final_persona_safety_scrub,
+                render_persona_text_via_hermes,
+            )
+            rendered = render_persona_text_via_hermes(
+                human_id, message, candidate_text=text,
+            )
+            intent = (rendered or {}).get('intent_class') or 'general'
+            if len((text or '').split()) >= 25:
+                scrubbed = apply_final_persona_safety_scrub(text, human_id, intent)
+                if scrubbed:
+                    text = scrubbed
+                elif rendered.get('text'):
+                    text = rendered['text']
+            elif rendered.get('ok') and rendered.get('text'):
                 text = rendered['text']
-        elif rendered.get('ok') and rendered.get('text'):
-            text = rendered['text']
-    except Exception:
-        pass
+        except Exception as exc2:
+            record_failure('final_render', exc2, detail='legacy_hermes_fallback')
     try:
         from expansion.behavior_spine import scrub_robotic_delivery, wants_work_deliverable
         text = scrub_robotic_delivery(text)
@@ -136,8 +158,10 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
                 "Tell me which slice you want next and I will go deeper."
             )
             text = scrub_robotic_delivery(text)
-    except Exception:
-        pass
+    except Exception as exc:
+        from expansion.continuity.health import record_failure
+        record_failure('final_render', exc, detail='behavior_spine')
+
 
     if learning_owned_here and pre is not None:
         try:

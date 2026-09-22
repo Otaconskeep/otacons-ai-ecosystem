@@ -9,6 +9,10 @@
 
 
 
+
+## Otacon v1.3.0
+
+Behavioral Keep-parity Premium: Hermes pre-LLM policy pipeline, Formula 4/5/7/8/9, preferences, continuity persistence, and a 100+ scenario differential harness vs isolated Keep formula engines. Starts empty — Chris/Josh grow their own Keep. No private Keep data. Tag: [`v1.3.0`](https://github.com/Otaconskeep/otacons-ai-ecosystem/releases/tag/v1.3.0).
 ## Otacon v1.2.0
 
 Premium Expansion now ships Keep-parity **Formula 4 / 5 / 7 / 8 / 9** with StateEngine, RelationshipEngine, MemoryEngine, Hermes personality runtime, and conversational affect. Public Aria roster only; mock bonds; no private Keep data. Tag: [`v1.2.0`](https://github.com/Otaconskeep/otacons-ai-ecosystem/releases/tag/v1.2.0).

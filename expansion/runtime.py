@@ -244,7 +244,7 @@ class ExpansionRuntime:
         except Exception:
             pass
         # Dual-affect + Hermes prompt blocks ONLY here.
-        # Mutations (F4/5/7/9) run once in chat_learning.before_reply — never double-apply.
+        # Mutations run once in chat_learning.before_reply / Hermes pipeline.
         try:
             from expansion.continuity.conversational_affect import (
                 build_dual_affect_prompt_block,
@@ -252,15 +252,38 @@ class ExpansionRuntime:
             dual_affect = build_dual_affect_prompt_block(
                 agent_id, layout=self.layout,
             )
-        except Exception:
+        except Exception as exc:
+            from expansion.continuity.health import record_failure
+            record_failure('context_assembly', exc, detail='dual_affect')
             dual_affect = ''
         try:
             from expansion.hermes.personality_runtime import layered_system_prompt_section
             hermes_section = layered_system_prompt_section(
                 agent_id, user_message or '', layout=self.layout,
             )
-        except Exception:
+        except Exception as exc:
+            from expansion.continuity.health import record_failure
+            record_failure('context_assembly', exc, detail='hermes_section')
             hermes_section = ''
+        policy_section = ''
+        try:
+            from expansion.hermes.behavioral_policy import build_behavioral_policy
+            from expansion.continuity.emotion_bridge import get_emotion_vector, load_bond
+            from expansion.continuity.relationship import RelationshipEngine
+            vec = get_emotion_vector(agent_id, layout=self.layout)
+            bond = load_bond(agent_id, layout=self.layout)
+            level = RelationshipEngine.operator_rel_level(agent_id, layout=self.layout)
+            policy_section = build_behavioral_policy(
+                user_message or '',
+                agent_id=agent_id,
+                emotion_vector=vec,
+                bond=bond,
+                operator_rel_level=level,
+            ).to_prompt_block()
+        except Exception as exc:
+            from expansion.continuity.health import record_failure
+            record_failure('hermes', exc, detail='policy_section')
+            policy_section = ''
 
         # Formula 5 relationship summary + Formula 9 scored memory
         f5_section = ''
@@ -272,7 +295,9 @@ class ExpansionRuntime:
             )
             if f5_section:
                 f5_section = f5_section + '\n'
-        except Exception:
+        except Exception as exc:
+            from expansion.continuity.health import record_failure
+            record_failure('relationship_engine', exc, detail='assemble')
             f5_section = ''
         try:
             from expansion.continuity.memory_engine import MemoryEngine
@@ -280,31 +305,42 @@ class ExpansionRuntime:
                 agent_id, user_message or '', top_k=memory_limit, layout=self.layout,
             )
             if f9_section:
-                f9_section = f9_section + '\n'
-                # Prefer Formula 9 ranked lines when available
                 mem_lines = [
                     ln for ln in f9_section.splitlines() if ln.startswith('- ')
                 ] or mem_lines
-        except Exception:
+        except Exception as exc:
+            from expansion.continuity.health import record_failure
+            record_failure('memory_engine', exc, detail='assemble')
             f9_section = ''
         try:
             from expansion.continuity.state_engine import StateEngine
             state_section = StateEngine.summary_for_prompt(
                 agent_id, layout=self.layout,
             ) + '\n'
-        except Exception:
+        except Exception as exc:
+            from expansion.continuity.health import record_failure
+            record_failure('state_engine', exc, detail='assemble')
             state_section = ''
+        prefs_section = ''
+        try:
+            from expansion.continuity.preferences import PreferenceStore
+            prefs_section = PreferenceStore(self.layout).prompt_block(agent_id)
+        except Exception as exc:
+            from expansion.continuity.health import record_failure
+            record_failure('preferences', exc, detail='assemble')
 
         system_prompt = (
             f"{view.persona}\n\n"
             f"{who_section}"
             f"{delivery_section}"
             f"{work_section}"
+            f"{policy_section}"
             f"{hermes_section}"
             f"{dual_affect}"
             f"{layered_section}"
             f"{state_section}"
             f"{f5_section}"
+            f"{prefs_section}"
             f"[Expansion runtime context — stay in character; do not invent owner history]\n"
             f"Voice rules: never sound like a generic AI assistant. Never say "
             f"\"happy to help\", \"as an AI\", \"certainly\", \"I'd be glad to\", "

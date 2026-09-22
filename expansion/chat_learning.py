@@ -262,16 +262,35 @@ def before_reply(
 
     intent = classify_chat_intent(msg)
     out['intent'] = intent
-    # Layered affect before prompt assembly (Hermes/emotion bridge path)
+    # Full Hermes behavioral pipeline (pre-LLM) — never silent-fail core layers
     try:
-        from expansion.continuity.conversational_affect import apply_user_message_events
-        affect = apply_user_message_events(aid, msg, layout=layout)
-        out['affect'] = {
-            'applied': bool(affect.get('applied')),
-            'events': affect.get('events') or [],
+        from expansion.hermes.behavior_pipeline import run_pre_generation
+        hermes = run_pre_generation(aid, msg, layout=layout)
+        out['hermes'] = {
+            'ok': bool(hermes.get('ok')),
+            'intent': hermes.get('intent'),
+            'behavioral_policy': hermes.get('behavioral_policy') or {},
+            'emotion_delta': hermes.get('emotion_delta') or {},
+            'relationship_delta': hermes.get('relationship_delta') or {},
+            'layers_failed': hermes.get('layers_failed') or [],
         }
-    except Exception:
+        out['affect'] = {
+            'applied': True,
+            'events': hermes.get('affect_events') or [],
+        }
+        out['_hermes_pre'] = hermes
+        if hermes.get('layers_failed'):
+            from expansion.continuity.health import record_failure
+            record_failure(
+                'hermes',
+                'layers_failed:' + ','.join(hermes.get('layers_failed') or []),
+                detail='before_reply',
+            )
+    except Exception as exc:
+        from expansion.continuity.health import record_failure
+        record_failure('hermes', exc, detail='before_reply')
         out['affect'] = {'applied': False, 'events': []}
+        out['hermes'] = {'ok': False, 'layers_failed': ['hermes'], 'error': str(exc)}
     pipe = LivingPipeline(layout)
     engine = LearningEngine(layout)
     mem = ExpansionMemory(layout)

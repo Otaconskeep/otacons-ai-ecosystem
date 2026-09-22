@@ -38,14 +38,16 @@ _EVENT_DELTAS: dict[str, list[tuple[str, float]]] = {
     'collaboration_failure': [('ally', -0.015), ('colleague', -0.020)],
     'operator_ask': [('ally', +0.006), ('colleague', +0.004)],
     'operator_ask_subjective': [('ally', +0.012), ('colleague', +0.006)],
-    'user_praise': [('ally', +0.018), ('colleague', +0.010)],
-    'user_gratitude': [('ally', +0.014), ('colleague', +0.008)],
-    'user_hostile': [('ally', -0.035), ('rival', +0.020)],
-    'user_hostility': [('ally', -0.035), ('rival', +0.020)],
-    'user_critique': [('ally', -0.012), ('colleague', -0.006)],
-    'user_apology': [('ally', +0.010), ('colleague', +0.006)],
     'social_reply_agree': [('ally', +0.010), ('colleague', +0.008)],
     'social_reply_disagree': [('rival', +0.014), ('ally', -0.010)],
+    # Interpersonal (Premium + Keep-aligned naming)
+    'user_praise': [('ally', +0.018), ('colleague', +0.010)],
+    'user_gratitude': [('ally', +0.014), ('colleague', +0.008)],
+    'user_hostility': [('ally', -0.035), ('rival', +0.020)],
+    'user_hostile': [('ally', -0.035), ('rival', +0.020)],
+    'user_apology': [('ally', +0.010), ('colleague', +0.006)],
+    'user_mild_criticism': [('ally', -0.008), ('colleague', -0.004)],
+    'user_critique': [('ally', -0.008), ('colleague', -0.004)],
 }
 
 # Mock org seed — Aria coordinates; others are peers (product fiction only)

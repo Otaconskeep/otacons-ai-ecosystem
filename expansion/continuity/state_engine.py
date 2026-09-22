@@ -22,16 +22,17 @@ _EMO_W = {'happiness': 0.40, 'confidence': 0.35, 'energy': 0.15, 'residue': 0.10
 
 PUBLIC_AGENTS = frozenset({'aria', 'vector', 'ledger', 'muse', 'sentry'})
 
+# Aligned with Keep continuity.state_engine event tables (clean-room copy of math).
 _RESIDUE_IMPACT: dict[str, float] = {
     'agent_ask': 0.0,
     'operator_ask': 0.0,
     'operator_ask_subjective': +0.04,
+    'social_post_mention_pos': +0.08,
+    'social_post_mention_neg': -0.12,
     'user_mild_criticism': -0.03,
     'user_dismissal': -0.08,
     'user_insult': -0.20,
     'user_hostility': -0.28,
-    'user_hostile': -0.28,
-    'user_critique': -0.05,
     'user_apology': +0.10,
     'user_repair': +0.08,
     'user_praise': +0.16,
@@ -40,18 +41,21 @@ _RESIDUE_IMPACT: dict[str, float] = {
     'memory_reflection': 0.0,
     'collaboration_success': +0.06,
     'collaboration_failure': -0.08,
+    # Aliases from Premium classifiers → Keep names
+    'user_hostile': -0.28,
+    'user_critique': -0.03,
 }
 
 _DELTAS: dict[str, dict[str, float]] = {
     'agent_ask': {'energy': +0.01},
     'operator_ask': {'energy': +0.01},
     'operator_ask_subjective': {'happiness': +0.012, 'energy': +0.008},
+    'social_post_mention_pos': {'happiness': +0.025, 'confidence': +0.012},
+    'social_post_mention_neg': {'happiness': -0.035, 'confidence': -0.022},
     'user_mild_criticism': {'happiness': -0.008},
     'user_dismissal': {'happiness': -0.022, 'confidence': -0.010},
     'user_insult': {'happiness': -0.065, 'confidence': -0.035, 'energy': +0.020},
     'user_hostility': {'happiness': -0.090, 'confidence': -0.050, 'energy': +0.030},
-    'user_hostile': {'happiness': -0.090, 'confidence': -0.050, 'energy': +0.030},
-    'user_critique': {'happiness': -0.040, 'confidence': -0.020},
     'user_apology': {'happiness': +0.020, 'confidence': +0.010},
     'user_repair': {'happiness': +0.018, 'confidence': +0.012},
     'user_praise': {'happiness': +0.055, 'confidence': +0.025, 'energy': +0.012},
@@ -60,6 +64,9 @@ _DELTAS: dict[str, dict[str, float]] = {
     'memory_reflection': {'energy': +0.018},
     'collaboration_success': {'happiness': +0.025, 'confidence': +0.015},
     'collaboration_failure': {'happiness': -0.030, 'confidence': -0.020},
+    # Aliases
+    'user_hostile': {'happiness': -0.090, 'confidence': -0.050, 'energy': +0.030},
+    'user_critique': {'happiness': -0.008},
 }
 
 _lock = threading.Lock()
@@ -185,14 +192,8 @@ class StateEngine:
             updates['confidence'] = max(0.15, updates['confidence'])
 
         prev_residue = float(state.get('_residue', 0.0))
-        impact = float(_RESIDUE_IMPACT.get(event_key, 0.0))
-        # Allow intensity scale from payload
-        inten = payload.get('intensity')
-        if inten is not None:
-            try:
-                impact = impact * float(inten)
-            except (TypeError, ValueError):
-                pass
+        impact = float(_RESIDUE_IMPACT.get(event_key, 0.0)) if event_key else 0.0
+        # Keep StateEngine does not intensity-scale residue — keep parity exact
         new_residue = _apply_residue_decay(prev_residue, impact)
         updates['_residue'] = new_residue
         updates['mood'] = derive_mood_label(

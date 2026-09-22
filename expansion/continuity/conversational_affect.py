@@ -14,8 +14,8 @@ from expansion.state_layout import StateLayout, resolve_layout
 
 _HOSTILE = re.compile(
     r'\b(?:you(?:\'re| are) (?:useless|lazy|stupid|dumb|garbage|worthless)|'
-    r'shut up|i hate you|you suck|worst|idiot|not a good job|being lazy|'
-    r'this is garbage|you failed|absolute garbage)\b',
+    r'shut up|i hate you|i hate this|you suck|worst|idiot|not a good job|being lazy|'
+    r'this is garbage|you failed|absolute garbage|hate this output)\b',
     re.I,
 )
 _PRAISE = re.compile(
@@ -27,7 +27,9 @@ _PRAISE = re.compile(
 _CRITIQUE = re.compile(
     r'\b(?:that(?:\'s| is) wrong|incorrect|fix (?:that|this)|you messed up|'
     r'not what i (?:said|meant)|do better|try again|missed the point|'
-    r'that failed|this failed|not good enough)\b',
+    r'that failed|this failed|not good enough|did(?:n\'t| not) work|'
+    r'you missed|still broken|not working|solution did(?:n\'t| not)|'
+    r'that break|why did that break|missed the constraint|missed it)\b',
     re.I,
 )
 _APOLOGY = re.compile(
@@ -153,39 +155,63 @@ def apply_user_message_events(
     before = get_emotion_vector(eid, layout=layout)
     bond = load_bond(eid, target_id, layout=layout)
     events = classify_interpersonal_events(user_text)
-
-    # Always tick Formula 5 operator_ask + Formula 9 interaction counter
-    subjective = bool(events) or any(
-        w in (user_text or '').lower()
-        for w in ('feel', 'love', 'hate', 'lonely', 'proud', 'sorry', 'miss')
-    )
-    try:
-        RelationshipEngine.update_on_event(
-            eid, target_id,
-            'operator_ask_subjective' if subjective else 'operator_ask',
-            notes='premium_chat',
-            layout=layout,
-        )
-        RelationshipEngine.sync_dim_store(eid, target_id, layout=layout)
-    except Exception:
-        pass
-    try:
-        MemoryEngine.record_interaction(eid, layout=layout)
-    except Exception:
-        pass
-
-    # Co-mention Formula 5 updates between public agents
-    try:
-        for other in RelationshipEngine.mentioned_agents_in_message(user_text or ''):
-            if other == eid:
-                continue
-            RelationshipEngine.update_on_event(
-                eid, other, 'social_mention_positive', notes='co_mention', layout=layout,
-            )
-    except Exception:
-        pass
-
+    # Policy-driven fallback — if regex miss but Hermes intent is interpersonal
     if not events:
+        from expansion.hermes.behavioral_policy import classify_behavioral_intent
+        bintent = classify_behavioral_intent(user_text)
+        if bintent == 'corrective_work':
+            events = [{'event_type': 'user_critique', 'intensity': 0.55}]
+        elif bintent == 'hostility':
+            events = [{'event_type': 'user_hostile', 'intensity': 0.85}]
+        elif bintent == 'praise':
+            events = [{'event_type': 'user_praise', 'intensity': 0.70}]
+        elif bintent == 'apology':
+            events = [{'event_type': 'user_apology', 'intensity': 0.60}]
+
+    # Always tick Formula 5 operator bond + Formula 9 counter when no sharper event,
+    # OR tick once via interpersonal map below (avoid double StateEngine hits).
+    subjective = bool(events) or any(
+        re.search(rf'\b{re.escape(w)}\b', (user_text or '').lower())
+        for w in ('feel', 'love', 'hate', 'lonely', 'proud', 'sorry')
+    )
+    if not events:
+        try:
+            RelationshipEngine.update_on_event(
+                eid, target_id,
+                'operator_ask_subjective' if subjective else 'operator_ask',
+                notes='premium_chat',
+                layout=layout,
+            )
+            RelationshipEngine.sync_dim_store(eid, target_id, layout=layout)
+        except Exception as exc:
+            from expansion.continuity.health import record_failure
+            record_failure('relationship_engine', exc, detail='operator_ask')
+        try:
+            MemoryEngine.record_interaction(eid, layout=layout)
+        except Exception as exc:
+            from expansion.continuity.health import record_failure
+            record_failure('memory_engine', exc, detail='record_interaction')
+        # Co-mention Formula 5 updates between public agents
+        try:
+            for other in RelationshipEngine.mentioned_agents_in_message(user_text or ''):
+                if other == eid:
+                    continue
+                RelationshipEngine.update_on_event(
+                    eid, other, 'social_mention_positive', notes='co_mention', layout=layout,
+                )
+        except Exception as exc:
+            from expansion.continuity.health import record_failure
+            record_failure('relationship_engine', exc, detail='co_mention')
+
+        after = get_emotion_vector(eid, layout=layout)
+        # Still apply a mild operator_ask state tick (Keep: operator_ask energy +0.01)
+        from expansion.continuity.health import LayerGuard
+        with LayerGuard('state_engine', detail='operator_ask'):
+            StateEngine.update_from_event(
+                eid,
+                'operator_ask_subjective' if subjective else 'operator_ask',
+                layout=layout,
+            )
         after = get_emotion_vector(eid, layout=layout)
         _applied_keys[dedupe_key] = now
         return {
@@ -197,35 +223,48 @@ def apply_user_message_events(
             'reason': 'operator_ask_only',
         }
 
+    try:
+        MemoryEngine.record_interaction(eid, layout=layout)
+    except Exception as exc:
+        from expansion.continuity.health import record_failure
+        record_failure('memory_engine', exc, detail='record_interaction')
+
+
     trust = _f(bond.get('trust'), 0.5)
     slow = max(0.20, 1.0 - 0.55 * trust)
     fast = 0.90 + 0.15 * (1.0 - 0.4 * trust)
 
-    # Map interpersonal events through StateEngine event table (canonical F4/7)
+    # Map to Keep-aligned StateEngine event names
     event_map = {
-        'user_hostile': 'user_hostile',
-        'user_critique': 'user_critique',
+        'user_hostile': 'user_hostility',
+        'user_critique': 'user_mild_criticism',
         'user_praise': 'user_praise',
         'user_gratitude': 'user_gratitude',
         'user_apology': 'user_apology',
     }
+    # F5 events — mirror Keep reference adapter mapping for differential parity
+    f5_map = {
+        'user_hostile': 'social_reply_disagree',
+        'user_critique': 'operator_ask',
+        'user_praise': 'operator_ask_subjective',
+        'user_gratitude': 'operator_ask_subjective',
+        'user_apology': 'operator_ask_subjective',
+    }
+    from expansion.continuity.health import LayerGuard
     for ev in events:
         et = event_map.get(ev['event_type'], ev['event_type'])
-        try:
+        with LayerGuard('state_engine', detail=f'update:{et}'):
             StateEngine.update_from_event(
                 eid, et,
                 {'intensity': _f(ev.get('intensity'), 0.5), 'trust': trust, 'slow': slow, 'fast': fast},
                 layout=layout,
             )
-        except Exception:
-            pass
-        try:
+        f5_et = f5_map.get(ev['event_type'], 'operator_ask')
+        with LayerGuard('relationship_engine', detail=f'update:{f5_et}'):
             RelationshipEngine.update_on_event(
-                eid, target_id, et, notes='conversational_affect', layout=layout,
+                eid, target_id, f5_et, notes='conversational_affect', layout=layout,
             )
             RelationshipEngine.sync_dim_store(eid, target_id, layout=layout)
-        except Exception:
-            pass
 
     # Soft mirror into EmotionStore dims for UI (does not own Formula vector)
     try:
