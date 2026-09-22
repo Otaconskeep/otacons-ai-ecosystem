@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
   "installer_version": "1.3.3",
-  "commit": "106d0af576e2511690025298a3747db8a87b93cd",
+  "commit": "1490d8fd4f1c83a825f814f582dec44c9ee3783e",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.3.3 \u2014 Command Center homescreen (Homepage-style tiles + SFX), top tabs on all pages, Keep Desk/KeepRoute companion auto-tiles."
+  "notes": "Otacon v1.3.3 \u2014 Command Center homescreen (Homepage-style tiles + SFX), top tabs on all pages, Keep Desk/KeepRoute companion auto-tiles. release.json.commit pinned to tip."
 }
