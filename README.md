@@ -15,6 +15,8 @@
 ## Project REX ↔ KeepRoute learning
 
 Operator Keep and **public Expansion Premium (v1.3.2+)** share the same idea: KeepRoute/OmniRoute exchanges feed a **global** learning pool → world model → `world_model:*` REX proposals. Details: [docs/REX_KEEPROUTE_LEARNING.md](docs/REX_KEEPROUTE_LEARNING.md) · [site § REX learning](https://otaconskeep.github.io/keeproute/#rex-learning).
+
+**Homescreen** (Lite + Premium) is a Command Center tile launchpad (Homepage-style groups + click SFX). Top tabs stay on every page for Codec / Homescreen / rooms. Keep Desk and KeepRoute tiles auto-appear when discovered on localhost or configured (`OTACON_KEEP_DESK_URL` / `OTACON_KEEPROUTE_URL`).
 ## Otacon v1.3.1
 
 System-level capability-parity acceptance suite against isolated real Keep engines. Run: `KEEP_REFERENCE_ROOT=… python3 scripts/acceptance_gate.py`. Evidence: `tests/parity/out/acceptance_report.json`.
