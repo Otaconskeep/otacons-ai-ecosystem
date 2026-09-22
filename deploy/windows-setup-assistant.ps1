@@ -712,11 +712,11 @@ function Install-DockerDesktopViaWinget {
             Write-KeepLog ("winget {0} exit={1}" -f $id, $code) -Stage "DOCKER"
             # 0 ok; -1978335189 already installed; -1978335135 no newer upgrade / ok-ish
             if ($code -eq 0 -or $code -eq -1978335189 -or $code -eq -1978335135) {
-                return @{ ok = $true; reason = "winget:$id:$code" }
+                return @{ ok = $true; reason = ("winget:{0}:{1}" -f $id, $code) }
             }
             # Reboot required class (APPINSTALLER often 0x8A150101 / similar) - treat as soft ok if files appear
             if (Test-DockerDesktopPresent) {
-                return @{ ok = $true; reason = "winget_present_after:$id:$code" }
+                return @{ ok = $true; reason = ("winget_present_after:{0}:{1}" -f $id, $code) }
             }
         } catch {
             Write-KeepLog "winget $id threw: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"

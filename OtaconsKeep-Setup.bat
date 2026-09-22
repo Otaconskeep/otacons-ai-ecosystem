@@ -222,6 +222,9 @@ if defined DEBUG echo [DEBUG] command=powershell -File bootstrap-fetch.ps1 -Mani
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%FETCH_PS1%" -DestRoot "%INST%" -RawBase "%RAW%" -LogFile "%LOGFILE%" -Manifest full %DEBUG_SWITCH%
 set "RC=!ERRORLEVEL!"
+REM Some hosts swallow PowerShell `exit 1` — honor EXIT_CODE=1 written to the log/console capture.
+findstr /C:"EXIT_CODE=1" "%LOGFILE%" >nul 2>&1 && set "RC=1"
+if exist "%LASTOUT%" findstr /C:"EXIT_CODE=1" "%LASTOUT%" >nul 2>&1 && set "RC=1"
 call :LOG "bootstrap-fetch.ps1 exit=!RC!"
 if defined DEBUG echo [DEBUG] errorlevel=!RC!
 if "!RC!"=="0" goto FETCH_FILES_OK

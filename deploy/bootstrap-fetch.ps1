@@ -528,7 +528,7 @@ if ($failures.Count -gt 0) {
     Write-Host "FAILED_COMMAND=download otaconskeep setup files from github raw"
     Write-Host "EXIT_CODE=1"
     Write-Host ("LAST_ERROR=" + (($lastErrorBlock | Select-Object -Last 3) -join " ;; "))
-    exit 1
+    [Environment]::Exit(1)
 }
 
 Write-Log "FETCH OK all requested files"
@@ -559,7 +559,7 @@ if ($missingReq.Count -gt 0) {
     Write-Host "FAILED_COMMAND=verify required installer helpers present"
     Write-Host "EXIT_CODE=1"
     Write-Host ("LAST_ERROR=missing required files: " + ($missingReq -join ", "))
-    exit 1
+    [Environment]::Exit(1)
 }
 Write-Log "required helpers present including repair-otacon-core.ps1 and wsl-bash-file.ps1"
 
@@ -573,7 +573,7 @@ if ($repairText -match 'bash -lc \$bash') {
     Write-Host "FAILED_COMMAND=verify installed repair-otacon-core.ps1 uses temp .sh transport"
     Write-Host "EXIT_CODE=1"
     Write-Host "LAST_ERROR=installed repair helper is stale (bash -lc `$bash)"
-    exit 1
+    [Environment]::Exit(1)
 }
 if ($repairText -notmatch 'Invoke-OtaconWslBashFile') {
     Write-Log "INSTALLED repair missing Invoke-OtaconWslBashFile" "ERROR"
@@ -582,7 +582,7 @@ if ($repairText -notmatch 'Invoke-OtaconWslBashFile') {
     Write-Host "FAILED_COMMAND=verify installed repair-otacon-core.ps1 uses Invoke-OtaconWslBashFile"
     Write-Host "EXIT_CODE=1"
     Write-Host "LAST_ERROR=installed repair helper missing file transport"
-    exit 1
+    [Environment]::Exit(1)
 }
 Write-Log "installed repair helper uses Invoke-OtaconWslBashFile (temp .sh transport)"
 
@@ -594,7 +594,7 @@ if ($wslText -notmatch 'function Invoke-OtaconWslBashFile') {
     Write-Host "FAILED_COMMAND=verify deploy/wsl-bash-file.ps1"
     Write-Host "EXIT_CODE=1"
     Write-Host "LAST_ERROR=wsl-bash-file.ps1 incomplete"
-    exit 1
+    [Environment]::Exit(1)
 }
 
 # Parse-check critical helpers under this host's PowerShell before Setup continues.
@@ -618,7 +618,9 @@ foreach ($rel in $parseTargets) {
         Write-Host "FAILED_COMMAND=PowerShell 5.1 parse check for $rel"
         Write-Host "EXIT_CODE=1"
         Write-Host "LAST_ERROR=$msg"
-        exit 1
+        # Environment.Exit — guaranteed process code for cmd.exe ERRORLEVEL (plain `exit 1`
+        # can be swallowed by some host wrappers and report BAT exit 0).
+        [Environment]::Exit(1)
     }
     Write-Log "parse ok $rel"
 }
