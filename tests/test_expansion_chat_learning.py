@@ -76,7 +76,29 @@ class ChatLearningCase(unittest.TestCase):
         from expansion.jobs import JobStore
         job = JobStore(self.layout).get(pre['job_id'])
         self.assertEqual(job.assigned_agent, 'ledger')
-        self.assertIn('fabric', (job.request or job.title or '').lower())
+        self.assertIn('fabric', (job.request or '').lower())
+
+    def test_do_it_dedupes_open_board_job(self):
+        from expansion.memory_bridge import new_memory
+        ExpansionMemory(self.layout).add(new_memory(
+            'aria',
+            'User: help me research fabric blends for custom printed t-shirts / '
+            'Me: Ledger will start researching the best fabric blends.',
+            kind='episodic',
+            source='chat_turn',
+            importance=0.55,
+        ))
+        first = before_reply('aria', 'do it', layout=self.layout)
+        second = before_reply('aria', 'go ahead', layout=self.layout)
+        self.assertEqual(first['job_id'], second['job_id'])
+        self.assertTrue(second.get('deduped'))
+        self.assertIn('Already on the REX board', second['reply'])
+        from expansion.jobs import JobStore
+        open_jobs = [
+            j for j in JobStore(self.layout).list(limit=50)
+            if j.status == 'QUEUED' and 'fabric' in (j.request or '').lower()
+        ]
+        self.assertEqual(len(open_jobs), 1)
 
     def test_task_queues_job_without_complete(self):
         pre = before_reply('aria', 'Aria, handle the release', layout=self.layout)

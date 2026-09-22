@@ -342,9 +342,10 @@ def _ack_remember(agent_id: str, fact: str) -> str:
     return f"I'll remember that: {fact}."
 
 
-def _ack_task(agent_id: str, request: str, job_id: str) -> str:
+def _ack_task(agent_id: str, request: str, job_id: str, *, reused: bool = False) -> str:
+    verb = 'Already on' if reused else 'Queued on'
     return (
-        f'Queued on the REX board for {agent_id}: {request} '
+        f'{verb} the REX board for {agent_id}: {request} '
         f'(job {job_id}; READY — not complete until researched/verified).'
     )
 
@@ -463,40 +464,69 @@ def before_reply(
         # Prefer REX board queue so autonomy_tick / Keep-parity pilot can see it.
         # Fall back to JobStore-only queue if rex meta is unavailable.
         job_id = ''
+        reused = False
         try:
             from expansion.rex import queue_rex_job, job_to_card
-            from expansion.jobs import DOMAIN_ROUTING as _DR
+            from expansion.jobs import DOMAIN_ROUTING as _DR, find_open_job_for_request
             owner = assignee if assignee in _DR.values() or assignee in CANONICAL_AGENTS else None
             # Route research to ledger even when Aria is named as coordinator.
             if domain in ('research', 'records', 'continuity') and not owner:
                 owner = 'ledger'
             if domain in ('research', 'records', 'continuity') and assignee == 'aria':
                 owner = 'ledger'
-            job = queue_rex_job(
+            board_owner = owner or assignee
+            # Dedupe: "do it" / "go ahead" / repeat delegation must not clone open work.
+            existing = find_open_job_for_request(
                 request,
-                domain=domain,
                 layout=layout,
-                assigned_agent=owner or assignee,
-                discovered_by=f'chat:{aid}',
-                stage='READY',
-                priority=4,
-                proposal_source='chat_delegation',
+                assigned_agent=board_owner if board_owner in CANONICAL_AGENTS else None,
+                domain=domain if domain in ('research', 'records', 'continuity') else None,
             )
-            job_id = job.job_id
-            board_owner = job.assigned_agent or owner or assignee
-            out['rex_stage'] = job_to_card(job, layout).get('stage')
-            out['assigned_agent'] = board_owner
+            if existing is not None:
+                job = existing
+                job_id = job.job_id
+                board_owner = job.assigned_agent or board_owner
+                reused = True
+                out['rex_stage'] = job_to_card(job, layout).get('stage')
+                out['assigned_agent'] = board_owner
+                out['deduped'] = True
+            else:
+                job = queue_rex_job(
+                    request,
+                    domain=domain,
+                    layout=layout,
+                    assigned_agent=board_owner,
+                    discovered_by=f'chat:{aid}',
+                    stage='READY',
+                    priority=4,
+                    proposal_source='chat_delegation',
+                )
+                job_id = job.job_id
+                board_owner = job.assigned_agent or board_owner
+                out['rex_stage'] = job_to_card(job, layout).get('stage')
+                out['assigned_agent'] = board_owner
         except Exception:
-            job_out = pipe.create_and_run_job(
-                request,
-                domain=domain,
-                simulate=False,
-                queue_only=True,
-                assigned_agent=assignee,
+            from expansion.jobs import find_open_job_for_request
+            existing = find_open_job_for_request(
+                request, layout=layout, assigned_agent=assignee, domain=domain,
             )
-            job = job_out.get('job')
-            job_id = getattr(job, 'job_id', '') if job else ''
-            board_owner = assignee
+            if existing is not None:
+                job = existing
+                job_id = job.job_id
+                board_owner = assignee
+                reused = True
+                out['deduped'] = True
+            else:
+                job_out = pipe.create_and_run_job(
+                    request,
+                    domain=domain,
+                    simulate=False,
+                    queue_only=True,
+                    assigned_agent=assignee,
+                )
+                job = job_out.get('job')
+                job_id = getattr(job, 'job_id', '') if job else ''
+                board_owner = assignee
         ev = new_event(
             'job.delegated',
             actor='user',
@@ -509,6 +539,7 @@ def before_reply(
                 'job_id': job_id,
                 'authorized': True,
                 'rex_board': True,
+                'deduped': reused,
             },
         )
         applied = pipe.apply_event(ev, write_diary=True)
@@ -519,12 +550,16 @@ def before_reply(
             'journal_ids': applied.get('journal_ids') or [],
             'job_id': job_id,
             'intercept': True,
-            'reply': _ack_task(board_owner, request, job_id or 'pending'),
+            'reply': _ack_task(board_owner, request, job_id or 'pending', reused=reused),
         })
         try:
             engine.observe(
                 board_owner,
-                f'operator delegated task: {request}',
+                (
+                    f'operator reaffirmed open task: {request}'
+                    if reused else
+                    f'operator delegated task: {request}'
+                ),
                 learning_type='operational',
                 evidence_ids=[out['event_id'] or job_id],
                 scope='private',

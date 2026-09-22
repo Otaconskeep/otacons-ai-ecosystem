@@ -5,6 +5,7 @@ Job completion/failure feeds journal, memory, emotion, relationships, living dos
 """
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -41,6 +42,60 @@ DOMAIN_ROUTING = {
     'monitoring': 'sentry',
     'coordination': 'aria',
 }
+
+_OPEN_STATUSES = frozenset({
+    JobStatus.QUEUED.value,
+    JobStatus.ASSIGNED.value,
+    JobStatus.RUNNING.value,
+    JobStatus.WAITING.value,
+    JobStatus.BLOCKED.value,
+})
+
+
+def request_fingerprint(request: str) -> str:
+    """Normalize a job request for open-board dedupe."""
+    text = (request or '').lower().strip()
+    text = re.sub(r'[^\w\s]+', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    # Drop filler so "help me research X" ≈ "Research X"
+    for filler in (
+        'please ', 'help me ', 'can you ', 'could you ', 'go ahead and ',
+        'the pending plan from our recent conversation',
+    ):
+        if text.startswith(filler):
+            text = text[len(filler):].strip()
+    return text[:220]
+
+
+def find_open_job_for_request(
+    request: str,
+    *,
+    layout: Optional[StateLayout] = None,
+    assigned_agent: Optional[str] = None,
+    domain: Optional[str] = None,
+) -> Optional['Job']:
+    """Return an open job with the same fingerprint, if any."""
+    fp = request_fingerprint(request)
+    if len(fp) < 8:
+        return None
+    store = JobStore(layout or resolve_layout())
+    for job in store.list(limit=80):
+        if job.status not in _OPEN_STATUSES:
+            continue
+        if assigned_agent and job.assigned_agent != assigned_agent:
+            continue
+        if domain and job.domain != domain:
+            continue
+        if request_fingerprint(job.request) == fp:
+            return job
+        # Soft overlap: same significant tokens (fabric research clones)
+        a = set(fp.split())
+        b = set(request_fingerprint(job.request).split())
+        if len(a) >= 4 and len(b) >= 4:
+            overlap = len(a & b) / max(1, len(a | b))
+            if overlap >= 0.72:
+                return job
+    return None
 
 
 @dataclass
