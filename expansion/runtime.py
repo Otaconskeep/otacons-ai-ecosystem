@@ -226,6 +226,8 @@ class ExpansionRuntime:
         work_section = ''
         delivery_section = ''
         layered_section = ''
+        hermes_section = ''
+        dual_affect = ''
         try:
             from expansion.behavior_spine import (
                 work_mode_directive,
@@ -241,12 +243,34 @@ class ExpansionRuntime:
             )
         except Exception:
             pass
+        try:
+            from expansion.continuity.conversational_affect import (
+                apply_user_message_events,
+                build_dual_affect_prompt_block,
+            )
+            apply_user_message_events(
+                agent_id, user_message or '', layout=self.layout,
+            )
+            dual_affect = build_dual_affect_prompt_block(
+                agent_id, layout=self.layout,
+            )
+        except Exception:
+            dual_affect = ''
+        try:
+            from expansion.hermes.personality_runtime import layered_system_prompt_section
+            hermes_section = layered_system_prompt_section(
+                agent_id, user_message or '', layout=self.layout,
+            )
+        except Exception:
+            hermes_section = ''
 
         system_prompt = (
             f"{view.persona}\n\n"
             f"{who_section}"
             f"{delivery_section}"
             f"{work_section}"
+            f"{hermes_section}"
+            f"{dual_affect}"
             f"{layered_section}"
             f"[Expansion runtime context — stay in character; do not invent owner history]\n"
             f"Voice rules: never sound like a generic AI assistant. Never say "

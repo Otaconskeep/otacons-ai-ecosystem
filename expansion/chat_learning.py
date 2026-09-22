@@ -262,6 +262,16 @@ def before_reply(
 
     intent = classify_chat_intent(msg)
     out['intent'] = intent
+    # Layered affect before prompt assembly (Hermes/emotion bridge path)
+    try:
+        from expansion.continuity.conversational_affect import apply_user_message_events
+        affect = apply_user_message_events(aid, msg, layout=layout)
+        out['affect'] = {
+            'applied': bool(affect.get('applied')),
+            'events': affect.get('events') or [],
+        }
+    except Exception:
+        out['affect'] = {'applied': False, 'events': []}
     pipe = LivingPipeline(layout)
     engine = LearningEngine(layout)
     mem = ExpansionMemory(layout)

@@ -1,6 +1,6 @@
 {
   "product": "Otacon",
-  "installer_version": "1.1.0",
+  "installer_version": "1.1.1",
   "commit": "3ad5cbaa33f04fca66465dcbb515bb7d014d08bc",
   "channel": "public",
   "ecosystem_ref": "main",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.1 \u2014 Keep-parity behavior spine for Aria roster (work-first voice, anti-greeting scrub, layered learning). Soft-update with OtaconsKeep-Setup.bat."
+  "notes": "Otacon v1.1.1 \u2014 Hermes personality runtime + emotion bridge Formula 4/7/8 + conversational affect on public Aria roster (clean-room; no private Keep data)."
 }

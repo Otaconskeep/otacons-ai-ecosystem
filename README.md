@@ -7,6 +7,10 @@
 **💬 Join the community: [discord.gg/cZDeqECzX](https://discord.gg/cZDeqECzX)**
 
 
+
+## Otacon v1.1.1
+
+Hermes personality runtime, emotion bridge (Formula 4/7/8), and conversational affect are now wired into public Expansion chat — clean-room Keep-parity layers with mock psych profiles for Aria/Vector/Ledger/Muse/Sentry only. Tag: [`v1.1.1`](https://github.com/Otaconskeep/otacons-ai-ecosystem/releases/tag/v1.1.1).
 ## Otacon v1.1
 
 **Released:** Keep-parity behavior spine for the public Aria / Vector / Ledger / Muse / Sentry roster — work-first delivery, anti-robotic greeting scrub, layered emotion + learning that gets sharper with use. Soft-update with `OtaconsKeep-Setup.bat`. Tag: [`v1.1`](https://github.com/Otaconskeep/otacons-ai-ecosystem/releases/tag/v1.1).

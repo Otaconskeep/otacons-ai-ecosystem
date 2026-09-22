@@ -104,11 +104,29 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
         text = apply_idiolect(text, human_id)
     except Exception:
         pass
+    # Hermes personality runtime — final scrub + layered fallback if thin
+    try:
+        from expansion.hermes.personality_runtime import (
+            apply_final_persona_safety_scrub,
+            render_persona_text_via_hermes,
+        )
+        rendered = render_persona_text_via_hermes(
+            human_id, message, candidate_text=text,
+        )
+        intent = (rendered or {}).get('intent_class') or 'general'
+        if len((text or '').split()) >= 25:
+            scrubbed = apply_final_persona_safety_scrub(text, human_id, intent)
+            if scrubbed:
+                text = scrubbed
+            elif rendered.get('text'):
+                text = rendered['text']
+        elif rendered.get('ok') and rendered.get('text'):
+            text = rendered['text']
+    except Exception:
+        pass
     try:
         from expansion.behavior_spine import scrub_robotic_delivery, wants_work_deliverable
         text = scrub_robotic_delivery(text)
-        # If work was asked and the model still only greets, leave a hard nudge
-        # in-process (learning stores the miss) — UI still gets non-empty text.
         if wants_work_deliverable(message) and text and len(text.split()) < 25:
             text = (
                 text.rstrip('.')
