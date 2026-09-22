@@ -219,8 +219,17 @@ def verification_ready(card: dict) -> tuple[bool, str]:
     owner = card.get('owner') or ''
     if passes and all(r.get('reviewer') == owner for r in passes):
         return False, 'peer review must be cross-agent'
-    if not (card.get('research_refs') or card.get('evidence')):
+    try:
+        from expansion.pilot_governance import substantive_evidence_ids
+        substantive = substantive_evidence_ids(card.get('evidence'))
+    except Exception:
+        substantive = list(card.get('evidence') or [])
+    refs = list(card.get('research_refs') or [])
+    if not (substantive or refs):
         return False, 'needs research or execution evidence'
+    domain = (card.get('domain') or '').lower()
+    if domain in ('research', 'records', 'continuity', 'documentation') and not refs:
+        return False, 'needs research refs before close'
     return True, 'verified'
 
 

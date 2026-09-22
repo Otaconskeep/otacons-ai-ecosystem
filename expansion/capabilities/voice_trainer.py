@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import socket
 import subprocess
 import threading
 from pathlib import Path
@@ -37,11 +36,8 @@ def _vt_home() -> Path:
 
 
 def _port_listening(port: int = DEFAULT_PORT, host: str = '127.0.0.1') -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=0.4):
-            return True
-    except OSError:
-        return False
+    from expansion.capabilities.voice_trainer_status import port_listening
+    return port_listening(port, host)
 
 
 def _gpu_usable() -> bool:

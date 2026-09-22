@@ -57,7 +57,8 @@ _APOLOGY = re.compile(
     re.I,
 )
 _INSULT = re.compile(
-    r'\b(?:you(?:\'re| are) (?:useless|worthless|stupid|dumb|an idiot|pathetic)|'
+    r'\b(?:you(?:\'re| are) (?:useless|worthless|stupid|dumb|an idiot|pathetic|'
+    r'ugly|hideous|gross|disgusting|fat|repulsive)|'
     r'useless|shut up|i hate you|you suck|worst (?:agent|assistant)|'
     r'dumb (?:bot|ai)|idiot)\b',
     re.I,

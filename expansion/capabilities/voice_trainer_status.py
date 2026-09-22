@@ -194,12 +194,60 @@ def write_status_json(install_dir: Path | None = None) -> dict[str, Any]:
     return {'path': str(path), 'status': payload, 'install_dir': str(root)}
 
 
+def _tcp_listen_ports() -> set[int]:
+    """Parse /proc/net/tcp{,6} for ports in LISTEN (state 0A).
+
+    Dialling the port (create_connection) can false-positive after a listener
+    exits: probes open fresh connections that land in FIN-WAIT/TIME-WAIT while
+    ss -ltn shows nothing listening. Genome reclaim then mislabels the port as
+    foreign. The listen table is the source of truth.
+    """
+    ports: set[int] = set()
+    for path in ('/proc/net/tcp', '/proc/net/tcp6'):
+        try:
+            lines = Path(path).read_text(encoding='utf-8', errors='replace').splitlines()
+        except OSError:
+            continue
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            # local_address is ip:port in hex; state 0A = LISTEN
+            if parts[3].lower() != '0a':
+                continue
+            try:
+                _ip, port_hex = parts[1].rsplit(':', 1)
+                ports.add(int(port_hex, 16))
+            except (ValueError, IndexError):
+                continue
+    return ports
+
+
 def port_listening(port: int = DEFAULT_PORT, host: str = '127.0.0.1') -> bool:
+    """True iff a TCP socket is listening on port (listen table, not dial)."""
+    del host  # host kept for call-site compatibility; listen table is port-wide
     try:
-        with socket.create_connection((host, port), timeout=0.4):
+        port_i = int(port)
+    except (TypeError, ValueError):
+        return False
+    if port_i in _tcp_listen_ports():
+        return True
+    # Fallback for platforms without /proc/net/tcp (rare here): dial once.
+    try:
+        with socket.create_connection(('127.0.0.1', port_i), timeout=0.4):
             return True
     except OSError:
         return False
+
+
+def wait_port_free(port: int, timeout: float = 6.0, poll: float = 0.1) -> bool:
+    """Wait until port has no LISTEN socket. Returns True if free."""
+    deadline = time.time() + max(0.1, float(timeout))
+    while time.time() < deadline:
+        if not port_listening(port):
+            return True
+        time.sleep(poll)
+    return not port_listening(port)
 
 
 def verify_ui(port: int = DEFAULT_PORT, timeout: float = 3.0, *, require_genome: bool = False) -> dict[str, Any]:

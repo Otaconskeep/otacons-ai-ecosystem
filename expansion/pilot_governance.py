@@ -51,6 +51,31 @@ WEAK_VERIFY_PATTERNS = (
     r'curl\s+.*(/health|/healthz)\b',
 )
 
+# Domains whose close bar requires research_refs (not just repo.search + journal).
+RESEARCH_OUTCOME_DOMAINS = frozenset({
+    'research',
+    'records',
+    'continuity',
+    'documentation',
+})
+
+# Evidence ids that only track pilot bookkeeping — never alone prove an outcome.
+_BOOKKEEPING_EVIDENCE_PREFIXES = ('before:', 'after:', 'review:')
+
+
+def substantive_evidence_ids(evidence: list | None) -> list[str]:
+    """Return evidence ids that are not before:/after:/review: bookkeeping tags."""
+    out: list[str] = []
+    for raw in evidence or []:
+        s = str(raw or '').strip()
+        if not s:
+            continue
+        low = s.lower()
+        if low.startswith(_BOOKKEEPING_EVIDENCE_PREFIXES):
+            continue
+        out.append(s)
+    return out
+
 DEFAULT_PILOT = {
     'schema_version': 1,
     'active': True,
@@ -225,28 +250,54 @@ def definition_of_done(
     peer_reviews: list | None = None,
     research_refs: list | None = None,
     implementation_evidence: dict | None = None,
+    confidence: float | None = None,
     layout: Optional[StateLayout] = None,
 ) -> dict[str, Any]:
-    """Machine-checkable close bar for Expansion jobs."""
+    """Machine-checkable close bar for Expansion jobs.
+
+    Artifact/outcome evidence is required. Bookkeeping tags
+    (``before:`` / ``after:`` / ``review:``) and a bare result string
+    never alone satisfy DoD — that blocked the fake
+    ``repo.search('journal')`` → journal → ``dod_passed`` streak path.
+    """
     st = load_status(layout)
     ev = implementation_evidence if isinstance(implementation_evidence, dict) else {}
     evidence = list(evidence or [])
     reviews = list(peer_reviews or [])
     refs = list(research_refs or [])
+    substantive = substantive_evidence_ids(evidence)
     passes = [r for r in reviews if (r.get('verdict') or '').lower() == 'pass']
     fails = [r for r in reviews if (r.get('verdict') or '').lower() == 'fail']
+    dom = domain_key(domain)
 
     weak = is_weak_verification(evidence, result)
     checks = {
-        'has_evidence': bool(evidence or refs or result.strip()),
+        # Outcome evidence only — not before:/after: tags or empty narration.
+        'has_evidence': bool(substantive or refs),
         'peer_pass': bool(passes) and not (fails and not passes),
         'non_weak_verify': not weak,
         'result_present': bool((result or '').strip()),
     }
+    if dom in RESEARCH_OUTCOME_DOMAINS:
+        checks['research_outcome'] = bool(refs)
+
+    # Derived confidence — job.confidence defaults to 0.0 and was never written,
+    # so we score from artifacts. Explicit confidence<=0 from caller still fails.
+    derived_confidence = 0.0
+    if refs:
+        derived_confidence += 0.50
+    if substantive:
+        derived_confidence += 0.35
+    if passes:
+        derived_confidence += 0.15
+    derived_confidence = round(min(1.0, derived_confidence), 3)
+    if confidence is not None and float(confidence) > 0.0:
+        derived_confidence = max(derived_confidence, float(confidence))
+    checks['confidence_positive'] = derived_confidence > 0.0
 
     pilot_scope = (
         st.get('mode') == 'controlled_pilot'
-        and domain_key(domain) in PILOT_ALLOWED_DOMAINS
+        and dom in PILOT_ALLOWED_DOMAINS
     )
     if pilot_scope:
         has_ba = bool(
@@ -258,6 +309,11 @@ def definition_of_done(
         if 'before:' in tags and 'after:' in tags:
             has_ba = True
         checks['before_after_evidence'] = has_ba
+        # Research lane with zero prior evidence and no research_refs = fake close
+        # (the journal-only continuity path).
+        before_m = ev.get('before_metric')
+        if before_m == 0 and not refs and dom in RESEARCH_OUTCOME_DOMAINS:
+            checks['outcome_delta'] = False
 
     missing = [k for k, ok in checks.items() if not ok]
     return {
@@ -266,6 +322,7 @@ def definition_of_done(
         'missing': missing,
         'weak_verification': weak,
         'pilot_scope': pilot_scope,
+        'derived_confidence': derived_confidence,
         'evaluated_at': _now(),
     }
 

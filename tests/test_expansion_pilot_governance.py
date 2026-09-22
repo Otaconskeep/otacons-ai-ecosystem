@@ -76,6 +76,45 @@ class PilotGovernanceCase(unittest.TestCase):
             layout=self.layout,
         )
         self.assertTrue(good['passed'], good)
+        self.assertGreater(good.get('derived_confidence') or 0, 0)
+
+    def test_dod_blocks_journal_only_research_close(self):
+        """repo.search + before/after bookkeeping must not pass research DoD."""
+        fake = definition_of_done(
+            domain='continuity',
+            evidence=[
+                'tool_24942d4d87',
+                'before:evidence=0',
+                'after:actions=1:ok=1',
+            ],
+            result='Executed 1 tool action(s); ok=1 fail=0',
+            peer_reviews=[{'verdict': 'pass', 'reviewer': 'ledger'}],
+            research_refs=[],
+            implementation_evidence={
+                'before_metric': 0,
+                'after_metric': 1,
+                'before_state': {'evidence_count': 0},
+                'after_state': {'actions': 1, 'ok_actions': 1},
+            },
+            layout=self.layout,
+        )
+        self.assertFalse(fake['passed'], fake)
+        self.assertTrue(
+            set(fake['missing']) & {'research_outcome', 'outcome_delta'},
+            fake['missing'],
+        )
+
+        bookkeeping_only = definition_of_done(
+            domain='learning',
+            evidence=['before:evidence=0', 'after:actions=1:ok=1'],
+            result='Executed 1 tool action(s)',
+            peer_reviews=[{'verdict': 'pass'}],
+            implementation_evidence={'before_metric': 0, 'after_metric': 1},
+            layout=self.layout,
+        )
+        self.assertFalse(bookkeeping_only['passed'])
+        self.assertIn('has_evidence', bookkeeping_only['missing'])
+
 
     def test_graduation_streak_and_reset(self):
         record_pilot_close(job_id='j1', clean=True, layout=self.layout)

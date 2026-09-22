@@ -187,7 +187,8 @@ def _reclaim_classic_vt_port(port: int) -> dict[str, Any]:
     except OSError:
         pass
     if stopped:
-        time.sleep(0.45)
+        from expansion.capabilities.voice_trainer_status import wait_port_free
+        wait_port_free(port, timeout=6.0)
     return {'stopped': stopped, 'ui_dir': str(ui_dir)}
 
 
@@ -683,9 +684,6 @@ class _GenomeHandler(BaseHTTPRequestHandler):
 
 
 def port_listening(port: int = DEFAULT_PORT, host: str = '127.0.0.1') -> bool:
-    import socket
-    try:
-        with socket.create_connection((host, port), timeout=0.4):
-            return True
-    except OSError:
-        return False
+    """Delegate to voice_trainer_status (listen-table, not dial)."""
+    from expansion.capabilities.voice_trainer_status import port_listening as _pl
+    return _pl(port, host)

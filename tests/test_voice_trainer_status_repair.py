@@ -150,6 +150,16 @@ class ExpansionVoiceTrainerStatusTests(unittest.TestCase):
         self.assertIn('path', report.discovery)
         self.assertFalse(report.discovery.get('listening'))
 
+    def test_port_listening_uses_listen_table_not_dial(self):
+        """Dial can false-positive on TIME-WAIT; listen table must win."""
+        from expansion.capabilities import voice_trainer_status as vts
+        with mock.patch.object(vts, '_tcp_listen_ports', return_value={39999}), \
+             mock.patch.object(vts.socket, 'create_connection', side_effect=AssertionError('must not dial')):
+            self.assertTrue(vts.port_listening(39999))
+        with mock.patch.object(vts, '_tcp_listen_ports', return_value=set()), \
+             mock.patch.object(vts.socket, 'create_connection', side_effect=OSError('refused')):
+            self.assertFalse(vts.port_listening(39999))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -189,6 +189,10 @@ class WorkshopApiTests(unittest.TestCase):
              mock.patch('expansion.capabilities.studio_packs.packs_status', return_value={
                  'image_ready': True,
                  'packs': {'z_image': {'ok': True}, 'wan': {'ok': False}, 'ace_step': {'ok': False}},
+             }), \
+             mock.patch('expansion.capabilities.comfy_submit.music_workflow_status', return_value={
+                 'ok': False,
+                 'missing': ['checkpoints/ace_step_1.5_turbo_aio.safetensors'],
              }):
             h = wa._health()
         self.assertTrue(h['studio_ready'])
@@ -199,6 +203,7 @@ class WorkshopApiTests(unittest.TestCase):
         self.assertEqual(h['preferred_mode'], 'image')
         self.assertFalse(h['music_ready'])
         self.assertFalse(h['video_ready'])
+        self.assertFalse(h['projects_ready'])
 
     def test_generate_portrait_queues_image_job(self):
         with TemporaryDirectory() as td:

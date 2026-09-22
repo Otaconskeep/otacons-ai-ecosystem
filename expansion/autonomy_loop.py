@@ -218,8 +218,10 @@ def step_research(layout: StateLayout, job: Job) -> dict:
     q = job.request[:160]
     search = tools.invoke(agent, 'web.search', query=q)
     actions = [search.action_id]
+    research_hits = 0
     if search.ok:
         results = search.data.get('results') or []
+        research_hits = len(results)
         for hit in results[:3]:
             _add_research(layout, job.job_id, {
                 'title': hit.get('title') or '',
@@ -240,8 +242,17 @@ def step_research(layout: StateLayout, job: Job) -> dict:
         actions.append(local.action_id)
         if local.ok:
             _add_evidence(layout, JobStore(layout).get(job.job_id), local.action_id)
-    _add_evidence(layout, JobStore(layout).get(job.job_id), search.action_id)
-    return {'stage': 'RESEARCHING', 'actions': actions, 'ok': search.ok}
+    # Only count a successful search (with hits) as evidence — 0-hit must not
+    # inflate the evidence bag toward a fake close.
+    if search.ok and research_hits > 0:
+        _add_evidence(layout, JobStore(layout).get(job.job_id), search.action_id)
+    return {
+        'stage': 'RESEARCHING',
+        'actions': actions,
+        'ok': bool(search.ok and research_hits > 0),
+        'research_hits': research_hits,
+        'search_error': '' if search.ok else (search.error or search.summary),
+    }
 
 
 def step_plan_assign(layout: StateLayout, job: Job) -> dict:
@@ -329,7 +340,21 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
         svc = tools.invoke('sentry', 'services.inspect')
         actions.append(svc)
     elif job.domain in ('records', 'research', 'continuity'):
-        local = tools.invoke('ledger', 'repo.search', query='journal')
+        # Prefer real research artifacts; do not close on journal-only writes.
+        q = (job.request or 'research')[:160]
+        search = tools.invoke('ledger', 'web.search', query=q)
+        actions.append(search)
+        if search.ok:
+            results = search.data.get('results') or []
+            for hit in results[:3]:
+                _add_research(layout, job.job_id, {
+                    'title': hit.get('title') or '',
+                    'url': hit.get('url') or '',
+                    'snippet': hit.get('snippet') or '',
+                }, agent)
+            if results:
+                _add_evidence(layout, job, search.action_id)
+        local = tools.invoke('ledger', 'repo.search', query=(q.split() or ['research'])[0][:40])
         actions.append(local)
         if local.ok:
             _add_evidence(layout, job, local.action_id)
@@ -399,8 +424,16 @@ def step_verify(layout: StateLayout, job: Job) -> dict:
     reviewers = [a for a in ('ledger', 'sentry', 'aria') if a != owner]
     reviewer = reviewers[0]
     card = job_to_card(job, layout)
-    # Ledger corroborates evidence presence
-    has_signal = bool(card.get('research_refs') or card.get('evidence'))
+    # Ledger corroborates real outcome evidence (not before:/after: bookkeeping).
+    try:
+        from expansion.pilot_governance import substantive_evidence_ids
+        substantive = substantive_evidence_ids(card.get('evidence'))
+    except Exception:
+        substantive = list(card.get('evidence') or [])
+    refs = list(card.get('research_refs') or [])
+    has_signal = bool(refs or substantive)
+    if (job.domain or '') in ('research', 'records', 'continuity', 'documentation'):
+        has_signal = bool(refs)
     verdict = 'pass' if has_signal else 'fail'
     note = 'evidence present' if has_signal else 'missing research/execution evidence'
     add_peer_review(job.job_id, reviewer=reviewer, verdict=verdict, note=note, layout=layout)
@@ -437,6 +470,15 @@ def step_verify(layout: StateLayout, job: Job) -> dict:
         follow = ''
         if job.domain in ('infrastructure', 'security'):
             follow = f'Document outcome of {job.job_id}: {job.request[:100]}'
+        # Stamp derived confidence onto the job before close (never leave 0.0 on success).
+        try:
+            store = JobStore(layout)
+            fresh_pre = store.get(job.job_id)
+            if fresh_pre and dod:
+                fresh_pre.confidence = float(dod.get('derived_confidence') or 0.55)
+                store.update(fresh_pre)
+        except Exception:
+            pass
         # Learning before close: execute→verify→peer→outcome→learn→close
         try:
             from expansion.learning import learn_from_autonomy_outcome
@@ -462,9 +504,13 @@ def step_verify(layout: StateLayout, job: Job) -> dict:
         try:
             from expansion.pilot_governance import record_pilot_close
             if dod and dod.get('pilot_scope'):
+                # Only graduate on passed DoD with positive derived confidence.
+                clean = bool(dod.get('passed')) and float(dod.get('derived_confidence') or 0) > 0
                 record_pilot_close(
-                    job_id=job.job_id, clean=True,
-                    reason='dod_passed', layout=layout,
+                    job_id=job.job_id,
+                    clean=clean,
+                    reason='dod_passed' if clean else 'dod_weak_confidence',
+                    layout=layout,
                 )
         except Exception:
             pass
@@ -478,6 +524,7 @@ def step_verify(layout: StateLayout, job: Job) -> dict:
                 actor='aria',
                 target=owner,
                 job_id=job.job_id,
+                confidence=float((dod or {}).get('derived_confidence') or 0.55),
             ))
         except Exception:
             pass

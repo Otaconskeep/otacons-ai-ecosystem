@@ -9,14 +9,23 @@ import urllib.request
 from typing import Optional
 
 USER_AGENT = 'OtaconsKeep-ExpansionAutonomy/0.4 (+local research; policy-gated)'
+# Browser-ish UA for HTML search fallbacks that 403 bare bots.
+HTML_USER_AGENT = (
+    'Mozilla/5.0 (compatible; OtaconsKeep-ExpansionAutonomy/0.4; '
+    '+https://otaconskeep.github.io)'
+)
 MAX_BYTES = 400_000
 TIMEOUT = 20
 
 
-def _open(url: str, *, timeout: int = TIMEOUT) -> tuple[str, str]:
+def _open(url: str, *, timeout: int = TIMEOUT, user_agent: str = USER_AGENT,
+          data: bytes | None = None) -> tuple[str, str]:
     if not url.startswith(('http://', 'https://')):
         raise ValueError('only http(s) URLs allowed')
-    req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, 'Accept': '*/*'})
+    headers = {'User-Agent': user_agent, 'Accept': '*/*'}
+    if data is not None:
+        headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    req = urllib.request.Request(url, data=data, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — intentional tool
         ctype = (resp.headers.get('Content-Type') or '')[:80]
         raw = resp.read(MAX_BYTES + 1)
@@ -29,24 +38,34 @@ def _open(url: str, *, timeout: int = TIMEOUT) -> tuple[str, str]:
         return text, ctype
 
 
-def web_search(query: str) -> tuple[dict, str]:
-    q = (query or '').strip()
-    if not q:
-        raise ValueError('query required')
-    # DuckDuckGo Instant Answer API — no key, suitable for autonomous R&D.
-    url = 'https://api.duckduckgo.com/?' + urllib.parse.urlencode({
-        'q': q, 'format': 'json', 'no_html': 1, 'skip_disambig': 1,
-    })
-    text, _ = _open(url)
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        payload = {}
-    results = []
+def _unwrap_ddg_href(href: str) -> str:
+    """Decode DuckDuckGo redirect wrappers to the destination URL."""
+    h = (href or '').strip()
+    if not h:
+        return ''
+    if 'uddg=' in h:
+        try:
+            parsed = urllib.parse.urlparse(h)
+            qs = urllib.parse.parse_qs(parsed.query)
+            if qs.get('uddg'):
+                return urllib.parse.unquote(qs['uddg'][0])
+        except Exception:
+            pass
+    if h.startswith('//'):
+        return 'https:' + h
+    return h
+
+
+def _from_instant_answer(payload: dict, q: str) -> list[dict]:
+    results: list[dict] = []
     abstract = (payload.get('AbstractText') or '').strip()
     abs_url = (payload.get('AbstractURL') or '').strip()
     if abstract:
-        results.append({'title': payload.get('Heading') or q, 'url': abs_url, 'snippet': abstract[:500]})
+        results.append({
+            'title': payload.get('Heading') or q,
+            'url': abs_url,
+            'snippet': abstract[:500],
+        })
     for topic in (payload.get('RelatedTopics') or [])[:8]:
         if isinstance(topic, dict) and topic.get('Text'):
             results.append({
@@ -62,10 +81,90 @@ def web_search(query: str) -> tuple[dict, str]:
                         'url': sub.get('FirstURL') or '',
                         'snippet': (sub.get('Text') or '')[:400],
                     })
+    return results
+
+
+def _from_html_search(query: str) -> list[dict]:
+    """DuckDuckGo HTML POST — general web results (Instant Answer is encyclopedic-only)."""
+    body = urllib.parse.urlencode({'q': query, 'b': ''}).encode()
+    text, _ = _open(
+        'https://html.duckduckgo.com/html/',
+        user_agent=HTML_USER_AGENT,
+        data=body,
+    )
+    results: list[dict] = []
+    # Pair result title links with nearby snippets when present.
+    for m in re.finditer(
+        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>'
+        r'(?:[\s\S]*?class="result__snippet"[^>]*>(.*?)</(?:a|td|div)>)?',
+        text,
+        re.I,
+    ):
+        url = _unwrap_ddg_href(m.group(1))
+        title = re.sub(r'<[^>]+>', '', m.group(2) or '').strip()
+        snippet = re.sub(r'<[^>]+>', '', m.group(3) or '').strip() if m.lastindex and m.lastindex >= 3 else ''
+        if not title and not url:
+            continue
+        results.append({
+            'title': title[:120] or url,
+            'url': url,
+            'snippet': (snippet or title)[:400],
+        })
+        if len(results) >= 10:
+            break
+    return results
+
+
+def web_search(query: str) -> tuple[dict, str]:
+    q = (query or '').strip()
+    if not q:
+        raise ValueError('query required')
+    results: list[dict] = []
+    source = 'duckduckgo_instant'
+
+    # 1) Instant Answer — good for encyclopedic queries, often empty for commercial/trend.
+    try:
+        url = 'https://api.duckduckgo.com/?' + urllib.parse.urlencode({
+            'q': q, 'format': 'json', 'no_html': 1, 'skip_disambig': 1,
+        })
+        text, _ = _open(url)
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            payload = {}
+        results = _from_instant_answer(payload, q)
+    except Exception:
+        payload = {}
+        results = []
+
+    # 2) HTML general-web fallback when Instant Answer returns nothing.
+    if not results:
+        try:
+            results = _from_html_search(q)
+            source = 'duckduckgo_html'
+        except Exception as exc:
+            return {
+                'query': q,
+                'results': [],
+                'source': source,
+                'ok': False,
+                'error': f'search providers returned 0 hits ({exc})',
+            }, f'search({q!r}) → 0 hits'
+
+    if not results:
+        return {
+            'query': q,
+            'results': [],
+            'source': source,
+            'ok': False,
+            'error': 'no search hits',
+        }, f'search({q!r}) → 0 hits'
+
     return {
         'query': q,
         'results': results[:10],
-        'source': 'duckduckgo_instant',
+        'source': source,
+        'ok': True,
     }, f'search({q!r}) → {len(results)} hits'
 
 
