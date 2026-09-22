@@ -6,6 +6,10 @@
 
 **💬 Join the community: [discord.gg/cZDeqECzX](https://discord.gg/cZDeqECzX)**
 
+
+## Otacon v1.1
+
+**Released:** Keep-parity behavior spine for the public Aria / Vector / Ledger / Muse / Sentry roster — work-first delivery, anti-robotic greeting scrub, layered emotion + learning that gets sharper with use. Soft-update with `OtaconsKeep-Setup.bat`. Tag: [`v1.1`](https://github.com/Otaconskeep/otacons-ai-ecosystem/releases/tag/v1.1).
 > **Otacon Core**
 >
 > This repository is **Otacon Core**: free, full source, self-hosted. Antonio Garcia's private **Otacon Keep** is the larger reference deployment this project is built from; see [Otacon Core, the Keep Blueprint, and Otaconskeep Services](#otacon-core-the-keep-blueprint-and-otaconskeep-services) below for how the pieces relate.

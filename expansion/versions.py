@@ -14,7 +14,7 @@ from expansion.schema import AGENT_SCHEMA_VERSION
 from expansion.state_layout import resolve_layout
 
 # Product package version (Expansion layer). Bump on Expansion releases.
-EXPANSION_VERSION = '0.4.0-rc1'
+EXPANSION_VERSION = '1.1.0'
 
 # Persisted-shape versions — bump when on-disk formats change meaning.
 DOSSIER_SCHEMA_VERSION = 1
