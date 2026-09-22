@@ -209,9 +209,12 @@ class PilotGovernanceCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / 'plan.md'
             path.write_text(
-                '# Research plan\n\n## Answers\n\n### trends?\n'
+                '# Research plan\n\n## Answers\n\n'
+                '### design trends?\n'
                 '- **Trend guide** — https://example.com\n'
-                '  - Vintage washes and bold typography lead 2026.\n',
+                '  - Vintage washes and bold typography lead 2026.\n\n'
+                '### platform fees?\n'
+                '- Etsy listing fee plus transaction cut; Printful quotes base + ship.\n',
                 encoding='utf-8',
             )
             good = definition_of_done(
@@ -225,6 +228,9 @@ class PilotGovernanceCase(unittest.TestCase):
                     'after_metric': 2,
                     'deliverable_path': str(path),
                     'synthesis_ok': True,
+                    'answered_topics': 2,
+                    'topics': 2,
+                    'synthesis_source': 'extractive',
                 },
                 layout=self.layout,
             )
@@ -232,7 +238,9 @@ class PilotGovernanceCase(unittest.TestCase):
 
             dump = Path(td) / 'dump.md'
             dump.write_text(
-                '# Research\n\n## Sourced findings\n\n1. x\n\n'
+                '# Research\n\n## Answers\n\n'
+                '### Research the whole shirt plan including trends fees competitors and lasers\n'
+                '- link dump only\n\n'
                 '## Synthesis notes\n\n'
                 '- Next: turn sourced notes into an actionable plan against the original request.\n',
                 encoding='utf-8',
@@ -248,6 +256,8 @@ class PilotGovernanceCase(unittest.TestCase):
                     'after_metric': 2,
                     'deliverable_path': str(dump),
                     'synthesis_ok': True,
+                    'answered_topics': 1,
+                    'topics': 4,
                 },
                 layout=self.layout,
             )

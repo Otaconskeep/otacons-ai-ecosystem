@@ -110,20 +110,22 @@ def step_research(layout: StateLayout, job: Job) -> dict:
             url = (hit.get('url') or '').strip()
             title = hit.get('title') or ''
             snippet = hit.get('snippet') or ''
-            # One ref per URL: prefer fetched body when useful, else search snippet.
+            body = ''
+            # One ref per URL: keep full fetch body for synthesis; snippet for search hit.
             if url:
                 fetched = tools.invoke(agent, 'web.fetch', url=url)
                 actions.append(fetched.action_id)
                 if fetched.ok:
-                    body = (fetched.data.get('snippet') or '')[:800]
+                    body = (fetched.data.get('snippet') or '')[:8000]
                     from expansion.research_deliverable import is_chrome_snippet
-                    if body and not is_chrome_snippet(body):
-                        snippet = body
+                    if body and not is_chrome_snippet(body[:400]):
+                        snippet = body[:800]
                         title = fetched.data.get('title_guess') or title or url
             _add_research(layout, job.job_id, {
                 'title': title or url or '',
                 'url': url,
                 'snippet': snippet,
+                'body': body,
             }, agent)
     # Only count a successful search (with hits) as evidence — 0-hit must not
     # inflate the evidence bag toward a fake close.
@@ -386,18 +388,20 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
                     url = (hit.get('url') or '').strip()
                     title = hit.get('title') or ''
                     snippet = hit.get('snippet') or ''
+                    body = ''
                     if url:
                         fetched = tools.invoke('ledger', 'web.fetch', url=url)
                         actions.append(fetched)
                         if fetched.ok:
-                            body = (fetched.data.get('snippet') or '')[:800]
-                            if body and not is_chrome_snippet(body):
-                                snippet = body
+                            body = (fetched.data.get('snippet') or '')[:8000]
+                            if body and not is_chrome_snippet(body[:400]):
+                                snippet = body[:800]
                                 title = fetched.data.get('title_guess') or title or url
                     _add_research(layout, job.job_id, {
                         'title': title or url or '',
                         'url': url,
                         'snippet': snippet,
+                        'body': body,
                     }, agent)
                 if results:
                     _add_evidence(layout, job, search.action_id)
@@ -492,6 +496,9 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
                 if synth_meta:
                     ev['synthesis_ok'] = bool(synth_meta.get('synthesis_ok'))
                     ev['unique_sources'] = synth_meta.get('unique_sources')
+                    ev['answered_topics'] = synth_meta.get('answered_topics')
+                    ev['topics'] = synth_meta.get('topics')
+                    ev['synthesis_source'] = synth_meta.get('synthesis_source')
                     if synth_meta.get('desktop_path'):
                         ev['desktop_path'] = synth_meta['desktop_path']
                 item['implementation_evidence'] = ev

@@ -1,4 +1,4 @@
-"""Research deliverable synthesis — dedupe sources, answer the request, optional desktop export."""
+"""Research deliverable synthesis — topics, chrome filter, body extract, optional LLM."""
 from __future__ import annotations
 
 import os
@@ -10,14 +10,47 @@ from urllib.parse import urlparse
 
 from expansion.state_layout import StateLayout
 
-# Nav / chrome tokens that dominate bad fetch snippets.
+# Explicit chrome / nav tokens (substring match on lowered text).
 _CHROME_TOKENS = (
     'login', 'sign up', 'sign in', 'cart', 'checkout', 'cookie', 'privacy policy',
     'terms of service', 'upgrade to pro', 'mockups', 'fee calculator', 'royalty',
     'add to cart', 'wishlist', 'newsletter', 'subscribe', 'accept cookies',
+    'skip to content', 'how it works', 'resource center', 'start selling',
+    'catalog pricing', 'print on demand 101', 'dtf database', 'suppliers printers',
+    'custom t-shirts', 'custom hoodies', 'home suppliers', 'learn blog about',
 )
-_QUESTION_SPLIT = re.compile(r'[?;\n]+|\s+[—–-]\s+|\s{2,}')
+_NAV_PHRASE = re.compile(
+    r'\b(?:skip to content|how it works|resource center|start selling|'
+    r'catalog pricing|print on demand|custom t-shirts|custom hoodies|'
+    r'solutions|pricing|blog|about us|contact us)\b',
+    re.I,
+)
+_SENTENCE_SPLIT = re.compile(r'(?<=[.!?])\s+|\n+')
 _WORD = re.compile(r"[a-z0-9][a-z0-9'-]{1,}", re.I)
+_NUMBERED = re.compile(r'(?:^|\n)\s*(?:\d+[.)]|[-*•])\s+', re.M)
+_CONJ_SPLIT = re.compile(
+    r'\s*(?:,\s*and\s+|;\s+|\s+—\s+|\s+–\s+|\band also\b|\bplus\b|\bas well as\b)\s+',
+    re.I,
+)
+
+# Domain seeds: if the request mentions these, force a topic even without '?'.
+_TOPIC_SEEDS = (
+    ('trend', 'design trends'),
+    ('fee', 'platform fees and costs'),
+    ('pricing', 'platform fees and costs'),
+    ('cost', 'platform fees and costs'),
+    ('competitor', 'competitor strategy'),
+    ('competition', 'competitor strategy'),
+    ('etsy', 'platform fees and costs'),
+    ('printful', 'platform fees and costs'),
+    ('printify', 'platform fees and costs'),
+    ('laser', 'laser engraver / 3D printer integration'),
+    ('3d print', 'laser engraver / 3D printer integration'),
+    ('engraver', 'laser engraver / 3D printer integration'),
+    ('pod', 'print-on-demand platforms'),
+    ('print-on-demand', 'print-on-demand platforms'),
+    ('print on demand', 'print-on-demand platforms'),
+)
 
 
 def normalize_url(url: str) -> str:
@@ -34,19 +67,37 @@ def normalize_url(url: str) -> str:
 
 
 def is_chrome_snippet(text: str) -> bool:
-    """True when a snippet looks like site chrome / nav, not substantive content."""
+    """True when text looks like site chrome / nav, not substantive content."""
     t = (text or '').strip()
     if len(t) < 40:
         return True
     low = t.lower()
-    hits = sum(1 for tok in _CHROME_TOKENS if tok in low)
-    # Dense slash-separated menu crumbs
-    if low.count('/') >= 4 and hits >= 1:
+    if 'skip to content' in low:
         return True
-    if hits >= 3:
+    hits = sum(1 for tok in _CHROME_TOKENS if tok in low)
+    nav_hits = len(_NAV_PHRASE.findall(t))
+    # Dense slash-separated menu crumbs
+    if low.count('/') >= 3 and (hits >= 1 or nav_hits >= 2):
+        return True
+    if hits >= 3 or nav_hits >= 3:
         return True
     words = _WORD.findall(low)
-    if words and hits >= 2 and len(words) < 25:
+    if not words:
+        return True
+    # Repeated short nav tokens ("How it works How it works")
+    for phrase in ('how it works', 'custom t-shirts', 'start selling', 'resource center'):
+        if low.count(phrase) >= 2:
+            return True
+    # High title-case / short-token density without sentence punctuation → menu
+    caps = sum(1 for w in t.split() if w[:1].isupper() and len(w) > 1)
+    periods = t.count('.') + t.count('?')
+    if len(words) >= 12 and caps >= max(8, int(len(words) * 0.55)) and periods <= 1:
+        return True
+    if words and hits >= 2 and len(words) < 30 and periods == 0:
+        return True
+    # Very low unique-word ratio (nav spam)
+    uniq = len(set(words))
+    if len(words) >= 20 and uniq / len(words) < 0.45:
         return True
     return False
 
@@ -55,11 +106,75 @@ def _snippet_score(text: str) -> int:
     t = (text or '').strip()
     if not t or is_chrome_snippet(t):
         return 0
-    return min(len(t), 800)
+    return min(len(t), 2000)
+
+
+_STOP = frozenset({
+    'a', 'an', 'the', 'and', 'or', 'to', 'of', 'in', 'on', 'for', 'with', 'what',
+    'about', 'how', 'do', 'does', 'is', 'are', 'be', 'this', 'that', 'from', 'into',
+    'your', 'our', 'their', 'use', 'using', 'also', 'vs', 'versus',
+})
+
+
+def _stems(words: set[str]) -> set[str]:
+    out = set(words)
+    for w in words:
+        if w.endswith('s') and len(w) > 3:
+            out.add(w[:-1])
+        if w.endswith('ing') and len(w) > 5:
+            out.add(w[:-3])
+    return out
+
+
+def _topic_words(topic: str) -> set[str]:
+    raw = set(_WORD.findall((topic or '').lower())) - _STOP
+    return _stems(raw)
+
+
+def extract_passages(body: str, topic: str, *, limit: int = 3, max_chars: int = 420) -> list[str]:
+    """Pick sentences from a full page body that overlap the topic and aren't chrome."""
+    text = (body or '').strip()
+    if not text:
+        return []
+    head = text[:500]
+    if is_chrome_snippet(head) and len(text) > 800:
+        text = text[400:]
+    sents = [s.strip() for s in _SENTENCE_SPLIT.split(text) if s.strip()]
+    tw = _topic_words(topic)
+    ranked: list[tuple[float, str]] = []
+    for s in sents:
+        if len(s) < 40 or is_chrome_snippet(s):
+            continue
+        sw = _stems(set(_WORD.findall(s.lower())) - _STOP)
+        if not sw:
+            continue
+        overlap = len(tw & sw) / max(len(tw), 1) if tw else 0.0
+        score = overlap * 4.0 + min(len(s), 400) / 400.0
+        if tw and overlap <= 0:
+            continue
+        ranked.append((score, s[:max_chars]))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    out: list[str] = []
+    seen = set()
+    for _, s in ranked:
+        key = s[:80].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+        if len(out) >= limit:
+            break
+    if not out:
+        for s in sents:
+            if len(s) >= 60 and not is_chrome_snippet(s):
+                out.append(s[:max_chars])
+                if len(out) >= limit:
+                    break
+    return out
 
 
 def dedupe_research_refs(refs: list[dict]) -> list[dict]:
-    """One entry per URL — keep the richest non-chrome snippet."""
+    """One entry per URL — keep richest non-chrome body/snippet."""
     best: dict[str, dict] = {}
     orphan_i = 0
     for raw in refs or []:
@@ -69,12 +184,16 @@ def dedupe_research_refs(refs: list[dict]) -> list[dict]:
         key = normalize_url(url) or f'_orphan_{orphan_i}'
         if key.startswith('_orphan_'):
             orphan_i += 1
+        body = (raw.get('body') or '').strip()
         snip = (raw.get('snippet') or '').strip()
+        # Prefer longer stored body for scoring
+        content = body if len(body) > len(snip) else snip
         title = (raw.get('title') or '').strip()
         cand = {
             'title': title[:160] or url or 'Untitled',
             'url': url,
             'snippet': snip[:800],
+            'body': body[:12000],
             'at': raw.get('at'),
             'by': raw.get('by'),
         }
@@ -82,15 +201,23 @@ def dedupe_research_refs(refs: list[dict]) -> list[dict]:
         if prev is None:
             best[key] = cand
             continue
-        if _snippet_score(cand['snippet']) > _snippet_score(prev.get('snippet') or ''):
+        prev_content = (prev.get('body') or prev.get('snippet') or '')
+        if _snippet_score(content) > _snippet_score(prev_content):
             if len(cand['title']) < 12 and len(prev.get('title') or '') >= 12:
                 cand['title'] = prev['title']
+            # Keep whichever body is longer
+            if len(prev.get('body') or '') > len(cand.get('body') or ''):
+                cand['body'] = prev['body']
             best[key] = cand
-        elif not prev.get('title') and cand['title']:
-            prev['title'] = cand['title']
+        else:
+            if len(cand.get('body') or '') > len(prev.get('body') or ''):
+                prev['body'] = cand['body']
+            if not prev.get('title') and cand['title']:
+                prev['title'] = cand['title']
     out = []
     for ref in best.values():
-        if is_chrome_snippet(ref.get('snippet') or '') and not (ref.get('title') or '').strip():
+        content = ref.get('body') or ref.get('snippet') or ''
+        if is_chrome_snippet(content) and not (ref.get('title') or '').strip():
             continue
         if is_chrome_snippet(ref.get('snippet') or ''):
             ref = dict(ref)
@@ -99,29 +226,63 @@ def dedupe_research_refs(refs: list[dict]) -> list[dict]:
     return out
 
 
-def extract_request_topics(request: str, *, limit: int = 6) -> list[str]:
-    """Split the operator request into answerable topic lines."""
+def extract_request_topics(request: str, *, limit: int = 8) -> list[str]:
+    """Split a multi-part operator ask into distinct answerable topics."""
     text = (request or '').strip()
     if not text:
         return []
-    qmarks = [p.strip() for p in re.split(r'\?\s*', text) if p.strip()]
     topics: list[str] = []
-    if text.count('?') >= 1 and len(qmarks) >= 1:
-        for part in qmarks:
+
+    # 1) Explicit questions
+    if '?' in text:
+        parts = [p.strip() for p in re.split(r'\?\s*', text) if p.strip()]
+        for part in parts:
             part = part.strip(' .;,-')
             if len(part) >= 8:
                 topics.append(part if part.endswith('?') else part + '?')
-    if not topics:
-        for part in _QUESTION_SPLIT.split(text):
+
+    # 2) Numbered / bulleted lines
+    if _NUMBERED.search(text):
+        chunks = _NUMBERED.split(text)
+        for chunk in chunks:
+            chunk = chunk.strip(' .;,-')
+            if len(chunk) >= 12:
+                topics.append(chunk[:240])
+
+    # 3) Conjunction / semicolon splits for long asks without '?'
+    if len(topics) <= 1 and len(text) >= 80:
+        for part in _CONJ_SPLIT.split(text):
             part = part.strip(' .;,-')
-            if len(part) >= 12:
-                topics.append(part)
+            if len(part) >= 20:
+                topics.append(part[:240])
+
+    # 4) Domain seeds — only when not already covered by a question/clause topic
+    low = text.lower()
+    if len(topics) < 2 or len(text) >= 60:
+        for needle, label in _TOPIC_SEEDS:
+            if needle not in low:
+                continue
+            label_words = set(_WORD.findall(label.lower()))
+            covered = any(
+                len(label_words & set(_WORD.findall(t.lower()))) >= max(1, len(label_words) // 2)
+                for t in topics
+            )
+            if not covered and label not in topics:
+                topics.append(label)
+
     if not topics:
         topics = [text[:200]]
+
+    # If we still have a single mega-topic, force-split on commas for parallel nouns
+    if len(topics) == 1 and len(topics[0]) > 100 and ',' in topics[0]:
+        forced = [p.strip(' .;,-') for p in topics[0].split(',') if len(p.strip()) >= 16]
+        if len(forced) >= 2:
+            topics = forced
+
     seen = set()
     uniq = []
     for t in topics:
-        key = t.lower()[:80]
+        key = re.sub(r'\s+', ' ', t.lower())[:90]
         if key in seen:
             continue
         seen.add(key)
@@ -132,11 +293,11 @@ def extract_request_topics(request: str, *, limit: int = 6) -> list[str]:
 
 
 def _overlap(topic: str, ref: dict) -> float:
-    tw = set(_WORD.findall((topic or '').lower()))
+    tw = _topic_words(topic)
     if not tw:
         return 0.0
-    blob = f"{ref.get('title') or ''} {ref.get('snippet') or ''}".lower()
-    rw = set(_WORD.findall(blob))
+    blob = f"{ref.get('title') or ''} {ref.get('snippet') or ''} {(ref.get('body') or '')[:3000]}".lower()
+    rw = _stems(set(_WORD.findall(blob)) - _STOP)
     if not rw:
         return 0.0
     return len(tw & rw) / max(len(tw), 1)
@@ -145,12 +306,16 @@ def _overlap(topic: str, ref: dict) -> float:
 def pick_refs_for_topic(topic: str, refs: list[dict], *, limit: int = 2) -> list[dict]:
     ranked = sorted(
         refs,
-        key=lambda r: (_overlap(topic, r), _snippet_score(r.get('snippet') or '')),
+        key=lambda r: (
+            _overlap(topic, r),
+            _snippet_score(r.get('body') or r.get('snippet') or ''),
+        ),
         reverse=True,
     )
     out = []
     for r in ranked:
-        if _overlap(topic, r) <= 0 and _snippet_score(r.get('snippet') or '') < 60:
+        content = r.get('body') or r.get('snippet') or ''
+        if _overlap(topic, r) <= 0 and _snippet_score(content) < 60:
             continue
         out.append(r)
         if len(out) >= limit:
@@ -224,6 +389,69 @@ def maybe_export_to_desktop(
         return None
 
 
+def _llm_synthesize(
+    request: str,
+    topics: list[str],
+    refs: list[dict],
+) -> Optional[str]:
+    """Ask local Ollama to answer each topic from fetched bodies. None if unavailable."""
+    if os.environ.get('OTACON_RESEARCH_LLM', '1').strip().lower() in ('0', 'false', 'no', 'off'):
+        return None
+    # Need at least one body worth reading
+    bodies = []
+    for r in refs[:5]:
+        body = (r.get('body') or r.get('snippet') or '').strip()
+        if len(body) < 80 or is_chrome_snippet(body[:200]):
+            continue
+        bodies.append({
+            'title': r.get('title') or '',
+            'url': r.get('url') or '',
+            'text': body[:3500],
+        })
+    if not bodies or not topics:
+        return None
+    try:
+        from core.providers import OllamaProvider
+    except Exception:
+        return None
+    endpoint = (
+        os.environ.get('OTACON_LLM_ENDPOINT')
+        or os.environ.get('OLLAMA_URL')
+        or 'http://127.0.0.1:11434'
+    )
+    requested = os.environ.get('OTACON_LLM_MODEL') or 'qwen2.5:7b'
+    try:
+        prov = OllamaProvider(endpoint, timeout=int(os.environ.get('OTACON_RESEARCH_LLM_TIMEOUT', '90')))
+        model, _note = prov.resolve_model(requested)
+        topic_lines = '\n'.join(f'{i}. {t}' for i, t in enumerate(topics, 1))
+        src_blocks = []
+        for i, b in enumerate(bodies, 1):
+            src_blocks.append(
+                f"SOURCE {i}: {b['title']}\nURL: {b['url']}\nEXCERPT:\n{b['text']}\n"
+            )
+        prompt = (
+            'You are Ledger, a research analyst. Answer ONLY from the sources below.\n'
+            'For each numbered topic, write 2–4 factual sentences with concrete details '
+            '(numbers, platform names, mechanisms). If sources lack an answer, say so explicitly.\n'
+            'Do NOT invent fees or trends. Do NOT paste navigation menus.\n'
+            'Output markdown with one ### heading per topic, then bullets.\n\n'
+            f'TOPICS:\n{topic_lines}\n\n'
+            f'SOURCES:\n{"".join(src_blocks)}\n'
+            'BEGIN ANSWERS:\n'
+        )
+        text = prov.generate(
+            model, prompt,
+            options={'temperature': 0.2, 'num_predict': 1400},
+        )
+        if not text or len(text.strip()) < 80:
+            return None
+        if is_chrome_snippet(text[:300]):
+            return None
+        return text.strip()
+    except Exception:
+        return None
+
+
 def build_research_markdown(
     *,
     request: str,
@@ -231,41 +459,57 @@ def build_research_markdown(
     agent: str,
     refs: list[dict],
 ) -> tuple[str, dict[str, Any]]:
-    """Return (markdown, meta) with answers mapped to the request topics."""
+    """Return (markdown, meta) with per-topic answers from bodies and/or LLM."""
     cleaned = dedupe_research_refs(refs)
     topics = extract_request_topics(request)
+    llm_block = _llm_synthesize(request, topics, cleaned)
+
     lines = [
         f'# Research plan: {(request or "")[:200]}',
         '',
-        f'_Job `{job_id}` · agent `{agent}` · {len(cleaned)} unique source(s)_',
+        f'_Job `{job_id}` · agent `{agent}` · {len(cleaned)} unique source(s) · '
+        f'{len(topics)} topic(s)_',
         '',
         '## Answers',
         '',
     ]
-    answered = 0
-    for topic in topics:
-        picks = pick_refs_for_topic(topic, cleaned, limit=2)
-        lines.append(f'### {topic}')
-        if not picks:
-            lines.append('- No sourced finding matched this topic yet.')
-            lines.append('')
-            continue
-        for ref in picks:
-            title = (ref.get('title') or 'Source').strip()
-            url = (ref.get('url') or '').strip()
-            snip = (ref.get('snippet') or '').strip()
-            if is_chrome_snippet(snip):
-                snip = ''
-            bullet = f'- **{title}**'
-            if url:
-                bullet += f' — {url}'
-            lines.append(bullet)
-            if snip:
-                lines.append(f'  - {snip[:420]}')
-                answered += 1
-            elif url:
-                lines.append('  - (title/URL retained; page body was site chrome)')
+
+    answered_topics = 0
+    synthesis_source = 'none'
+
+    if llm_block and '###' in llm_block:
+        lines.append(llm_block.rstrip())
         lines.append('')
+        answered_topics = max(1, llm_block.count('###'))
+        synthesis_source = 'llm'
+    else:
+        synthesis_source = 'extractive'
+        for topic in topics:
+            picks = pick_refs_for_topic(topic, cleaned, limit=2)
+            lines.append(f'### {topic}')
+            topic_hit = False
+            for ref in picks:
+                body = (ref.get('body') or '').strip()
+                snip = (ref.get('snippet') or '').strip()
+                passages = extract_passages(body or snip, topic, limit=2)
+                title = (ref.get('title') or 'Source').strip()
+                url = (ref.get('url') or '').strip()
+                if not passages:
+                    continue
+                topic_hit = True
+                for p in passages:
+                    bullet = f'- {p}'
+                    if url:
+                        bullet += f'  \n  _(source: {title} — {url})_'
+                    lines.append(bullet)
+            if not topic_hit:
+                lines.append(
+                    '- No sourced passage answered this topic yet '
+                    '(fetched pages lacked overlapping non-chrome content).'
+                )
+            else:
+                answered_topics += 1
+            lines.append('')
 
     lines.append('## Sources')
     lines.append('')
@@ -279,20 +523,34 @@ def build_research_markdown(
     lines.append('')
     lines.append('## Caveats')
     lines.append('')
+    if synthesis_source == 'llm':
+        lines.append(
+            '- Answers were drafted by the local research model from fetched page bodies; '
+            'verify fees and policies on the live vendor pages before spending money.'
+        )
+    else:
+        lines.append(
+            '- Answers are extractive passages from fetched page bodies (not nav chrome). '
+            'Verify fees and policies on the live vendor pages before spending money.'
+        )
     lines.append(
-        '- Findings are extracted from policy-gated web.search / web.fetch snippets; '
-        'verify fees and policies on the live vendor pages before spending money.'
-    )
-    lines.append(
-        '- Prefer the Answers section over raw page chrome; navigation menus are filtered out.'
+        f'- Topics covered: {answered_topics}/{len(topics)} '
+        f'(synthesis={synthesis_source}).'
     )
     lines.append('')
+
+    # Multi-topic asks must cover more than a catch-all single bucket.
+    need = 1 if len(topics) <= 1 else max(2, (len(topics) + 1) // 2)
+    synthesis_ok = bool(cleaned) and answered_topics >= need and '## Answers' in '\n'.join(lines)
 
     meta = {
         'unique_sources': len(cleaned),
         'topics': len(topics),
-        'answered_bullets': answered,
-        'synthesis_ok': bool(cleaned) and answered > 0,
+        'answered_topics': answered_topics,
+        'answered_bullets': answered_topics,  # back-compat for older callers
+        'synthesis_ok': synthesis_ok,
+        'synthesis_source': synthesis_source,
+        'topics_list': topics,
     }
     return '\n'.join(lines), meta
 

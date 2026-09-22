@@ -488,12 +488,21 @@ def definition_of_done(
         # Link-dump / chrome-only files must not pass (Keep: research ≠ shipped).
         if ev.get('synthesis_ok') is False:
             has_deliverable = False
+        # Multi-topic research must cover more than one catch-all heading.
+        answered = int(ev.get('answered_topics') or 0)
+        topic_n = int(ev.get('topics') or 0)
+        if topic_n >= 2 and answered < max(2, (topic_n + 1) // 2):
+            has_deliverable = False
         if has_deliverable and ev.get('deliverable_path'):
             try:
                 body = Path(str(ev['deliverable_path'])).read_text(encoding='utf-8')
                 if 'Next: turn sourced notes into an actionable plan' in body:
                     has_deliverable = False
                 if '## Answers' not in body:
+                    has_deliverable = False
+                # Catch-all: a single ### that is basically the whole request
+                headings = re.findall(r'^###\s+(.+)$', body, re.M)
+                if topic_n >= 2 and len(headings) < 2:
                     has_deliverable = False
             except Exception:
                 pass
