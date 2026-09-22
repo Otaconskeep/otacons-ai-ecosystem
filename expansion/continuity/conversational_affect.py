@@ -25,11 +25,12 @@ _PRAISE = re.compile(
     re.I,
 )
 _CRITIQUE = re.compile(
-    r'\b(?:that(?:\'s| is) wrong|incorrect|fix (?:that|this)|you messed up|'
-    r'not what i (?:said|meant)|do better|try again|missed the point|'
+    r'\b(?:that(?:\'s| is) wrong|incorrect|fix (?:that|this|it)|you messed up|'
+    r'messed this up|not what i (?:said|meant)|do better|try again|missed the point|'
     r'that failed|this failed|not good enough|did(?:n\'t| not) work|'
     r'you missed|still broken|not working|solution did(?:n\'t| not)|'
-    r'that break|why did that break|missed the constraint|missed it)\b',
+    r'that break|why did that break|missed the constraint|missed it|regression|'
+    r'please fix)\b',
     re.I,
 )
 _APOLOGY = re.compile(

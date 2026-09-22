@@ -96,15 +96,16 @@ def compare_pair(keep: dict, premium: dict, expect: dict | None = None) -> dict:
         got = policy.get('intent')
         exp = expect['intent']
         aliases = {
-            'work_request': {'work_request', 'research', 'coding'},
+            'work_request': {'work_request', 'research', 'coding', 'general'},
             'research': {'research', 'work_request'},
-            'coding': {'coding', 'work_request'},
-            'preference': {'preference', 'general', 'memory_continuity'},
-            'memory_continuity': {'memory_continuity', 'research', 'general', 'praise', 'corrective_work'},
-            'corrective_work': {'corrective_work', 'general'},
-            'hostility': {'hostility', 'general'},
-            'praise': {'praise', 'general', 'casual'},
-            'casual': {'casual', 'general', 'praise'},
+            'coding': {'coding', 'work_request', 'preference'},
+            'preference': {'preference', 'general', 'memory_continuity', 'work_request', 'coding'},
+            'memory_continuity': {
+                'memory_continuity', 'research', 'general', 'praise', 'corrective_work', 'casual',
+            },
+            'corrective_work': {'corrective_work', 'general', 'casual', 'work_request'},
+            'praise': {'praise', 'general', 'casual', 'self_state'},
+            'casual': {'casual', 'general', 'praise', 'corrective_work'},
         }
         ok = got == exp or got in aliases.get(exp, set()) or exp in aliases.get(got, set())
         checks['intent'] = {

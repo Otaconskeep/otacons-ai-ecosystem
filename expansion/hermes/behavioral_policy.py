@@ -131,15 +131,20 @@ def classify_behavioral_intent(user_message: str) -> str:
     if any(p in msg for p in (
         "didn't work", 'did not work', 'failed', 'you missed', 'wrong',
         'broken', 'not working', 'that solution', 'still broken',
-        'you messed up', 'not good enough', 'try again', 'do better',
-        'incorrect', 'fix that', 'fix this', 'missed the',
-        'not what i', 'why did that break', 'missed it',
+        'you messed up', 'messed this up', 'not good enough', 'try again', 'do better',
+        'incorrect', 'fix that', 'fix this', 'fix it', 'missed the',
+        'not what i', 'why did that break', 'missed it', 'regression',
+        'please fix', 'diagnose it',
     )):
         return 'corrective_work'
     if any(p in msg for p in (
-        'i prefer', 'always be', 'never dump', 'be brief', 'be detailed', 'keep it short',
+        'i prefer', 'always be', 'always show', 'always include', 'never dump',
+        'never invent', 'be brief', 'be detailed', 'keep it short',
+        'preference:',
     )):
         return 'preference'
+    if msg.startswith('work mode:') or 'work mode:' in msg:
+        return 'work_request'
     if any(p in msg for p in (
         'research', 'look up', 'investigate', 'find out', 'compare',
     )):

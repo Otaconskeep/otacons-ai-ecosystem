@@ -32,6 +32,10 @@ LAYERS = (
 def record_ok(layer: str, *, detail: str = '') -> None:
     layer = (layer or 'unknown').strip()
     with _lock:
+        prev = _layer_status.get(layer) or {}
+        # Do not erase a failure recorded in the last 2s (failure-injection visibility)
+        if prev.get('ok') is False and (time.time() - float(prev.get('ts') or 0)) < 2.0:
+            return
         _layer_status[layer] = {
             'ok': True,
             'detail': detail,

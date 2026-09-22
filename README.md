@@ -10,6 +10,10 @@
 
 
 
+
+## Otacon v1.3.1
+
+System-level capability-parity acceptance suite against isolated real Keep engines. Run: `KEEP_REFERENCE_ROOT=… python3 scripts/acceptance_gate.py`. Evidence: `tests/parity/out/acceptance_report.json`.
 ## Otacon v1.3.0
 
 Behavioral Keep-parity Premium: Hermes pre-LLM policy pipeline, Formula 4/5/7/8/9, preferences, continuity persistence, and a 100+ scenario differential harness vs isolated Keep formula engines. Starts empty — Chris/Josh grow their own Keep. No private Keep data. Tag: [`v1.3.0`](https://github.com/Otaconskeep/otacons-ai-ecosystem/releases/tag/v1.3.0).

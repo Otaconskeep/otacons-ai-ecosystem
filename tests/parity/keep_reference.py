@@ -59,8 +59,9 @@ def _classify_bucket(message: str) -> str:
         return 'hostility'
     if any(p in m for p in (
         "didn't work", 'did not work', 'you missed', 'wrong', 'failed', 'not working',
-        'messed up', 'not good enough', 'try again', 'do better', 'incorrect',
-        'not what i', 'why did that break', 'still broken', 'missed the',
+        'messed up', 'messed this up', 'not good enough', 'try again', 'do better', 'incorrect',
+        'not what i', 'why did that break', 'still broken', 'missed the', 'fix it',
+        'please fix', 'regression',
     )):
         return 'critique'
     if any(p in m for p in ("i'm sorry", 'i am sorry', 'apologize', 'my bad')):

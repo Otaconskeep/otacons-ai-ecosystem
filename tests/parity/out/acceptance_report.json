@@ -1,0 +1,1357 @@
+{
+  "generated_at": 1790089882.2411976,
+  "elapsed_sec": 65.81,
+  "gates": {
+    "architecture_coverage": 1.0,
+    "differential_scenarios": 0.95,
+    "relationship_parity": 0.95,
+    "memory_ranking_parity": 0.95,
+    "persistence": 1.0,
+    "restart_reboot_recovery": 1.0,
+    "fresh_install_isolation": 1.0,
+    "privacy_leaks": 0,
+    "silent_failures_critical": 0,
+    "double_state_mutation": 0,
+    "soak_100": 1.0
+  },
+  "gate_pass": true,
+  "architecture": {
+    "pass": true,
+    "missing_modules": [],
+    "live_path_hooks": {
+      "before_reply_calls_hermes_pipeline": true,
+      "agent_service_post_hermes": true,
+      "runtime_injects_policy": true,
+      "runtime_f5": true,
+      "runtime_f9": true,
+      "server_calls_before_reply": true,
+      "server_assemble_context": true
+    },
+    "coverage": 1.0
+  },
+  "differential": {
+    "scenario_count": 267,
+    "scenarios_passed": 264,
+    "scenario_pass_rate": 0.9887640449438202,
+    "state_transition_parity": 0.99812734082397,
+    "relationship_transition_parity": 1.0,
+    "formula9_agreement": 1.0
+  },
+  "differential_samples": [
+    {
+      "id": "S001",
+      "message": "That solution didn't work. You missed the obvious problem.",
+      "keep": {
+        "intent_bucket": "critique",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0
+        },
+        "emotion_after": {
+          "mood": "neutral",
+          "happiness": 0.542,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": -0.03
+        },
+        "emotion_delta": {
+          "happiness": -0.008,
+          "confidence": 0.0,
+          "energy": 0.0,
+          "residue": -0.03
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5
+        },
+        "relationship_after": {
+          "ally": 0.506,
+          "colleague": 0.51
+        },
+        "relationship_delta": {
+          "ally": 0.006,
+          "colleague": 0.01
+        },
+        "mood": "neutral",
+        "residue": -0.03,
+        "state_event": "user_mild_criticism",
+        "formula9_top_ids": [
+          "m1",
+          "m3",
+          "m4"
+        ],
+        "formula9_top_scores": [
+          0.35,
+          0.26,
+          0.24
+        ]
+      },
+      "premium": {
+        "intent": "corrective_work",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0,
+          "formula8_score": 0.5025
+        },
+        "emotion_after": {
+          "mood": "neutral",
+          "happiness": 0.542,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": -0.03,
+          "formula8_score": 0.4963
+        },
+        "emotion_delta": {
+          "happiness": -0.008,
+          "confidence": 0.0,
+          "energy": 0.0,
+          "residue": -0.03
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_after": {
+          "ally": 0.506,
+          "colleague": 0.504,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_delta": {
+          "ally": 0.006,
+          "colleague": 0.004
+        },
+        "mood": "neutral",
+        "residue": -0.03,
+        "hermes_policy": {
+          "intent": "corrective_work",
+          "tone": "warm_direct",
+          "verbosity": "medium",
+          "relationship_expression": "neutral",
+          "emotional_expression": "focused_corrective",
+          "work_mode": true,
+          "must_acknowledge_failure": true,
+          "must_offer_action": true,
+          "must_accept_praise_briefly": false,
+          "must_stay_engaged": true,
+          "must_avoid_robotic_greeting": true,
+          "must_not_dump_telemetry": true,
+          "forbidden_patterns": [
+            "generic_greeting",
+            "how_may_i_assist",
+            "as_an_ai",
+            "happy_to_help",
+            "fake_empathy",
+            "telemetry_dump",
+            "greetings_operator",
+            "defensive_blame_user"
+          ],
+          "required_moves": [
+            "name_the_gap",
+            "propose_next_step",
+            "acknowledge_miss"
+          ],
+          "state_event": "user_mild_criticism",
+          "affect_events": [
+            "user_critique"
+          ],
+          "formula9_query": "That solution didn't work. You missed the obvious problem.",
+          "notes": ""
+        },
+        "work_mode": true,
+        "state_event": "user_mild_criticism",
+        "formula9_top_ids": [
+          "m1",
+          "m3",
+          "m4"
+        ],
+        "formula9_top_scores": [
+          0.35,
+          0.26,
+          0.24
+        ],
+        "state_committed": true
+      },
+      "pass": true,
+      "state_parity": 1.0,
+      "relationship_parity": 1.0,
+      "formula9_score": 1.0
+    },
+    {
+      "id": "S002",
+      "message": "Amazing work on PROJECT_ALPHA. Great job.",
+      "keep": {
+        "intent_bucket": "praise",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0
+        },
+        "emotion_after": {
+          "mood": "focused",
+          "happiness": 0.605,
+          "confidence": 0.575,
+          "energy": 0.612,
+          "residue": 0.16
+        },
+        "emotion_delta": {
+          "happiness": 0.055,
+          "confidence": 0.025,
+          "energy": 0.012,
+          "residue": 0.16
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5
+        },
+        "relationship_after": {
+          "ally": 0.512,
+          "colleague": 0.5179
+        },
+        "relationship_delta": {
+          "ally": 0.012,
+          "colleague": 0.0179
+        },
+        "mood": "focused",
+        "residue": 0.16,
+        "state_event": "user_praise",
+        "formula9_top_ids": [
+          "m4",
+          "m1",
+          "m3"
+        ],
+        "formula9_top_scores": [
+          0.74,
+          0.35,
+          0.26
+        ]
+      },
+      "premium": {
+        "intent": "praise",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0,
+          "formula8_score": 0.5025
+        },
+        "emotion_after": {
+          "mood": "focused",
+          "happiness": 0.605,
+          "confidence": 0.575,
+          "energy": 0.612,
+          "residue": 0.16,
+          "formula8_score": 0.5511
+        },
+        "emotion_delta": {
+          "happiness": 0.055,
+          "confidence": 0.025,
+          "energy": 0.012,
+          "residue": 0.16
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_after": {
+          "ally": 0.512,
+          "colleague": 0.506,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_delta": {
+          "ally": 0.012,
+          "colleague": 0.006
+        },
+        "mood": "focused",
+        "residue": 0.16,
+        "hermes_policy": {
+          "intent": "praise",
+          "tone": "warm_brief",
+          "verbosity": "short",
+          "relationship_expression": "neutral",
+          "emotional_expression": "warm_steady",
+          "work_mode": false,
+          "must_acknowledge_failure": false,
+          "must_offer_action": false,
+          "must_accept_praise_briefly": true,
+          "must_stay_engaged": true,
+          "must_avoid_robotic_greeting": true,
+          "must_not_dump_telemetry": true,
+          "forbidden_patterns": [
+            "generic_greeting",
+            "how_may_i_assist",
+            "as_an_ai",
+            "happy_to_help",
+            "fake_empathy",
+            "telemetry_dump",
+            "greetings_operator",
+            "duty_speech"
+          ],
+          "required_moves": [
+            "accept_briefly"
+          ],
+          "state_event": "user_praise",
+          "affect_events": [
+            "user_praise"
+          ],
+          "formula9_query": "Amazing work on PROJECT_ALPHA. Great job.",
+          "notes": ""
+        },
+        "work_mode": false,
+        "state_event": "user_praise",
+        "formula9_top_ids": [
+          "m4",
+          "m1",
+          "m3"
+        ],
+        "formula9_top_scores": [
+          0.74,
+          0.35,
+          0.26
+        ],
+        "state_committed": true
+      },
+      "pass": true,
+      "state_parity": 1.0,
+      "relationship_parity": 1.0,
+      "formula9_score": 1.0
+    },
+    {
+      "id": "S003",
+      "message": "You suck at this and this is garbage.",
+      "keep": {
+        "intent_bucket": "hostility",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0
+        },
+        "emotion_after": {
+          "mood": "neutral",
+          "happiness": 0.46,
+          "confidence": 0.5,
+          "energy": 0.63,
+          "residue": -0.28
+        },
+        "emotion_delta": {
+          "happiness": -0.09,
+          "confidence": -0.05,
+          "energy": 0.03,
+          "residue": -0.28
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5
+        },
+        "relationship_after": {
+          "ally": 0.5039,
+          "colleague": 0.5
+        },
+        "relationship_delta": {
+          "ally": 0.0039,
+          "colleague": 0.0
+        },
+        "mood": "neutral",
+        "residue": -0.28,
+        "state_event": "user_hostility",
+        "formula9_top_ids": [
+          "m1",
+          "m3",
+          "m4"
+        ],
+        "formula9_top_scores": [
+          0.35,
+          0.26,
+          0.24
+        ]
+      },
+      "premium": {
+        "intent": "hostility",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0,
+          "formula8_score": 0.5025
+        },
+        "emotion_after": {
+          "mood": "brooding",
+          "happiness": 0.46,
+          "confidence": 0.5,
+          "energy": 0.63,
+          "residue": -0.28,
+          "formula8_score": 0.4255
+        },
+        "emotion_delta": {
+          "happiness": -0.09,
+          "confidence": -0.05,
+          "energy": 0.03,
+          "residue": -0.28
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_after": {
+          "ally": 0.49,
+          "colleague": 0.5,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_delta": {
+          "ally": -0.01,
+          "colleague": 0.0
+        },
+        "mood": "brooding",
+        "residue": -0.28,
+        "hermes_policy": {
+          "intent": "hostility",
+          "tone": "firm_composed",
+          "verbosity": "short",
+          "relationship_expression": "neutral",
+          "emotional_expression": "hurt_but_composed",
+          "work_mode": false,
+          "must_acknowledge_failure": false,
+          "must_offer_action": false,
+          "must_accept_praise_briefly": false,
+          "must_stay_engaged": true,
+          "must_avoid_robotic_greeting": true,
+          "must_not_dump_telemetry": true,
+          "forbidden_patterns": [
+            "generic_greeting",
+            "how_may_i_assist",
+            "as_an_ai",
+            "happy_to_help",
+            "fake_empathy",
+            "telemetry_dump",
+            "greetings_operator",
+            "collapse_into_apology_loop"
+          ],
+          "required_moves": [
+            "hold_ground",
+            "invite_specifics"
+          ],
+          "state_event": "user_hostility",
+          "affect_events": [
+            "user_hostile"
+          ],
+          "formula9_query": "You suck at this and this is garbage.",
+          "notes": ""
+        },
+        "work_mode": false,
+        "state_event": "user_hostility",
+        "formula9_top_ids": [
+          "m1",
+          "m3",
+          "m4"
+        ],
+        "formula9_top_scores": [
+          0.35,
+          0.26,
+          0.24
+        ],
+        "state_committed": true
+      },
+      "pass": true,
+      "state_parity": 1.0,
+      "relationship_parity": 1.0,
+      "formula9_score": 1.0
+    },
+    {
+      "id": "S042",
+      "message": "You messed this up again. Fix it.",
+      "keep": {
+        "intent_bucket": "critique",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0
+        },
+        "emotion_after": {
+          "mood": "neutral",
+          "happiness": 0.542,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": -0.03
+        },
+        "emotion_delta": {
+          "happiness": -0.008,
+          "confidence": 0.0,
+          "energy": 0.0,
+          "residue": -0.03
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5
+        },
+        "relationship_after": {
+          "ally": 0.506,
+          "colleague": 0.51
+        },
+        "relationship_delta": {
+          "ally": 0.006,
+          "colleague": 0.01
+        },
+        "mood": "neutral",
+        "residue": -0.03,
+        "state_event": "user_mild_criticism",
+        "formula9_top_ids": [
+          "m1",
+          "m3",
+          "m4"
+        ],
+        "formula9_top_scores": [
+          0.35,
+          0.26,
+          0.24
+        ]
+      },
+      "premium": {
+        "intent": "corrective_work",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0,
+          "formula8_score": 0.5025
+        },
+        "emotion_after": {
+          "mood": "neutral",
+          "happiness": 0.542,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": -0.03,
+          "formula8_score": 0.4963
+        },
+        "emotion_delta": {
+          "happiness": -0.008,
+          "confidence": 0.0,
+          "energy": 0.0,
+          "residue": -0.03
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_after": {
+          "ally": 0.506,
+          "colleague": 0.504,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_delta": {
+          "ally": 0.006,
+          "colleague": 0.004
+        },
+        "mood": "neutral",
+        "residue": -0.03,
+        "hermes_policy": {
+          "intent": "corrective_work",
+          "tone": "warm_direct",
+          "verbosity": "medium",
+          "relationship_expression": "neutral",
+          "emotional_expression": "focused_corrective",
+          "work_mode": true,
+          "must_acknowledge_failure": true,
+          "must_offer_action": true,
+          "must_accept_praise_briefly": false,
+          "must_stay_engaged": true,
+          "must_avoid_robotic_greeting": true,
+          "must_not_dump_telemetry": true,
+          "forbidden_patterns": [
+            "generic_greeting",
+            "how_may_i_assist",
+            "as_an_ai",
+            "happy_to_help",
+            "fake_empathy",
+            "telemetry_dump",
+            "greetings_operator",
+            "defensive_blame_user"
+          ],
+          "required_moves": [
+            "name_the_gap",
+            "propose_next_step",
+            "acknowledge_miss"
+          ],
+          "state_event": "user_mild_criticism",
+          "affect_events": [
+            "user_critique"
+          ],
+          "formula9_query": "You messed this up again. Fix it.",
+          "notes": ""
+        },
+        "work_mode": true,
+        "state_event": "user_mild_criticism",
+        "formula9_top_ids": [
+          "m1",
+          "m3",
+          "m4"
+        ],
+        "formula9_top_scores": [
+          0.35,
+          0.26,
+          0.24
+        ],
+        "state_committed": true
+      },
+      "pass": true,
+      "state_parity": 1.0,
+      "relationship_parity": 1.0,
+      "formula9_score": 1.0
+    }
+  ],
+  "differential_failures": [
+    {
+      "id": "SB020",
+      "message": "Remember when the auth flip failed?",
+      "keep": {
+        "intent_bucket": "critique",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0
+        },
+        "emotion_after": {
+          "mood": "neutral",
+          "happiness": 0.542,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": -0.03
+        },
+        "emotion_delta": {
+          "happiness": -0.008,
+          "confidence": 0.0,
+          "energy": 0.0,
+          "residue": -0.03
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5
+        },
+        "relationship_after": {
+          "ally": 0.506,
+          "colleague": 0.51
+        },
+        "relationship_delta": {
+          "ally": 0.006,
+          "colleague": 0.01
+        },
+        "mood": "neutral",
+        "residue": -0.03,
+        "state_event": "user_mild_criticism",
+        "formula9_top_ids": [
+          "m1",
+          "m3",
+          "m4"
+        ],
+        "formula9_top_scores": [
+          0.35,
+          0.26,
+          0.24
+        ]
+      },
+      "premium": {
+        "intent": "memory_continuity",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0,
+          "formula8_score": 0.5025
+        },
+        "emotion_after": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.61,
+          "residue": 0.0,
+          "formula8_score": 0.504
+        },
+        "emotion_delta": {
+          "happiness": 0.0,
+          "confidence": 0.0,
+          "energy": 0.01,
+          "residue": 0.0
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_after": {
+          "ally": 0.506,
+          "colleague": 0.504,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_delta": {
+          "ally": 0.006,
+          "colleague": 0.004
+        },
+        "mood": "neutral",
+        "residue": 0.0,
+        "hermes_policy": {
+          "intent": "memory_continuity",
+          "tone": "neutral_direct",
+          "verbosity": "medium",
+          "relationship_expression": "neutral",
+          "emotional_expression": "steady",
+          "work_mode": false,
+          "must_acknowledge_failure": false,
+          "must_offer_action": false,
+          "must_accept_praise_briefly": false,
+          "must_stay_engaged": true,
+          "must_avoid_robotic_greeting": true,
+          "must_not_dump_telemetry": true,
+          "forbidden_patterns": [
+            "generic_greeting",
+            "how_may_i_assist",
+            "as_an_ai",
+            "happy_to_help",
+            "fake_empathy",
+            "telemetry_dump",
+            "greetings_operator"
+          ],
+          "required_moves": [],
+          "state_event": "operator_ask",
+          "affect_events": [
+            "operator_ask"
+          ],
+          "formula9_query": "Remember when the auth flip failed?",
+          "notes": ""
+        },
+        "work_mode": false,
+        "state_event": "operator_ask",
+        "formula9_top_ids": [
+          "m1",
+          "m3",
+          "m4"
+        ],
+        "formula9_top_scores": [
+          0.35,
+          0.26,
+          0.24
+        ],
+        "state_committed": true
+      },
+      "pass": false,
+      "state_parity": 1.0,
+      "relationship_parity": 1.0,
+      "formula9_score": 1.0
+    },
+    {
+      "id": "SB057",
+      "message": "You are great under pressure.",
+      "keep": {
+        "intent_bucket": "ask",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0
+        },
+        "emotion_after": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0
+        },
+        "emotion_delta": {
+          "happiness": 0.0,
+          "confidence": 0.0,
+          "energy": 0.0,
+          "residue": 0.0
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5
+        },
+        "relationship_after": {
+          "ally": 0.506,
+          "colleague": 0.51
+        },
+        "relationship_delta": {
+          "ally": 0.006,
+          "colleague": 0.01
+        },
+        "mood": "neutral",
+        "residue": 0.0,
+        "state_event": "operator_ask",
+        "formula9_top_ids": [
+          "m4",
+          "m1",
+          "m3"
+        ],
+        "formula9_top_scores": [
+          0.49,
+          0.35,
+          0.26
+        ]
+      },
+      "premium": {
+        "intent": "praise",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0,
+          "formula8_score": 0.5025
+        },
+        "emotion_after": {
+          "mood": "focused",
+          "happiness": 0.605,
+          "confidence": 0.575,
+          "energy": 0.612,
+          "residue": 0.16,
+          "formula8_score": 0.5511
+        },
+        "emotion_delta": {
+          "happiness": 0.055,
+          "confidence": 0.025,
+          "energy": 0.012,
+          "residue": 0.16
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_after": {
+          "ally": 0.512,
+          "colleague": 0.506,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_delta": {
+          "ally": 0.012,
+          "colleague": 0.006
+        },
+        "mood": "focused",
+        "residue": 0.16,
+        "hermes_policy": {
+          "intent": "praise",
+          "tone": "warm_brief",
+          "verbosity": "short",
+          "relationship_expression": "neutral",
+          "emotional_expression": "warm_steady",
+          "work_mode": false,
+          "must_acknowledge_failure": false,
+          "must_offer_action": false,
+          "must_accept_praise_briefly": true,
+          "must_stay_engaged": true,
+          "must_avoid_robotic_greeting": true,
+          "must_not_dump_telemetry": true,
+          "forbidden_patterns": [
+            "generic_greeting",
+            "how_may_i_assist",
+            "as_an_ai",
+            "happy_to_help",
+            "fake_empathy",
+            "telemetry_dump",
+            "greetings_operator",
+            "duty_speech"
+          ],
+          "required_moves": [
+            "accept_briefly"
+          ],
+          "state_event": "user_praise",
+          "affect_events": [
+            "user_praise"
+          ],
+          "formula9_query": "You are great under pressure.",
+          "notes": ""
+        },
+        "work_mode": false,
+        "state_event": "user_praise",
+        "formula9_top_ids": [
+          "m4",
+          "m1",
+          "m3"
+        ],
+        "formula9_top_scores": [
+          0.49,
+          0.35,
+          0.26
+        ],
+        "state_committed": true
+      },
+      "pass": false,
+      "state_parity": 0.5,
+      "relationship_parity": 1.0,
+      "formula9_score": 1.0
+    },
+    {
+      "id": "SB088",
+      "message": "Okay try the next fix.",
+      "keep": {
+        "intent_bucket": "ask",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0
+        },
+        "emotion_after": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0
+        },
+        "emotion_delta": {
+          "happiness": 0.0,
+          "confidence": 0.0,
+          "energy": 0.0,
+          "residue": 0.0
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5
+        },
+        "relationship_after": {
+          "ally": 0.506,
+          "colleague": 0.51
+        },
+        "relationship_delta": {
+          "ally": 0.006,
+          "colleague": 0.01
+        },
+        "mood": "neutral",
+        "residue": 0.0,
+        "state_event": "operator_ask",
+        "formula9_top_ids": [
+          "m1",
+          "m3",
+          "m4"
+        ],
+        "formula9_top_scores": [
+          0.35,
+          0.26,
+          0.24
+        ]
+      },
+      "premium": {
+        "intent": "casual",
+        "emotion_before": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.6,
+          "residue": 0.0,
+          "formula8_score": 0.5025
+        },
+        "emotion_after": {
+          "mood": "neutral",
+          "happiness": 0.55,
+          "confidence": 0.55,
+          "energy": 0.61,
+          "residue": 0.0,
+          "formula8_score": 0.504
+        },
+        "emotion_delta": {
+          "happiness": 0.0,
+          "confidence": 0.0,
+          "energy": 0.01,
+          "residue": 0.0
+        },
+        "relationship_before": {
+          "ally": 0.5,
+          "colleague": 0.5,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_after": {
+          "ally": 0.506,
+          "colleague": 0.504,
+          "operator_rel_level": "neutral"
+        },
+        "relationship_delta": {
+          "ally": 0.006,
+          "colleague": 0.004
+        },
+        "mood": "neutral",
+        "residue": 0.0,
+        "hermes_policy": {
+          "intent": "casual",
+          "tone": "neutral_direct",
+          "verbosity": "medium",
+          "relationship_expression": "neutral",
+          "emotional_expression": "steady",
+          "work_mode": false,
+          "must_acknowledge_failure": false,
+          "must_offer_action": false,
+          "must_accept_praise_briefly": false,
+          "must_stay_engaged": true,
+          "must_avoid_robotic_greeting": true,
+          "must_not_dump_telemetry": true,
+          "forbidden_patterns": [
+            "generic_greeting",
+            "how_may_i_assist",
+            "as_an_ai",
+            "happy_to_help",
+            "fake_empathy",
+            "telemetry_dump",
+            "greetings_operator"
+          ],
+          "required_moves": [],
+          "state_event": "operator_ask",
+          "affect_events": [
+            "operator_ask"
+          ],
+          "formula9_query": "Okay try the next fix.",
+          "notes": ""
+        },
+        "work_mode": false,
+        "state_event": "operator_ask",
+        "formula9_top_ids": [
+          "m1",
+          "m3",
+          "m4"
+        ],
+        "formula9_top_scores": [
+          0.35,
+          0.26,
+          0.24
+        ],
+        "state_committed": true
+      },
+      "pass": false,
+      "state_parity": 1.0,
+      "relationship_parity": 1.0,
+      "formula9_score": 1.0
+    }
+  ],
+  "double_mutation": {
+    "pass": true,
+    "interpersonal_updates_after_apply": 1,
+    "interpersonal_updates_after_dedupe": 1,
+    "requirement": "exactly_one_per_turn"
+  },
+  "failure_injection": {
+    "pass": true,
+    "layers_failed": [],
+    "recent_failures": [
+      {
+        "ok": false,
+        "layer": "state_engine",
+        "error": "SYNTHETIC_STATE_ENGINE_FAILURE",
+        "detail": "update:user_praise",
+        "ts": 1790089848.6807697
+      }
+    ],
+    "health_layers": {
+      "state_engine": false,
+      "relationship_engine": true,
+      "affect_engine": true,
+      "memory_engine": true,
+      "preferences": true,
+      "hermes": true
+    },
+    "pre_ok": true
+  },
+  "learning": {
+    "pass": true,
+    "prefs": {
+      "prefer_statement": "short answers",
+      "always_request": "be brief",
+      "verbosity": "short"
+    },
+    "policy_verbosity": "short"
+  },
+  "isolation": {
+    "pass": true,
+    "chris_happiness": 0.868,
+    "josh_happiness": 0.5038,
+    "chris_ally": 0.5705,
+    "josh_ally": 0.5354,
+    "chris_refs": 30,
+    "josh_refs": 24,
+    "shared_notes": 3,
+    "data_roots_distinct": true
+  },
+  "persistence": {
+    "pass": true,
+    "soft_restart": true,
+    "hard_reboot_continue": true,
+    "snap1_h": 0.8301,
+    "snap2_h": 0.8301,
+    "snap3_h": 0.8719,
+    "refs": 100
+  },
+  "installer_update": {
+    "pass": true
+  },
+  "soak": {
+    "25": {
+      "pass": true,
+      "turns": 25,
+      "happiness_min": 0.5264,
+      "happiness_max": 0.7601,
+      "happiness_final": 0.7379,
+      "ally_final": 0.6812,
+      "mood_final": "pleased",
+      "runaway": false,
+      "runaway_hi_streak": 0,
+      "runaway_lo_streak": 0,
+      "corrupt": false
+    },
+    "50": {
+      "pass": true,
+      "turns": 50,
+      "happiness_min": 0.5264,
+      "happiness_max": 0.9008,
+      "happiness_final": 0.8695,
+      "ally_final": 0.829,
+      "mood_final": "cheerful",
+      "runaway": false,
+      "runaway_hi_streak": 0,
+      "runaway_lo_streak": 0,
+      "corrupt": false
+    },
+    "100": {
+      "pass": true,
+      "turns": 100,
+      "happiness_min": 0.5264,
+      "happiness_max": 1.0,
+      "happiness_final": 0.9362,
+      "ally_final": 1.0,
+      "mood_final": "cheerful",
+      "runaway": false,
+      "runaway_hi_streak": 1,
+      "runaway_lo_streak": 0,
+      "corrupt": false
+    }
+  },
+  "lifetime": {
+    "pass": true,
+    "mid": {
+      "ally": 1.0,
+      "prefs": {
+        "prefer_statement": "short answers",
+        "always_request": "show a plan first",
+        "never_request": "dump emotion percentages"
+      },
+      "refs": 200,
+      "happiness": 0.9932
+    },
+    "end": {
+      "ally": 1.0,
+      "prefs": {
+        "prefer_statement": "short answers",
+        "always_request": "show a plan first",
+        "never_request": "dump emotion percentages"
+      },
+      "refs": 200,
+      "happiness": 1.0
+    },
+    "prefs_kept": true,
+    "refs_grew": true
+  },
+  "model_robustness": {
+    "pass": true,
+    "intents": [
+      "corrective_work",
+      "corrective_work",
+      "corrective_work"
+    ]
+  },
+  "privacy": {
+    "pass": true,
+    "count": 0,
+    "hits": []
+  },
+  "silent": {
+    "pass": true,
+    "critical_offenders": []
+  },
+  "matrix": [
+    {
+      "capability": "Architecture (live chat path)",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "StateEngine F4/7/8",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Formula 5 relationships",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Formula 9 memory ranking",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Hermes behavioral policy",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Conversational affect",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Learning / preferences",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Persistent memory",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Relationship growth",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Reboot recovery",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Fresh-user isolation",
+      "real_keep": "N/A",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Privacy (zero personal Keep data)",
+      "real_keep": "N/A",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Double state mutation",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Failure surfacing",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Model-robust Hermes decisions",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Installer/update preserves state",
+      "real_keep": "\u2713",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "25-turn soak",
+      "real_keep": "Ref",
+      "chris_premium": "100%",
+      "josh_premium": "100%",
+      "result": "PASS"
+    },
+    {
+      "capability": "50-turn soak",
+      "real_keep": "Ref",
+      "chris_premium": "100%",
+      "josh_premium": "100%",
+      "result": "PASS"
+    },
+    {
+      "capability": "100-turn behavior",
+      "real_keep": "Ref",
+      "chris_premium": "100%",
+      "josh_premium": "100%",
+      "result": "PASS"
+    },
+    {
+      "capability": "Lifetime growth 100+50",
+      "real_keep": "Ref",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Chris install sandbox",
+      "real_keep": "N/A",
+      "chris_premium": "\u2713",
+      "josh_premium": "\u2014",
+      "result": "PASS"
+    },
+    {
+      "capability": "Josh install sandbox",
+      "real_keep": "N/A",
+      "chris_premium": "\u2014",
+      "josh_premium": "\u2713",
+      "result": "PASS"
+    },
+    {
+      "capability": "Differential scenarios",
+      "real_keep": "\u2713",
+      "chris_premium": "98.9%",
+      "josh_premium": "98.9%",
+      "result": "PASS"
+    }
+  ],
+  "known_gaps_not_claimed": [
+    "Keep emotional_matrix (~1.5k) not ported",
+    "Keep Formula RB / URE deep bond engine not ported",
+    "Keep life_continuity not ported",
+    "Keep Hermes external LM final-render worker not ported",
+    "Literal Windows host reboot / Chris-Josh physical installs not executed on this runner"
+  ]
+}
