@@ -19,6 +19,7 @@ from expansion.pilot_governance import (
     load_status,
     record_pilot_close,
     save_status,
+    scrub_poisoned_pilot_closes,
 )
 from expansion.state_layout import resolve_layout
 
@@ -100,7 +101,7 @@ class PilotGovernanceCase(unittest.TestCase):
         )
         self.assertFalse(fake['passed'], fake)
         self.assertTrue(
-            set(fake['missing']) & {'research_outcome', 'outcome_delta'},
+            set(fake['missing']) & {'research_outcome', 'outcome_delta', 'deliverable'},
             fake['missing'],
         )
 
@@ -131,6 +132,68 @@ class PilotGovernanceCase(unittest.TestCase):
         st = load_status(self.layout)
         self.assertTrue(st['pilot_graduated'])
         self.assertEqual(st['pilot_consecutive_clean_closes'], 3)
+
+    def test_scrub_poisoned_fake_close_resets_streak(self):
+        # Simulate the pre-fix poisoned history: fake close then a real one.
+        save_status({
+            'pilot_close_history': [
+                {
+                    'job_id': 'job_c6539bce2e',
+                    'clean': True,
+                    'reason': 'dod_passed',
+                    'at': 1.0,
+                },
+                {
+                    'job_id': 'job_real_research',
+                    'clean': True,
+                    'reason': 'dod_passed',
+                    'at': 2.0,
+                },
+            ],
+            'pilot_consecutive_clean_closes': 2,
+            'pilot_graduated': False,
+            'poison_scrub_v1': False,
+        }, layout=self.layout)
+        st = scrub_poisoned_pilot_closes(self.layout)
+        self.assertTrue(st.get('poison_scrub_v1'))
+        hist = st.get('pilot_close_history') or []
+        poison = next(e for e in hist if e['job_id'] == 'job_c6539bce2e')
+        self.assertFalse(poison['clean'])
+        self.assertIn('scrubbed', poison['reason'])
+        # Streak recomputed from trailing cleans only → 1 (the real close after scrub).
+        self.assertEqual(st['pilot_consecutive_clean_closes'], 1)
+        self.assertFalse(st['pilot_graduated'])
+        # Idempotent
+        st2 = scrub_poisoned_pilot_closes(self.layout)
+        self.assertEqual(st2['pilot_consecutive_clean_closes'], 1)
+
+    def test_research_dod_requires_deliverable(self):
+        bare = definition_of_done(
+            domain='research',
+            evidence=['tool_abc', 'before:x', 'after:y'],
+            result='Executed 2 tool action(s); ok=2 fail=0',
+            peer_reviews=[{'verdict': 'pass', 'reviewer': 'sentry'}],
+            research_refs=[{'title': 'Trend guide', 'url': 'https://example.com'}],
+            implementation_evidence={'before_metric': 1, 'after_metric': 2},
+            layout=self.layout,
+        )
+        self.assertFalse(bare['passed'])
+        self.assertIn('deliverable', bare['missing'])
+
+        good = definition_of_done(
+            domain='research',
+            evidence=['tool_abc', 'before:x', 'after:y', 'deliverable:/tmp/plan.md'],
+            result='# Research plan\n\n## Sourced findings\n\n1. Trend guide',
+            peer_reviews=[{'verdict': 'pass', 'reviewer': 'sentry'}],
+            research_refs=[{'title': 'Trend guide', 'url': 'https://example.com'}],
+            implementation_evidence={
+                'before_metric': 1,
+                'after_metric': 2,
+                'deliverable_path': '/tmp/plan.md',
+            },
+            layout=self.layout,
+        )
+        self.assertTrue(good['passed'], good)
 
     def test_bootstrap_preserves_pilot(self):
         save_status({

@@ -128,6 +128,83 @@ def save_status(updates: dict, layout: Optional[StateLayout] = None) -> dict:
     return cur
 
 
+# Known pre-fix fake closes that graduated the streak without outcome evidence.
+_KNOWN_POISONED_CLOSE_JOBS = frozenset({
+    'job_c6539bce2e',
+})
+
+
+def _recompute_clean_streak(history: list) -> int:
+    streak = 0
+    for entry in history or []:
+        if entry.get('clean'):
+            streak += 1
+        else:
+            streak = 0
+    return streak
+
+
+def scrub_poisoned_pilot_closes(layout: Optional[StateLayout] = None) -> dict:
+    """Invalidate pre-DoD-v2 fake clean closes so they cannot graduate the pilot.
+
+    One-shot (``poison_scrub_v1``). Marks known poison job ids dirty, and any
+    still-on-disk job whose close left confidence≤0 / only bookkeeping evidence.
+    """
+    layout = layout or resolve_layout()
+    st = load_status(layout)
+    if st.get('poison_scrub_v1'):
+        return st
+    history = [dict(e) for e in (st.get('pilot_close_history') or [])]
+    changed = False
+    store = None
+    try:
+        from expansion.jobs import JobStore
+        store = JobStore(layout)
+    except Exception:
+        store = None
+
+    for entry in history:
+        if not entry.get('clean'):
+            continue
+        jid = str(entry.get('job_id') or '')
+        poison = jid in _KNOWN_POISONED_CLOSE_JOBS
+        if not poison and store and jid:
+            try:
+                job = store.get(jid)
+            except Exception:
+                job = None
+            if job is not None:
+                conf = float(getattr(job, 'confidence', 0) or 0)
+                ev = list(getattr(job, 'evidence', None) or [])
+                tags = ' '.join(str(x) for x in ev).lower()
+                substantive = substantive_evidence_ids(ev)
+                if conf <= 0.0 and 'before:evidence=0' in tags:
+                    poison = True
+                elif not substantive and conf <= 0.0:
+                    poison = True
+        if poison:
+            entry['clean'] = False
+            entry['reason'] = 'scrubbed:pre_dod_v2_fake_close'
+            entry['scrubbed'] = True
+            changed = True
+
+    streak = int(st.get('pilot_consecutive_clean_closes') or 0)
+    if changed:
+        # After invalidating a clean close, recompute trailing streak from history.
+        streak = _recompute_clean_streak(history)
+    target = int(st.get('pilot_graduation_min') or 3)
+    updates = {
+        'poison_scrub_v1': True,
+        'pilot_close_history': history[-50:],
+        'pilot_consecutive_clean_closes': streak,
+        'pilot_graduated': streak >= target if changed else bool(st.get('pilot_graduated')),
+    }
+    if changed:
+        updates['poison_scrub_at'] = _now()
+        updates['pilot_graduated'] = streak >= target
+    return save_status(updates, layout)
+
+
 def bootstrap_pilot(layout: Optional[StateLayout] = None) -> dict:
     """Idempotent bootstrap — never silently re-freeze an active controlled pilot."""
     layout = layout or resolve_layout()
@@ -138,7 +215,9 @@ def bootstrap_pilot(layout: Optional[StateLayout] = None) -> dict:
         and prev.get('mode') == 'controlled_pilot'
         and not prev.get('soak_dispatch_halted')
     ):
-        # Preserve operator-approved pilot state across restarts.
+        # Preserve operator-approved pilot state across restarts, but scrub
+        # any pre-fix fake closes that are still counting toward graduation.
+        scrub_poisoned_pilot_closes(layout)
         return load_status(layout)
     if isinstance(prev, dict) and prev.get('soak_dispatch_halted'):
         return save_status({
@@ -280,6 +359,18 @@ def definition_of_done(
     }
     if dom in RESEARCH_OUTCOME_DOMAINS:
         checks['research_outcome'] = bool(refs)
+        result_l = (result or '').strip().lower()
+        status_only = (
+            not result_l
+            or result_l.startswith('executed ')
+            or result_l.startswith('autonomous close')
+        )
+        has_deliverable = bool(
+            ev.get('deliverable_path')
+            or any(str(x).startswith('deliverable:') for x in evidence)
+            or (not status_only and len((result or '').strip()) >= 80)
+        )
+        checks['deliverable'] = has_deliverable
 
     # Derived confidence — job.confidence defaults to 0.0 and was never written,
     # so we score from artifacts. Explicit confidence<=0 from caller still fails.

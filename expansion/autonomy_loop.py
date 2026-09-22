@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 from typing import Optional
 
 from expansion.jobs import Job, JobStore, route_domain
@@ -208,6 +209,44 @@ def _researcher_for(domain: str, assigned: str) -> str:
     return assigned or 'vector'
 
 
+def _synthesize_research_deliverable(layout: StateLayout, job: Job, agent: str) -> Optional[str]:
+    """Write a sourced findings markdown file — research closes need a deliverable."""
+    card = job_to_card(job, layout)
+    refs = list(card.get('research_refs') or [])
+    if not refs:
+        return None
+    out_dir = layout.user_jobs / 'deliverables'
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f'{job.job_id}.md'
+    lines = [
+        f'# Research: {(job.request or "")[:200]}',
+        '',
+        f'_Job `{job.job_id}` · agent `{agent}` · {len(refs)} source(s)_',
+        '',
+        '## Sourced findings',
+        '',
+    ]
+    for i, ref in enumerate(refs[:12], 1):
+        title = (ref.get('title') or 'Untitled').strip()
+        url = (ref.get('url') or '').strip()
+        snip = (ref.get('snippet') or '').strip()[:400]
+        lines.append(f'{i}. **{title}**')
+        if url:
+            lines.append(f'   - Source: {url}')
+        if snip:
+            lines.append(f'   - Note: {snip}')
+        lines.append('')
+    lines.extend([
+        '## Synthesis notes',
+        '',
+        '- Findings above were gathered via policy-gated web.search / web.fetch.',
+        '- Next: turn sourced notes into an actionable plan against the original request.',
+        '',
+    ])
+    path.write_text('\n'.join(lines), encoding='utf-8')
+    return str(path)
+
+
 def step_research(layout: StateLayout, job: Job) -> dict:
     tools = ToolGateway(layout)
     agent = _researcher_for(job.domain, job.assigned_agent)
@@ -238,12 +277,9 @@ def step_research(layout: StateLayout, job: Job) -> dict:
                         'url': hit.get('url') or '',
                         'snippet': (fetched.data.get('snippet') or '')[:400],
                     }, agent)
-        local = tools.invoke(agent, 'repo.search', query=(q.split() or ['rex'])[0][:40])
-        actions.append(local.action_id)
-        if local.ok:
-            _add_evidence(layout, JobStore(layout).get(job.job_id), local.action_id)
     # Only count a successful search (with hits) as evidence — 0-hit must not
-    # inflate the evidence bag toward a fake close.
+    # inflate the evidence bag toward a fake close. Do not repo.search the first
+    # word of the request (that produced repo.search('Research') / ('journal') noise).
     if search.ok and research_hits > 0:
         _add_evidence(layout, JobStore(layout).get(job.job_id), search.action_id)
     return {
@@ -302,6 +338,8 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
         gate = {'allow': True, 'kind': 'pilot_unavailable'}
 
     actions = []
+    deliverable_path = None
+    summary_body = ''
     before_snapshot = {
         'stage': card.get('stage'),
         'evidence_count': len(card.get('evidence') or []),
@@ -340,7 +378,8 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
         svc = tools.invoke('sentry', 'services.inspect')
         actions.append(svc)
     elif job.domain in ('records', 'research', 'continuity'):
-        # Prefer real research artifacts; do not close on journal-only writes.
+        # Prefer real research artifacts; synthesize a written deliverable.
+        # Do not repo.search the first word of the request (noise) or journal-only close.
         q = (job.request or 'research')[:160]
         search = tools.invoke('ledger', 'web.search', query=q)
         actions.append(search)
@@ -352,13 +391,38 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
                     'url': hit.get('url') or '',
                     'snippet': hit.get('snippet') or '',
                 }, agent)
+                if hit.get('url'):
+                    fetched = tools.invoke('ledger', 'web.fetch', url=hit['url'])
+                    actions.append(fetched)
+                    if fetched.ok:
+                        _add_research(layout, job.job_id, {
+                            'title': fetched.data.get('title_guess') or hit.get('url'),
+                            'url': hit.get('url') or '',
+                            'snippet': (fetched.data.get('snippet') or '')[:400],
+                        }, agent)
             if results:
                 _add_evidence(layout, job, search.action_id)
-        local = tools.invoke('ledger', 'repo.search', query=(q.split() or ['research'])[0][:40])
-        actions.append(local)
-        if local.ok:
-            _add_evidence(layout, job, local.action_id)
-        tools.invoke('ledger', 'journal.write', text=f'Research continuity for {job.job_id}')
+        deliverable_path = _synthesize_research_deliverable(layout, job, agent)
+        summary_body = ''
+        if deliverable_path:
+            try:
+                summary_body = Path(deliverable_path).read_text(encoding='utf-8')[:1200]
+            except OSError:
+                summary_body = f'Research deliverable written to {deliverable_path}'
+            tools.invoke(
+                'ledger', 'journal.write',
+                text=f'Research deliverable for {job.job_id}: {deliverable_path}',
+                job_id=job.job_id,
+                result='deliverable_written',
+            )
+            _add_evidence(layout, job, f'deliverable:{deliverable_path}')
+        else:
+            tools.invoke(
+                'ledger', 'journal.write',
+                text=f'Research incomplete for {job.job_id} — no sources yet',
+                job_id=job.job_id,
+                result='no_sources',
+            )
     elif job.domain in ('creative', 'media'):
         local = tools.invoke('muse', 'repo.search', query='ui')
         actions.append(local)
@@ -375,16 +439,23 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
         'fail_actions': sum(1 for a in actions if not a.ok),
     }
     if j:
-        j.result = (
-            f'Executed {len(actions)} tool action(s); '
-            f'ok={sum(1 for a in actions if a.ok)} fail={sum(1 for a in actions if not a.ok)}'
-        )
+        if summary_body:
+            j.result = summary_body[:1500]
+        else:
+            j.result = (
+                f'Executed {len(actions)} tool action(s); '
+                f'ok={sum(1 for a in actions if a.ok)} fail={sum(1 for a in actions if not a.ok)}'
+            )
         # Pilot DoD substrate: before/after evidence tags + structured blob on meta
         try:
             from expansion.pilot_governance import attach_before_after
             ev_ids = list(j.evidence or [])
             ev_ids.append(f'before:evidence={before_snapshot["evidence_count"]}')
             ev_ids.append(f'after:actions={after_snapshot["actions"]}:ok={after_snapshot["ok_actions"]}')
+            if deliverable_path:
+                tag = f'deliverable:{deliverable_path}'
+                if tag not in ev_ids:
+                    ev_ids.append(tag)
             j.evidence = ev_ids[-40:]
             # Stash structured before/after on rex meta via decision_trace note
             from expansion.rex import get_item, _update_meta, _append_trace
@@ -393,13 +464,16 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
                 data = data or {'schema_version': 1, 'items': {}}
                 items = data.setdefault('items', {})
                 item = dict(items.get(job.job_id) or get_item(job.job_id, layout) or {'job_id': job.job_id})
-                item['implementation_evidence'] = attach_before_after(
+                ev = attach_before_after(
                     item.get('implementation_evidence'),
                     before_state=before_snapshot,
                     after_state=after_snapshot,
                     before_metric=before_snapshot.get('evidence_count'),
                     after_metric=after_snapshot.get('ok_actions'),
                 )
+                if deliverable_path:
+                    ev['deliverable_path'] = deliverable_path
+                item['implementation_evidence'] = ev
                 _append_trace(item, agent, 'pilot_evidence', 'before/after recorded')
                 items[job.job_id] = item
                 return data

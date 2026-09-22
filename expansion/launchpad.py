@@ -21,11 +21,13 @@ _COMPANION_DEFAULTS = (
     {
         'id': 'keep_desk',
         'title': 'Keep Desk',
-        'desc': 'Command Deck — type → LIVE → Why',
+        'desc': 'Not a separate product yet — use KeepRoute',
         'group': 'Keep products',
         'env': 'OTACON_KEEP_DESK_URL',
         'pref_key': 'keep_desk_url',
-        'ports': (5765, 5766),
+        # No shipped listener — 5765/5766 were phantom probe ports only.
+        'ports': (),
+        'shipped': False,
         'icon': 'DESK',
     },
     {
@@ -36,6 +38,7 @@ _COMPANION_DEFAULTS = (
         'env': 'OTACON_KEEPROUTE_URL',
         'pref_key': 'keeproute_url',
         'ports': (20129,),
+        'shipped': True,
         'icon': 'ROUTE',
     },
     {
@@ -46,6 +49,7 @@ _COMPANION_DEFAULTS = (
         'env': 'OMNIROUTE_HOST',
         'pref_key': 'omniroute_url',
         'ports': (20128, 20127),
+        'shipped': True,
         'icon': 'OMNI',
     },
 )
@@ -66,9 +70,17 @@ def save_prefs(updates: dict, layout: Optional[StateLayout] = None) -> dict:
     layout = layout or resolve_layout()
     layout.ensure_user_dirs()
     cur = load_prefs(layout)
+    companion_keys = {s['pref_key'] for s in _COMPANION_DEFAULTS}
     for k, v in (updates or {}).items():
         if v is None:
             cur.pop(k, None)
+        elif k in companion_keys:
+            normalized = _normalize_companion_url(str(v))
+            if normalized:
+                cur[k] = normalized
+            else:
+                # Reject scheme-less junk (e.g. "127.0.0.1:98") so discovery works.
+                cur.pop(k, None)
         else:
             cur[k] = v
     cur['updated_at'] = time.time()
@@ -84,9 +96,27 @@ def _tcp_open(host: str, port: int, timeout: float = 0.35) -> bool:
         return False
 
 
+def _normalize_companion_url(raw: str) -> str:
+    """Accept only http(s) URLs. Scheme-less host:port values are rejected.
+
+    urlparse('127.0.0.1:99') treats '127.0.0.1' as the scheme and falls back to
+    port 80 — always dead — and used to permanently mask port discovery.
+    """
+    u = (raw or '').strip()
+    if not u:
+        return ''
+    parsed = urlparse(u)
+    if parsed.scheme in ('http', 'https') and (parsed.hostname or parsed.netloc):
+        return u
+    return ''
+
+
 def _probe_url(url: str) -> bool:
+    normalized = _normalize_companion_url(url)
+    if not normalized:
+        return False
     try:
-        u = urlparse(url)
+        u = urlparse(normalized)
         host = u.hostname or '127.0.0.1'
         port = u.port or (443 if u.scheme == 'https' else 80)
         return _tcp_open(host, port)
@@ -95,22 +125,33 @@ def _probe_url(url: str) -> bool:
 
 
 def _resolve_companion(spec: dict, prefs: dict) -> dict[str, Any]:
-    url = (
+    raw = (
         (os.environ.get(spec['env']) or '').strip()
         or str(prefs.get(spec['pref_key']) or '').strip()
     )
+    url = _normalize_companion_url(raw)
     live = False
     source = 'missing'
+    if raw and not url:
+        # Configured junk — ignore and fall through to port discovery.
+        source = 'invalid_config'
     if url:
         live = _probe_url(url)
         source = 'configured'
-    else:
+    elif spec.get('shipped', True):
         for port in spec.get('ports') or ():
             if _tcp_open('127.0.0.1', int(port)):
                 url = f'http://127.0.0.1:{port}/'
                 live = True
                 source = 'discovered'
                 break
+    if not spec.get('shipped', True) and not url:
+        source = 'missing'
+        hint = 'Not shipped as a separate product — open KeepRoute instead'
+    elif not url:
+        hint = f'Set {spec["env"]} or launchpad pref {spec["pref_key"]}'
+    else:
+        hint = 'LIVE' if live else 'Configured · unreachable'
     return {
         'id': spec['id'],
         'title': spec['title'],
@@ -122,11 +163,8 @@ def _resolve_companion(spec: dict, prefs: dict) -> dict[str, Any]:
         'live': bool(live and url),
         'available': bool(url),
         'source': source,
-        'hint': (
-            f'Set {spec["env"]} or launchpad pref {spec["pref_key"]}'
-            if not url
-            else ('LIVE' if live else 'Configured · unreachable')
-        ),
+        'shipped': bool(spec.get('shipped', True)),
+        'hint': hint,
     }
 
 
