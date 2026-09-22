@@ -225,9 +225,24 @@
     setBodyMode('home');
     var themeCls = theme ? (' fl-theme-' + String(theme)) : '';
     var meta = (extraMeta || '') +
-      btn('Home', 'showHome()', true) +
+      btn('Homescreen', 'showHome()', true) +
       btn('Codec', "typeof showChat==='function'&&showChat()", false);
+    var tabs = '';
+    try {
+      if (typeof keepTopTabsHtml === 'function') {
+        var active = String(theme || title || 'homescreen').toLowerCase().replace(/\s+/g, '-');
+        if (active.indexOf('war') >= 0) active = 'war-room';
+        else if (active.indexOf('rex') >= 0) active = 'rex';
+        else if (active.indexOf('intel') >= 0) active = 'intel';
+        else if (active.indexOf('genome') >= 0) active = 'genome';
+        else if (active.indexOf('command') >= 0) active = 'command';
+        else if (active.indexOf('emotion') >= 0) active = 'emotions';
+        else active = 'homescreen';
+        tabs = keepTopTabsHtml(active);
+      }
+    } catch (_e) {}
     appRoot().innerHTML =
+      tabs +
       '<div class="home fl' + themeCls + '">' +
       '<header class="fl-mast"><div><p class="kicker">' + esc(kicker || 'Keep Expansion') +
       '</p><h1>' + esc(title) + '</h1></div><div class="meta">' + meta + '</div></header>' +

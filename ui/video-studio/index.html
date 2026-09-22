@@ -11,7 +11,20 @@
     --vs-line:rgba(125,200,255,.14);
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--vs-bg);color:var(--vs-ink);font-family:'Segoe UI',system-ui,sans-serif;padding-top:44px}
+  body{margin:0;background:var(--vs-bg);color:var(--vs-ink);font-family:'Segoe UI',system-ui,sans-serif;padding-top:52px}
+  .kc-vs-tabs{
+    position:fixed;top:0;left:0;right:0;z-index:80;
+    display:flex;flex-wrap:wrap;gap:.35rem;align-items:center;
+    padding:.45rem .75rem;border-bottom:1px solid rgba(125,200,255,.2);
+    background:rgba(5,11,18,.96);backdrop-filter:blur(8px);
+  }
+  .kc-vs-tabs a,.kc-vs-tabs button{
+    appearance:none;cursor:pointer;font:inherit;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;
+    color:rgba(231,238,248,.75);background:rgba(0,0,0,.35);border:1px solid rgba(125,200,255,.2);
+    border-radius:6px;padding:.35rem .65rem;text-decoration:none;
+  }
+  .kc-vs-tabs a:hover,.kc-vs-tabs button:hover{color:#fff;border-color:var(--vs-cyan)}
+  .kc-vs-tabs .on{color:#051018;background:var(--vs-cyan);border-color:var(--vs-cyan);font-weight:700}
   .vs-wrap{max-width:1120px;margin:0 auto;padding:0 1.25rem 4rem;position:relative}
 
   /* ── Hero ─────────────────────────────────────────────────────────────── */
@@ -411,6 +424,15 @@
 </script>
 </head>
 <body>
+<nav class="kc-vs-tabs" aria-label="Keep navigation">
+  <a href="/">Homescreen</a>
+  <a href="/codec">Codec</a>
+  <a href="/rex">REX</a>
+  <a href="/war-room">War</a>
+  <a href="/intel">Intel</a>
+  <a class="on" href="/video-studio/">Studio</a>
+  <a href="/genome">Genome</a>
+</nav>
 <div class="vs-wrap vs-hud-kit" data-vs-hud="8">
   <div class="vs-hero mf-mod">
     <div class="vs-hero-titlebar">
@@ -1710,7 +1732,7 @@ async function vsMovieAutoPlan(oneClick = false) {
       }),
     })).json();
     if (!res.ok) {
-      note.innerHTML = 'Error: ' + vsEsc(res.error || 'unknown')
+      note.innerHTML = vsEsc(res.detail || res.error || 'That action could not be completed.')
         + ((res.errors || []).length ? '<ul class="vs-warn-list">' + res.errors.map(e => `<li>${vsEsc(e)}</li>`).join('') + '</ul>' : '');
       btn.disabled = false;
       return;
@@ -1764,7 +1786,7 @@ async function vsMovieImportPlan() {
       body: JSON.stringify({plan, agent_id: VS_WORKSHOP_CLIENT, style_id: document.getElementById('vs-style-select').value || null}),
     })).json();
     if (!res.ok) {
-      note.innerHTML = 'Error: ' + vsEsc(res.error || 'unknown')
+      note.innerHTML = vsEsc(res.detail || res.error || 'That action could not be completed.')
         + ((res.errors || []).length ? '<ul class="vs-warn-list">' + res.errors.map(e => `<li>${vsEsc(e)}</li>`).join('') + '</ul>' : '');
       btn.disabled = false;
       return;
@@ -2171,6 +2193,8 @@ async function vsRefreshHealth() {
       image_ready: !!h.image_ready,
       video_ready: !!h.video_ready,
       music_ready: !!h.music_ready,
+      projects_ready: h.projects_ready !== false,
+      projects_detail: h.projects_detail || '',
     };
     // Prefer Image mode when this PC has Z-Image but no video packs (typical 8 GB).
     if (!window.__vsModePinned && h.preferred_mode === 'image' && vsMode === 'video') {
@@ -2188,6 +2212,20 @@ async function vsRefreshHealth() {
       }
       if (!window.__vsModePinned) {
         vsMode = h.image_ready ? 'image' : 'video';
+        vsApplyMode();
+      }
+    }
+    // Movie/projects backend not wired in Expansion — bounce off project mode.
+    if (vsMode === 'project' && h.projects_ready === false) {
+      const note = document.getElementById('vs-submit-note') || document.getElementById('vs-movie-autoplan-note');
+      if (note) {
+        note.textContent = (
+          h.projects_detail
+          || 'Movie / project production is not wired in Expansion yet. Image and music still work.'
+        );
+      }
+      if (!window.__vsModePinned) {
+        vsMode = h.image_ready ? 'image' : (h.video_ready ? 'video' : 'music');
         vsApplyMode();
       }
     }
@@ -2549,12 +2587,12 @@ async function vsProductionAction(projectId, action, btnEl) {
     const res = await (await fetch(`/video-studio/api/projects/${projectId}/production/${action}`, {method: 'POST'})).json();
     if (!res.ok) {
       if (btnEl) btnEl.disabled = false;
-      alert('Error: ' + (res.error || 'failed'));
+      alert(res.detail || res.error || 'That action could not be completed.');
       return;
     }
   } catch (e) {
     if (btnEl) btnEl.disabled = false;
-    alert('Error: ' + (e.message || e));
+    alert(e.message || e);
     return;
   }
   await vsOpenProjectView(projectId);
@@ -3455,9 +3493,9 @@ async function vsReorderShot(projectId, sceneId, shotId, direction, btnEl) {
     const res = await (await fetch(`/video-studio/api/projects/${projectId}/scenes/${sceneId}/shots/reorder`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({shot_ids: ids}),
     })).json();
-    if (!res.ok) { alert('Error: ' + (res.error || 'failed')); if (btnEl) btnEl.disabled = false; return; }
+    if (!res.ok) { alert(res.detail || res.error || 'That action could not be completed.'); if (btnEl) btnEl.disabled = false; return; }
   } catch (e) {
-    alert('Error: ' + (e.message || e));
+    alert(e.message || e);
     if (btnEl) btnEl.disabled = false;
     return;
   }
@@ -3879,8 +3917,8 @@ async function vsReviewApprove(projectId, shotId, btnEl) {
   if (btnEl) btnEl.disabled = true;
   try {
     const res = await (await fetch(`/video-studio/api/projects/${projectId}/shots/${shotId}/review/approve`, {method: 'POST'})).json();
-    if (!res.ok) { alert('Error: ' + (res.error || 'failed')); if (btnEl) btnEl.disabled = false; return; }
-  } catch (e) { alert('Error: ' + (e.message || e)); if (btnEl) btnEl.disabled = false; return; }
+    if (!res.ok) { alert(res.detail || res.error || 'That action could not be completed.'); if (btnEl) btnEl.disabled = false; return; }
+  } catch (e) { alert(e.message || e); if (btnEl) btnEl.disabled = false; return; }
   await vsOpenProjectView(projectId);
 }
 
@@ -3890,8 +3928,8 @@ async function vsReviewReject(projectId, shotId, action, btnEl) {
     const res = await (await fetch(`/video-studio/api/projects/${projectId}/shots/${shotId}/review/reject`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action}),
     })).json();
-    if (!res.ok) { alert('Error: ' + (res.error || 'failed')); if (btnEl) btnEl.disabled = false; return; }
-  } catch (e) { alert('Error: ' + (e.message || e)); if (btnEl) btnEl.disabled = false; return; }
+    if (!res.ok) { alert(res.detail || res.error || 'That action could not be completed.'); if (btnEl) btnEl.disabled = false; return; }
+  } catch (e) { alert(e.message || e); if (btnEl) btnEl.disabled = false; return; }
   await vsOpenProjectView(projectId);
 }
 

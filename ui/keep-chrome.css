@@ -1,0 +1,96 @@
+/* Command Center chrome — top tabs + Homepage-style tile launchpad */
+.kc-tabs{
+  position:sticky;top:0;z-index:40;
+  display:flex;flex-wrap:wrap;align-items:center;gap:.55rem 1rem;
+  padding:.55rem .85rem;margin:0 0 .85rem;
+  border:1px solid rgba(125,255,195,.18);
+  background:linear-gradient(180deg,rgba(14,18,22,.97),rgba(8,10,14,.96));
+  box-shadow:0 10px 28px rgba(0,0,0,.45);
+  backdrop-filter:blur(8px);
+}
+.kc-tabs-brand{
+  display:flex;align-items:center;gap:.45rem;cursor:pointer;user-select:none;
+  letter-spacing:.14em;font-size:.68rem;color:#7dffc3;
+}
+.kc-mark{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:1.55rem;height:1.55rem;border:1px solid #7dffc3;border-radius:4px;
+  font-weight:700;font-size:.7rem;color:#0a1210;background:#7dffc3;
+}
+.kc-brand-t{opacity:.9}
+.kc-tabs-row{display:flex;flex-wrap:wrap;gap:.35rem;flex:1}
+.kc-tab{
+  appearance:none;cursor:pointer;font:inherit;font-size:.68rem;letter-spacing:.1em;
+  text-transform:uppercase;color:rgba(210,230,225,.72);
+  background:rgba(0,0,0,.35);border:1px solid rgba(125,255,195,.16);
+  border-radius:6px;padding:.38rem .7rem;
+}
+.kc-tab:hover{color:#e8fff6;border-color:rgba(125,255,195,.45)}
+.kc-tab.on{color:#0a1210;background:#7dffc3;border-color:#7dffc3;font-weight:700}
+.kc-tab.live::after{
+  content:'';display:inline-block;width:6px;height:6px;margin-left:.35rem;
+  border-radius:50%;background:#4dff8a;box-shadow:0 0 8px #4dff8a;
+  vertical-align:middle;
+}
+
+.kc-home{max-width:1280px;margin:0 auto;padding:0 1rem 2.5rem}
+.kc-hero{padding:.4rem 0 1rem}
+.kc-kicker{
+  margin:0 0 .35rem;font-size:.68rem;letter-spacing:.22em;text-transform:uppercase;color:#7dffc3;
+}
+.kc-hero h1{
+  margin:0 0 .45rem;font-size:clamp(1.55rem,3.2vw,2.15rem);letter-spacing:.04em;color:#e8fff6;
+}
+.kc-intro{margin:0;max-width:52rem;color:rgba(200,220,215,.78);font-size:.92rem;line-height:1.45}
+
+.kc-group{margin:1.15rem 0 1.5rem}
+.kc-group h2{
+  margin:0 0 .65rem;font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:rgba(125,255,195,.85);
+}
+.kc-tile-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:.65rem;
+}
+.kc-tile{
+  appearance:none;cursor:pointer;text-align:left;font:inherit;color:inherit;
+  display:grid;grid-template-columns:auto 1fr auto;gap:.65rem;align-items:start;
+  padding:.8rem .85rem;min-height:5.2rem;
+  border:1px solid rgba(125,255,195,.2);
+  border-radius:10px;
+  background:
+    linear-gradient(145deg,rgba(18,28,26,.94),rgba(10,14,16,.96));
+  box-shadow:0 12px 24px rgba(0,0,0,.28);
+  transition:border-color .15s ease, transform .12s ease, box-shadow .15s ease;
+}
+.kc-tile:hover{
+  border-color:#7dffc3;transform:translateY(-1px);
+  box-shadow:0 14px 28px rgba(0,0,0,.38),0 0 0 1px rgba(125,255,195,.12);
+}
+.kc-tile.live{border-color:rgba(77,255,138,.45)}
+.kc-tile.dim{opacity:.88}
+.kc-tile.ghost{opacity:.55;border-style:dashed}
+.kc-tile-icon{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:2.4rem;height:2.4rem;padding:0 .25rem;
+  border:1px solid rgba(125,255,195,.35);border-radius:8px;
+  font-size:.62rem;letter-spacing:.06em;font-weight:700;color:#7dffc3;
+  background:rgba(0,0,0,.35);
+}
+.kc-tile-body{display:flex;flex-direction:column;gap:.2rem;min-width:0}
+.kc-tile-body strong{font-size:.92rem;color:#e8fff6}
+.kc-tile-body span{font-size:.74rem;color:rgba(190,210,205,.75);line-height:1.3}
+.kc-tile-hint{font-size:.64rem;color:rgba(255,180,120,.85);font-style:normal}
+.kc-tile-st{
+  font-size:.58rem;letter-spacing:.12em;text-transform:uppercase;color:#7dffc3;padding-top:.15rem;
+}
+.kc-tile.ghost .kc-tile-st{color:rgba(200,200,200,.55)}
+.kc-tile.dim .kc-tile-st{color:#ffb074}
+
+.kc-page{max-width:1480px;margin:0 auto;padding:0 1rem 1.5rem}
+body.mode-home .kc-tabs, body.mode-codec .kc-tabs{margin-left:-0;margin-right:0}
+
+@media (max-width:720px){
+  .kc-tabs{padding:.45rem .55rem}
+  .kc-brand-t{display:none}
+  .kc-tile{grid-template-columns:auto 1fr;grid-template-rows:auto auto}
+  .kc-tile-st{grid-column:2}
+}

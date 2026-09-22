@@ -470,6 +470,10 @@ def handle_expansion_get(path: str, send_json, send_bytes=None) -> bool:
         payload['recent_tool_actions'] = ToolGateway().recent(limit=25)
         send_json(payload)
         return True
+    if path == '/api/expansion/launchpad':
+        from expansion.launchpad import build_launchpad
+        send_json(build_launchpad())
+        return True
     if path == '/api/expansion/world-model':
         from expansion.entitlement import EntitlementGate
         from expansion.world_model import get_world_model

@@ -632,168 +632,14 @@ async function showHome(){
   await loadCapabilities();
   await loadExpansion();
   setTimeout(()=>{ autoKickPremiumSurfaces(); }, 600);
-  let scanPack=await loadHardwareScan(15000);
-  state.scan=scanPack.data;
-  state.scanStatus=scanPack;
-  const chatOk=capReady('chat'), ttsOk=capReady('tts');
-  const vtStatus=capStatus('voice_trainer');
-  const vtOk=vtStatus==='ready';
-  const vtOffline=vtStatus==='offline';
-  const videoStatus=capStatus('video');
-  const videoOk=videoStatus==='ready';
-  const expOn=!!(state.expansion&&state.expansion.enabled);
-  const expEntitled=!!(state.expansion&&(state.expansion.expansion_entitled||state.expansion.surfaces_ready||expOn));
-  const model=(state.capabilities&&state.capabilities.llm_model)||'—';
-  const gpuHomeLine=formatGpuLine(scanPack);
-  const brandLine=expOn?'Otaconskeep · Expansion':'Otaconskeep · Lite';
-  const footLine=expOn
-    ?'Otaconskeep Expansion · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX'
-    :'Otaconskeep Lite · Designed &amp; Engineered by Antonio G. Garcia · discord.gg/cZDeqECzX';
-  const ariaLine=expOn
-    ?'Priority channels live. Codec first — Genome / Studio when those sidecars are up.'
-    :'Core deck online — same HUD as Expansion. Unlock the five-agent roster with Expansion Setup.';
-  const threat=!chatOk||!ttsOk||(expOn&&!videoOk);
-  const hScan=(scanPack&&scanPack.hardware)||{};
-  const cpuCoresN=hScan.cpu&&hScan.cpu.cores?Number(hScan.cpu.cores):0;
-  const ramGbN=Number(hScan.ram_gb||0);
-  const gpu=Array.isArray(hScan.gpus)&&hScan.gpus[0]?hScan.gpus[0]:null;
-  let opsLoad=12;
-  if(!chatOk) opsLoad+=30;
-  if(!ttsOk) opsLoad+=16;
-  if(expOn&&!videoOk) opsLoad+=14;
-  if(expOn&&!vtOk) opsLoad+=12;
-  if(threat) opsLoad+=6;
-  opsLoad=Math.max(8,Math.min(88,opsLoad));
-  const cpuBase=cpuCoresN?Math.min(72,18+cpuCoresN*3):22;
-  const ramBase=ramGbN?Math.min(78,22+Math.log2(Math.max(2,ramGbN))*12):18;
-  const gpuBase=gpu?(gpu.vram_gb?Math.min(85,20+Number(gpu.vram_gb)*2.2):42):(scanPack.ok?8:0);
-  const gnmLbl=vtOk?'GNM LIVE':(vtOffline?'GNM START':(expEntitled?'GNM SETUP':'GNM LOCK'));
-  const stuLbl=videoOk?'STUDIO RDY':(videoStatus==='limited'?'STUDIO LTD':'STUDIO SETUP');
-  const gnmChip=vtOk?'ok':(vtOffline||expEntitled?'warn':'bad');
-  const stuChip=videoOk?'ok':'warn';
-  const chatChip=chatOk?'ok':'bad';
-  const ttsChip=ttsOk?'ok':'warn';
-  // Lite: same HUD chrome — omit Genome/Studio status chips (premium surfaces).
-  const statusChips=expOn
-    ? `${chip('CHAT '+(chatOk?'RDY':'DN'), chatChip)}${chip('VOX '+(ttsOk?'RDY':'WAIT'), ttsChip)}${chip(gnmLbl, gnmChip)}${chip(stuLbl, stuChip)}`
-    : `${chip('CHAT '+(chatOk?'RDY':'DN'), chatChip)}${chip('VOX '+(ttsOk?'RDY':'WAIT'), ttsChip)}${chip('LITE', 'ok')}`;
-
-  const agentStrip=(state.roster||[]).map(a=>{
-    const id=a.id||a.agent_id;
-    const room=a.room_title||a.room||agentRoomKind(a);
-    const img=agentAsset(id, `${id}.webp`);
-    return `<button type="button" class="hud-agent" onclick="otSfx('switch');openAgentRoom('${escapeHtml(id)}')">
-      <img src="${img}" alt="" loading="eager" decoding="async" onerror="this.onerror=null;this.src='${agentAsset('aria','aria.webp')}'">
-      <div><div class="n">${escapeHtml(a.display_name||id)}</div><div class="r">${escapeHtml(String(room))}</div></div>
-      <span class="mood" title="mood"></span>
-    </button>`;
-  }).join('')||'<p class="muted">No roster yet.</p>';
-
-  const railChips=expOn?`
-    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('transmit');showChat()"><span>CODEC</span><em class="${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'DOWN'}</em></button>
-    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':'showGenomeSetup()'}"><span>GENOME</span><em class="${gnmChip}">${vtOk?'OPEN':(vtOffline?'START':'SETUP')}</em></button>
-    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('click');${videoOk?'openMuseWorkshop()':'showVideoStudioSetup()'}"><span>CREATIVE</span><em class="${stuChip}">${videoOk?'READY':'SETUP'}</em></button>
-    <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('war-room')"><span>WAR</span><em class="ok">ENTER</em></button>
-    <button type="button" class="hud-rail-btn" onclick="otSfx('click');showExpansionSurface('command')"><span>COMMAND</span><em class="ok">ENTER</em></button>
-  `:`
-    <button type="button" class="hud-rail-btn" onclick="otArmAudio();otSfx('transmit');showChat()"><span>CODEC</span><em class="${chatOk?'ok':'warn'}">${chatOk?'ONLINE':'DOWN'}</em></button>
-    <button type="button" class="hud-rail-btn" onclick="otSfx('click');render()"><span>SETUP</span><em>WIZARD</em></button>
-  `;
-
-  const moreRooms=expOn?`
-  <section class="hud-more">
-    <h3>More rooms</h3>
-    <div class="hud-chip-row">
-      ${[['rex','REX'],['intel','INTEL'],['emotion','EMOTION'],['dossiers','DOSSIERS'],['diary','DIARY'],['reports','REPORTS'],['ops','OPS']].map(([k,l])=>
-        `<button type="button" class="hud-enter" onclick="otSfx('click');showExpansionSurface('${k}')">${l}<em>ENTER</em></button>`
-      ).join('')}
-      <button type="button" class="hud-enter" onclick="otSfx('click');render()">SETUP<em>WIZARD</em></button>
-    </div>
-  </section>`:'';
-
-  appRoot().innerHTML=`<div class="home hud">
-  <header class="home-header">
-    <div>
-      <p class="home-kicker">${brandLine}</p>
-      <h1 class="home-greeting">Command Deck</h1>
-    </div>
-    <div class="home-meta">
-      <div class="hud-chip-row tight">
-        ${statusChips}
-      </div>
-      <div class="home-datetime" id="homeClock">${escapeHtml(formatNow())}</div>
-    </div>
-  </header>
-
-  <section class="hud-panel">
-    <div class="hud-panel-brackets" aria-hidden="true"></div>
-    <div class="hud-panel-scan" aria-hidden="true"></div>
-    <div class="hud-panel-grid">
-      <aside class="hud-sys">
-        <h3>Systems</h3>
-        ${liveBar('cpu','CPU', cpuBase, cpuCoresN?cpuCoresN+' cores':'—')}
-        ${liveBar('ram','RAM', ramBase, ramGbN?Math.round(ramGbN)+' GB':'—')}
-        ${liveBar('gpu','GPU', gpuBase, gpu?(gpu.model||'GPU').split(' ').slice(-2).join(' '):(scanPack.ok?'none':'scan…'), gpu?'':'warn')}
-        ${liveBar('ops','OPS', opsLoad, opsLoad+'%', opsLoad>55?'warn':'')}
-        <div class="hud-sys-meta">GPU ${escapeHtml(gpuHomeLine)} · ${escapeHtml(String(model).slice(0,28))}</div>
-      </aside>
-      <main class="hud-core">
-        <div class="hud-hero">
-          <div class="hud-portrait">
-            <img src="${agentAsset('aria','aria.webp')}" alt="Aria">
-            <i class="hud-portrait-scan"></i>
-          </div>
-          <div class="hud-hero-copy">
-            <p class="sub">Aria // Command · CH-${chatOk?'01':'00'}</p>
-            <p class="line">${escapeHtml(ariaLine)}</p>
-            <div class="hud-cta-row">
-              <button type="button" class="hud-cta primary" onclick="otArmAudio();otSfx('transmit');showChat()">Open Codec</button>
-              ${expOn?`<button type="button" class="hud-cta" onclick="otArmAudio();otSfx('click');${vtOk?'openVoiceTrainer()':'showGenomeSetup()'}">Genome</button>
-              <button type="button" class="hud-cta warn" onclick="otArmAudio();otSfx('click');${videoOk?'openMuseWorkshop()':'showVideoStudioSetup()'}">Creative</button>`:''}
-            </div>
-            <div class="hud-prio-rail">${railChips}</div>
-          </div>
-        </div>
-        <div class="hud-instruments compact">
-          ${hudRadarHtml(threat)}
-          <div class="hud-gauge-row">
-            ${hudGauge('LINK', chatOk?84:16, chatOk?'':'bad')}
-            ${hudGauge('VOX', ttsOk?76:14, ttsOk?'':'warn')}
-            ${hudGauge('OPS', opsLoad, opsLoad>55?'warn':'', String(opsLoad))}
-            ${hudGauge('GPU', gpuBase||6, gpu?'':'warn', gpu?'OK':'—')}
-          </div>
-          ${hudSeqHtml(opsLoad)}
-        </div>
-      </main>
-      <aside class="hud-agents">
-        <h3>${expOn?'Roster':'Agent'}</h3>
-        ${agentStrip}
-      </aside>
-    </div>
-  </section>
-
-  ${moreRooms}
-  <p class="home-foot">${footLine}</p>
-</div>`;
-
-  if(window.__homeClock) clearInterval(window.__homeClock);
-  window.__homeClock=setInterval(()=>{
-    const el=document.getElementById('homeClock'); if(el) el.textContent=formatNow();
-  },1000);
-  startLiveBars();
-
-  if(!document.getElementById('ot-boot') && !sessionStorage.getItem('ot_boot_done')){
-    otArmAudio();
-    otSfx('boot');
-    const boot=document.createElement('div');
-    boot.id='ot-boot';
-    boot.innerHTML=`<div class="frame"><div class="kicker">Otaconskeep</div><div class="title">Command Deck</div><div class="sub">Booting ${expOn?'Expansion':'Lite'} HUD…</div></div>`;
-    document.body.appendChild(boot);
-    setTimeout(()=>{ boot.classList.add('done'); sessionStorage.setItem('ot_boot_done','1'); setTimeout(()=>boot.remove(),700); },900);
-  }else{
-    otArmAudio();
+  if(typeof keepChromeShowHomescreen==='function'){
+    await keepChromeShowHomescreen();
+  } else {
+    appRoot().innerHTML=`<div class="home"><header class="home-header"><div>
+      <p class="home-kicker">Otaconskeep</p><h1 class="home-greeting">Command Center</h1></div>
+      <div class="home-meta"><button type=button class="cc-btn" onclick="showChat()">Codec</button></div></header>
+      <p class=muted>Homescreen chrome unavailable — open Codec.</p></div>`;
   }
-  otAmbientStart();
   if(!window.__otAudioArmBound){
     window.__otAudioArmBound=1;
     const arm=()=>{ otArmAudio(); otAmbientStart(); };
@@ -1138,8 +984,15 @@ async function showChat(){
   const idleSrc=agentAsset(portraitAgent, `${portraitAgent}-idle.mp4`);
   const agentRoom=(roster.find(a=>(a.id||a.agent_id)===aid)||{});
   const roomLabel=agentRoom.room_title||agentRoom.room||'Agent room';
+  let topTabs='';
+  try{
+    if(typeof keepChromeLoadLaunchpad==='function'&&typeof keepTopTabsHtml==='function'){
+      const lp=await keepChromeLoadLaunchpad(false);
+      topTabs=keepTopTabsHtml('codec', lp&&lp.tabs);
+    }
+  }catch(_e){}
 
-  appRoot().innerHTML=`<div class="codec-cockpit">
+  appRoot().innerHTML=`${topTabs}<div class="codec-cockpit">
   <header class="cc-mast">
     <div>
       <h1>Otacon // Codec</h1>
@@ -1154,7 +1007,7 @@ async function showChat(){
       <div id="codec-mood" class="codec-mood"><span class="muted">Loading mood…</span></div>
     </div>
     <div class="cc-mast-actions">
-      <button type=button class="cc-btn ghost" onclick="showHome()">Home</button>
+      <button type=button class="cc-btn ghost" onclick="showHome()">Homescreen</button>
       ${state.roster.length?`<button type=button class="cc-btn ghost" id="codec-open-room" onclick="openCurrentAgentRoom()">Open ${escapeHtml(roomLabel)}</button>`:''}
       <button type=button class="cc-btn ghost" onclick="render()">Setup</button>
       <button type=button class="cc-btn" onclick="newConversation()">New Thread</button>
@@ -2002,6 +1855,9 @@ async function showExpansionSurface(kind){
   otSfx('click');
   state.view='expansion';
   setBodyMode('home');
+  try{
+    if(typeof keepChromeLoadLaunchpad==='function') await keepChromeLoadLaunchpad(false);
+  }catch(_e){}
   // Keep / OtaconsKeep aliases — video-studio is Muse Creative
   const aliases={
     'video-studio':'creative','videostudio':'creative','studio':'creative',
@@ -2067,9 +1923,9 @@ async function showExpansionSurface(kind){
         <div id="learn-why" class="card" style="display:none;margin-top:16px"></div>`;
       }
     }catch(e){ body=`<p class=err>${escapeHtml(String(e))}</p>`; }
-    appRoot().innerHTML=`<div class="home"><header class="home-header"><div>
+    appRoot().innerHTML=`${(typeof keepTopTabsHtml==='function'?keepTopTabsHtml('learning'):'')}<div class="home"><header class="home-header"><div>
       <p class="home-kicker">Keep Expansion</p><h1 class="home-greeting">Learning</h1></div>
-      <div class="home-meta"><button type=button class="cc-btn ghost" onclick="showHome()">Home</button>
+      <div class="home-meta"><button type=button class="cc-btn ghost" onclick="showHome()">Homescreen</button>
       <button type=button class="cc-btn" onclick="showChat()">Codec</button></div></header>
       <section class="home-group">${body}</section></div>`;
     return;
@@ -2372,11 +2228,18 @@ async function showRexBoard(opts){
   const filters=['ALL','ACTIVE','ARCHIVE','BACKLOG','READY','RESEARCHING','PLANNING','ASSIGNED','IN_PROGRESS','VERIFYING','REWORK','DONE','HARD_BLOCKED'];
   const filterBar=filters.map(f=>`<button type="button" class="rex-fb${REX_STATE.filter===f?' on':''}" data-filter="${f}">${f}</button>`).join('');
   const loop=(board.loop||[]).join(' → ');
-  appRoot().innerHTML=`<div class="home rex-page"><header class="home-header"><div>
+  let topTabs='';
+  try{
+    if(typeof keepChromeLoadLaunchpad==='function'&&typeof keepTopTabsHtml==='function'){
+      const lp=await keepChromeLoadLaunchpad(false);
+      topTabs=keepTopTabsHtml('rex', lp&&lp.tabs);
+    }
+  }catch(_e){}
+  appRoot().innerHTML=`${topTabs}<div class="home rex-page"><header class="home-header"><div>
     <p class="home-kicker">Keep Expansion · Autonomous substrate</p>
     <h1 class="home-greeting">Project REX</h1></div>
     <div class="home-meta">
-      <button type=button class="cc-btn ghost" onclick="showHome()">Home</button>
+      <button type=button class="cc-btn ghost" onclick="showHome()">Homescreen</button>
       <button type=button class="cc-btn ghost" onclick="showExpansionSurface('war-room')">War Room</button>
       <button type=button class="cc-btn" onclick="showChat()">Codec</button>
     </div></header>

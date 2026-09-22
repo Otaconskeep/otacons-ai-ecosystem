@@ -716,6 +716,23 @@ class Handler(BaseHTTPRequestHandler):
                 })
         elif path == '/api/capabilities':
             self.send_json(_capability_snapshot())
+        elif path == '/api/launchpad':
+            try:
+                from expansion.launchpad import build_launchpad
+                self.send_json(build_launchpad())
+            except Exception as exc:
+                self.send_json({
+                    'surface': 'command_center',
+                    'title': 'Otacon Command Center',
+                    'edition': 'lite',
+                    'tabs': [
+                        {'id': 'homescreen', 'label': 'Homescreen', 'action': 'homescreen'},
+                        {'id': 'codec', 'label': 'Codec', 'action': 'codec'},
+                    ],
+                    'groups': [],
+                    'tiles': [],
+                    'error': str(exc),
+                })
         elif path == '/api/voices':
             self.send_json({'voices': catalog_entries()})
         elif path == '/api/expansion/status':
@@ -876,7 +893,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({'error': {'code': 'PAYLOAD_TOO_LARGE', 'message': 'Request body too large.'}}, 413)
             return
         data = json.loads(self.rfile.read(n) or '{}')
-        if self.path == '/api/plan':
+        if self.path == '/api/launchpad/configure':
+            try:
+                from expansion.launchpad import build_launchpad, save_prefs
+                allowed = ('keep_desk_url', 'keeproute_url', 'omniroute_url', 'bookmarks')
+                updates = {k: data.get(k) for k in allowed if k in data}
+                save_prefs(updates)
+                self.send_json({'ok': True, 'launchpad': build_launchpad()})
+            except Exception as exc:
+                self.send_json({'ok': False, 'error': str(exc)}, 400)
+        elif self.path == '/api/plan':
             h = detect()
             st = data.get('storage') or recommended_volume()
             # Prefer the installer-installed model (env) over a scan-time guess so
