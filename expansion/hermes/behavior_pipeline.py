@@ -367,7 +367,9 @@ def run_post_generation(
                     dims = dict(emo.dimensions or {})
                 except Exception:
                     dims = {}
-                text = spoken_interpersonal_reply(mode, dims, agent_id=eid)
+                text = spoken_interpersonal_reply(
+                    mode, dims, agent_id=eid, user_message=user_message or '',
+                )
                 source = 'stance_template'
                 violations = policy_violations(text, policy)
             except Exception as exc:

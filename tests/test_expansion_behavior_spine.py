@@ -94,12 +94,55 @@ class BehaviorSpineTests(unittest.TestCase):
 
     def test_spoken_interpersonal_praise_no_project(self):
         from expansion.humanization import spoken_interpersonal_reply
-        reply = spoken_interpersonal_reply('praise', {}, agent_id='aria')
-        self.assertRegex(reply.lower(), r'thank|lands|hear you|grateful')
+        reply = spoken_interpersonal_reply(
+            'praise', {}, agent_id='aria',
+            user_message='i think you are amazing!',
+        )
+        self.assertRegex(reply.lower(), r'thank|lands|hear|grateful|amazing')
         self.assertNotRegex(reply.lower(), r'plan|shirt|fabric|steps')
-        hostile = spoken_interpersonal_reply('hostility', {}, agent_id='aria')
+        self.assertNotRegex(reply, r'(?i)^I am .+?\.\s')
+        hostile = spoken_interpersonal_reply(
+            'hostility', {}, agent_id='aria', user_message="youre a bitch!",
+        )
         self.assertNotRegex(hostile.lower(), r'apolog')
         self.assertNotRegex(hostile.lower(), r'plan|shirt')
+
+    def test_praise_varies_by_compliment(self):
+        from expansion.humanization import spoken_interpersonal_reply
+        a = spoken_interpersonal_reply(
+            'praise', {}, agent_id='aria',
+            user_message='i think you are amazing!',
+        )
+        b = spoken_interpersonal_reply(
+            'praise', {}, agent_id='aria',
+            user_message='youre awesome, great job on that',
+        )
+        self.assertNotEqual(a, b)
+        # Same compliment stays stable (not random flicker)
+        a2 = spoken_interpersonal_reply(
+            'praise', {}, agent_id='aria',
+            user_message='i think you are amazing!',
+        )
+        self.assertEqual(a, a2)
+
+    def test_shirt_project_is_work_not_chat_scrub(self):
+        from expansion.behavior_spine import (
+            classify_delivery_mode,
+            scrub_plan_restatement,
+            scrub_robotic_delivery,
+        )
+        self.assertEqual(classify_delivery_mode('shirt project'), 'work')
+        plan = (
+            "Let's get started on that shirt project. Here are our next steps\n"
+            "1. **Clarify**: x\n2. **Define**: y"
+        )
+        # chat must not strip plans (dangling lead-in bug)
+        kept_chat = scrub_plan_restatement(plan, delivery_mode='chat')
+        self.assertIn('1.', kept_chat)
+        self.assertIn('Clarify', kept_chat)
+        kept_work = scrub_robotic_delivery(plan, user_message='shirt project')
+        self.assertIn('1.', kept_work)
+        self.assertIn('Define', kept_work)
 
     def test_policy_enforces_praise_and_hostility_stance(self):
         from expansion.hermes.behavioral_policy import (

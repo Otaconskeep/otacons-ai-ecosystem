@@ -106,7 +106,7 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
                     mode = ''
                 if mode in ('praise', 'hostility', 'apology', 'greeting'):
                     text = spoken_interpersonal_reply(
-                        mode, dims, agent_id=human_id,
+                        mode, dims, agent_id=human_id, user_message=message or '',
                     )
         except Exception:
             text = None
@@ -224,6 +224,7 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
                     'greeting' if mode == 'social' else mode,
                     dims,
                     agent_id=human_id,
+                    user_message=message or '',
                 )
     except Exception as exc:
         from expansion.continuity.health import record_failure

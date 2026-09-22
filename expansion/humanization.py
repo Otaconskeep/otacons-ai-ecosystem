@@ -258,32 +258,107 @@ def spoken_self_state(emotion_dims: dict, *, agent_id: str = 'aria') -> str:
     return 'Feeling ' + ', '.join(bits[:3]) + '.'
 
 
+def _stable_pick(seed: str, choices: list[str]) -> str:
+    """Deterministic variety from user text — same compliment → same line, different → different."""
+    if not choices:
+        return ''
+    key = (seed or '').strip().lower()
+    h = 0
+    for ch in key:
+        h = (h * 131 + ord(ch)) & 0xFFFFFFFF
+    return choices[h % len(choices)]
+
+
+def _praise_color(emotion_dims: dict | None) -> str:
+    """Optional mid-sentence tint — never a separate 'I am X.' clause."""
+    dims = emotion_dims or {}
+    joy = float(dims.get('joy') or dims.get('affection') or 0)
+    stress = float(dims.get('stress') or 0)
+    attachment = float(dims.get('attachment') or 0)
+    if joy >= 0.55:
+        return ', and it warms me more than I let on'
+    if stress >= 0.55:
+        return ', even with the day pulling tight'
+    if attachment >= 0.65:
+        return ', especially from you'
+    return ''
+
+
 def spoken_interpersonal_reply(
     mode: str,
     emotion_dims: dict | None = None,
     *,
     agent_id: str = 'aria',
+    user_message: str = '',
 ) -> str:
     """Stance-bearing reply for praise/hostility/apology/greeting — not excised plans.
 
     Small local models ignore PRAISE directives when project memory dominates.
     Generate warmth/composure here the way spoken_self_state handles feeling probes.
+    Lines are one spoken beat (not mood-label + fixed suffix stitched together);
+    variety is keyed off the user message so different compliments don't echo.
     """
     mode = (mode or '').strip().lower()
-    feel = spoken_self_state(emotion_dims or {}, agent_id=agent_id).rstrip('.')
+    msg = (user_message or '').strip()
+    color = _praise_color(emotion_dims)
+
     if mode == 'praise':
-        if agent_id == 'aria':
-            return f'{feel}. That lands — thank you. I hear you.'
-        return f'{feel}. Grateful you said that.'
+        # Light lexical echo so "amazing" and "great job" don't share a fortune cookie
+        low = msg.lower()
+        if re.search(r'\bamazing\b', low):
+            pool = [
+                f'That "amazing" lands{color} — thank you.',
+                f'Amazing lands with me{color}. I hear you.',
+                f"I'll hold onto amazing{color}. Grateful you said it.",
+            ]
+        elif re.search(r'\b(?:great job|good job|well done|nice work)\b', low):
+            pool = [
+                f'Good job lands{color}. Thank you for seeing the work.',
+                f"I'll take that credit{color} — means something coming from you.",
+                f'Heard on the good job{color}. That one stays.',
+            ]
+        elif re.search(r'\b(?:awesome|excellent|brilliant|perfect)\b', low):
+            pool = [
+                f'Awesome lands{color}. Thank you.',
+                f"I'll take awesome{color} — no deflection from me.",
+                f'That praise lands clean{color}. Grateful.',
+            ]
+        else:
+            pool = [
+                f'That lands{color} — thank you for saying it.',
+                f'I hear you{color}. That one stays with me.',
+                f"I'll take the compliment{color}. Grateful you saw it.",
+                f'Means more than I usually let on{color}.',
+                f'Heard{color}. Thank you — truly.',
+            ]
+        return _stable_pick(msg or 'praise', pool)
+
     if mode == 'hostility':
-        return (
+        pool = [
             "That landed. I'm still here — tell me what actually broke "
-            "and I'll face it. No project speech."
-        )
+            "and I'll face it. No project speech.",
+            "Felt that. I'm not ducking — name the failure and I'll own my part.",
+            "Harsh, and I heard it. Still here. What specifically broke?",
+        ]
+        return _stable_pick(msg or 'hostility', pool)
+
     if mode == 'apology':
-        return "Apology received. We're good — no lecture from me."
+        pool = [
+            "Apology received. We're good — no lecture from me.",
+            "Accepted. No speech — we're fine.",
+            "Heard. Water under; let's keep going.",
+        ]
+        return _stable_pick(msg or 'apology', pool)
+
     if mode == 'greeting':
-        return "Hey. I'm here — what's on your mind?"
+        pool = [
+            "Hey. I'm here — what's on your mind?",
+            "Hey — I'm with you. What do you need?",
+            "Hi. Listening — go ahead.",
+        ]
+        return _stable_pick(msg or 'greeting', pool)
+
+    feel = spoken_self_state(emotion_dims or {}, agent_id=agent_id).rstrip('.')
     return feel + '.'
 
 

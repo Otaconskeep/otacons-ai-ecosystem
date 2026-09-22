@@ -20,8 +20,9 @@ _WORK_RE = re.compile(
     r'\b('
     r'research|plan|build|design|draft|outline|strategy|ideas?|help\s+me|'
     r'work\s+on|create|make|write|investigate|compare|recommend|'
-    r'customers?|marketing|website|t[-\s]?shirt|laser|engraving|3d\s*print|'
-    r'wood\s*cut|project\s+rex|todo|roadmap|steps?'
+    r'customers?|marketing|website|t[-\s]?shirts?|shirts?|fabric|'
+    r'laser|engraving|3d\s*print|'
+    r'wood\s*cut|project\s+rex|(?:the|our|your|open)\s+project|todo|roadmap|steps?'
     r')\b',
     re.IGNORECASE,
 )
@@ -129,6 +130,7 @@ _PLAN_SCAFFOLD_RE = re.compile(
     r'\bwe(?:\'ll| will)\s+(?:keep\s+)?(?:this\s+)?(?:project\s+)?on\s+track[^.?!]*[.?!]?\s*|'
     r'\bwe(?:\'ll| will)\s+proceed\s+in\s+(?:\w+\s+)?(?:key\s+)?steps?\b[^.?!]*[.?!]?\s*|'
     r'\b(?:with\s+)?(?:a\s+)?(?:clear|structured)\s+plan(?:\s+right\s+away|\s+then)?\b[^.?!]*[.?!]?\s*|'
+    r'\b(?:here\s+are|here\'?s)\s+(?:our|the|your|my)?\s*(?:next\s+)?steps?\b[:\s]*|'
     r'\b(?:first|next)\s+up[,:]?\s+(?:let\'?s|lets)[^.?!]*[.?!]?\s*'
     r')',
 )
@@ -448,11 +450,14 @@ def scrub_plan_restatement(text: str, *, delivery_mode: str = '') -> str:
 
     Prompt-only rules lose on small models when memory is full of the open
     project. Same pattern as fake-teammate scrub: deterministic after generate.
+
+    Only interpersonal modes — never `chat`. Bare project mentions classify as
+    work; scrubbing chat left dangling lead-ins ("Here are our next steps").
     """
     mode = (delivery_mode or '').strip().lower()
-    if mode in ('work', 'execute'):
+    if mode in ('work', 'execute', 'chat', ''):
         return text
-    if mode not in ('greeting', 'social', 'praise', 'hostility', 'apology', 'chat'):
+    if mode not in ('greeting', 'social', 'praise', 'hostility', 'apology'):
         return text
     if not text or not text.strip():
         return text
@@ -539,7 +544,7 @@ def scrub_robotic_delivery(
     mode = (delivery_mode or '').strip()
     if not mode and user_message:
         mode = classify_delivery_mode(user_message)
-    if mode and mode not in ('work', 'execute'):
+    if mode and mode not in ('work', 'execute', 'chat'):
         out = scrub_plan_restatement(out, delivery_mode=mode)
     # Kill formula closers
     out = re.sub(
