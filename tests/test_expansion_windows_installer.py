@@ -77,6 +77,10 @@ def test_expansion_windows_installer_contracts():
     must("reset --hard origin/main" in SH, "diverged Core tip recovers via hard reset", fails)
     must("pull --ff-only" in SH, "tries ff-only before reset", fails)
     must("backup/pre-expansion-" in SH, "saves backup branch before hard reset", fails)
+    must("LOCAL EDITS DETECTED" in SH, "warns before wiping uncommitted soft-update edits", fails)
+    must("stash push" in SH, "stashes dirty tree before soft-update reset", fails)
+    must("soft-update-backups" in SH, "writes soft-update backup folder for local edits", fails)
+    must("OTACON_SOFT_UPDATE_ABORT_IF_DIRTY" in SH, "optional abort-if-dirty escape hatch", fails)
     must("EXP_GENOME_STATE" in SH and "Genome Voice Trainer" in SH,
          "Expansion installer owns Genome premium path", fails)
     must("resolve_nvidia_smi" in SH and "/usr/lib/wsl/lib/nvidia-smi" in SH,

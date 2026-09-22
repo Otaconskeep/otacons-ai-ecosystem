@@ -176,6 +176,18 @@ if [ -d "$ROOT/.git" ]; then
     echo "APP_REV_FAIL=git_fetch_failed exit=$FETCH_EC"
     exit 3
   fi
+  # Preserve uncommitted local edits before reset --hard (defect #7).
+  DIRTY="$(git_as_owner status --porcelain 2>/dev/null || true)"
+  if [ -n "$DIRTY" ]; then
+    STAMP="$(date +%Y%m%d-%H%M%S)"
+    BACKUP_REF="backup/pre-gpu-fix-${STAMP}"
+    echo "LOCAL_EDITS_DETECTED=1"
+    echo "Backing up local edits before reset (branch + stash)."
+    git_as_owner branch "$BACKUP_REF" HEAD 2>/dev/null || true
+    git_as_owner stash push -u -m "otacon-gpu-fix-${STAMP}" 2>/dev/null || true
+    echo "BACKUP_REF=$BACKUP_REF"
+    echo "Recover: git -C \"$ROOT\" stash list   or   git checkout $BACKUP_REF"
+  fi
   echo "stage=git-checkout"
   git_as_owner checkout -B main origin/main 2>&1 | tail -n 5
   echo "stage=git-reset"

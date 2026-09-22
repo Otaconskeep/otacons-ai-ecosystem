@@ -250,6 +250,39 @@ CURRENT_BRANCH="$(run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" branch --show-c
 # Match Core installer: diverged trees (ahead/behind) must not die on exit 128.
 # Soft-update ALWAYS tracks origin/main tip — never an archived release.json.commit.
 if [[ "$CURRENT_BRANCH" == "main" || -z "$CURRENT_BRANCH" ]]; then
+  # Defect #7: never silently destroy uncommitted local edits on soft-update.
+  _DIRTY="$(run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" status --porcelain 2>/dev/null || true)"
+  if [[ -n "${_DIRTY}" ]]; then
+    _STAMP="$(date +%Y%m%d-%H%M%S)"
+    _BACKUP_REF="backup/pre-soft-update-${_STAMP}"
+    _BACKUP_DIR="$OWNER_HOME/.local/share/otacon/soft-update-backups/${_STAMP}"
+    warn "=============================================================="
+    warn "LOCAL EDITS DETECTED — soft-update will reset to origin/main tip."
+    warn "Backing up first (this used to wipe edits with no warning)."
+    warn "=============================================================="
+    run_as_owner "$OWNER" -- mkdir -p "$_BACKUP_DIR" || true
+    printf '%s\n' "$_DIRTY" | run_as_owner "$OWNER" -- tee "$_BACKUP_DIR/git-status-porcelain.txt" >/dev/null || true
+    run_as_owner "$OWNER" -- tee "$_BACKUP_DIR/README.txt" >/dev/null <<EOF || true
+Otacon Expansion soft-update backup
+When: ${_STAMP}
+Install: ${INSTALL_DIR}
+Branch ref: ${_BACKUP_REF}
+Recover stash: git -C "${INSTALL_DIR}" stash list
+Recover branch: git -C "${INSTALL_DIR}" checkout ${_BACKUP_REF}
+Abort next time: OTACON_SOFT_UPDATE_ABORT_IF_DIRTY=1
+EOF
+    run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" branch "$_BACKUP_REF" HEAD || true
+    if run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" stash push -u -m "otacon-soft-update-${_STAMP}"; then
+      ok "Local edits stashed as otacon-soft-update-${_STAMP}"
+    else
+      warn "git stash push failed — branch backup $_BACKUP_REF still saved if possible."
+    fi
+    warn "Backup details: $_BACKUP_DIR"
+    warn "Branch: $_BACKUP_REF  |  stash: git -C \"$INSTALL_DIR\" stash list"
+    if [[ "${OTACON_SOFT_UPDATE_ABORT_IF_DIRTY:-0}" == "1" ]]; then
+      die "Aborting soft-update (OTACON_SOFT_UPDATE_ABORT_IF_DIRTY=1). Your edits are in stash/branch above. Rerun without that flag to apply origin/main tip."
+    fi
+  fi
   if ! run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" pull --ff-only; then
     BACKUP_REF="backup/pre-expansion-$(date +%Y%m%d-%H%M%S)"
     warn "Fast-forward pull failed (local tip diverged from origin/main)."

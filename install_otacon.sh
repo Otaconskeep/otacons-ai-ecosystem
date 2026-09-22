@@ -1335,6 +1335,39 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
   # release.json.commit is informational / installer-hash provenance — never
   # leave friends on an archived feature pin while tip moved on.
   if [[ "$CURRENT_BRANCH" == "main" || -z "$CURRENT_BRANCH" ]]; then
+    # Defect #7: never silently destroy uncommitted local edits on soft-update.
+    _DIRTY="$(git -C "$INSTALL_DIR" status --porcelain 2>/dev/null || true)"
+    if [[ -n "${_DIRTY}" ]]; then
+      _STAMP="$(date +%Y%m%d-%H%M%S)"
+      _BACKUP_REF="backup/pre-soft-update-${_STAMP}"
+      _BACKUP_DIR="${HOME:-/tmp}/.local/share/otacon/soft-update-backups/${_STAMP}"
+      warn "=============================================================="
+      warn "LOCAL EDITS DETECTED — soft-update will reset to origin/main tip."
+      warn "Backing up first (this used to wipe edits with no warning)."
+      warn "=============================================================="
+      mkdir -p "$_BACKUP_DIR" || true
+      printf '%s\n' "$_DIRTY" > "$_BACKUP_DIR/git-status-porcelain.txt" || true
+      {
+        printf 'Otacon soft-update backup\n'
+        printf 'When: %s\n' "$_STAMP"
+        printf 'Install: %s\n' "$INSTALL_DIR"
+        printf 'Branch ref: %s\n' "$_BACKUP_REF"
+        printf 'Recover stash: git -C "%s" stash list\n' "$INSTALL_DIR"
+        printf 'Recover branch: git -C "%s" checkout %s\n' "$INSTALL_DIR" "$_BACKUP_REF"
+        printf 'Abort next time: OTACON_SOFT_UPDATE_ABORT_IF_DIRTY=1\n'
+      } > "$_BACKUP_DIR/README.txt" || true
+      git -C "$INSTALL_DIR" branch "$_BACKUP_REF" HEAD 2>/dev/null || true
+      if git -C "$INSTALL_DIR" stash push -u -m "otacon-soft-update-${_STAMP}" 2>/dev/null; then
+        ok "Local edits stashed as otacon-soft-update-${_STAMP}"
+      else
+        warn "git stash push failed — branch backup $_BACKUP_REF still saved if possible."
+      fi
+      warn "Backup details: $_BACKUP_DIR"
+      warn "Branch: $_BACKUP_REF  |  stash: git -C \"$INSTALL_DIR\" stash list"
+      if [[ "${OTACON_SOFT_UPDATE_ABORT_IF_DIRTY:-0}" == "1" ]]; then
+        die "Aborting soft-update (OTACON_SOFT_UPDATE_ABORT_IF_DIRTY=1). Your edits are in stash/branch above. Rerun without that flag to apply origin/main tip."
+      fi
+    fi
     if ! run_watched 300 "git pull ff-only" -- git -C "$INSTALL_DIR" pull --ff-only; then
       warn "Fast-forward pull failed — recovering to origin/main tip."
     fi

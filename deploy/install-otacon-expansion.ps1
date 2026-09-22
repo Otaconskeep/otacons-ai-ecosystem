@@ -352,8 +352,8 @@ try {
 
 $netOk = $false
 try {
-    $netProbe = 'set +e; (getent hosts github.com >/dev/null 2>&1 && echo OK); (curl -fsSI --max-time 8 https://github.com >/dev/null 2>&1 && echo OK)'
-    $netOut = & wsl.exe -d $distro -- bash -lc $netProbe 2>$null
+    # Short probe via --exec (not bash -lc) so Windows paths with spaces cannot mangle argv.
+    $netOut = & wsl.exe -d $distro --exec bash -c 'set +e; (getent hosts github.com >/dev/null 2>&1 && echo OK); (curl -fsSI --max-time 8 https://github.com >/dev/null 2>&1 && echo OK)' 2>$null
     if (($netOut | Out-String) -match 'OK') { $netOk = $true }
 } catch {}
 if (-not $netOk) {
@@ -932,6 +932,9 @@ if (-not $status -or -not $status.enabled -or -not $status.foundation_ready -or 
     Write-Host ("  expansion_entitled={0}" -f $entitled) -ForegroundColor White
     Write-Host ("  agents={0}  missing={1}" -f $agentCount, ($missing -join ',')) -ForegroundColor White
     Write-Host ("  base={0}" -f $(if ($base) { $base } else { 'unreachable' })) -ForegroundColor White
+    if ($out -match 'EXP_FOUNDATION_READY=(\d+)') { Write-Host ("  EXP_FOUNDATION_READY={0}" -f $Matches[1]) -ForegroundColor DarkCyan }
+    if ($out -match 'EXP_AGENT_COUNT=(\d+)') { Write-Host ("  EXP_AGENT_COUNT={0}" -f $Matches[1]) -ForegroundColor DarkCyan }
+    if ($out -match 'EXP_SERVICE_ACTIVE=(\S+)') { Write-Host ("  EXP_SERVICE_ACTIVE={0}" -f $Matches[1]) -ForegroundColor DarkCyan }
     if ($out -match 'EXP_FAIL=wsl_network|cannot_resolve_github|git_fetch') {
         Write-Host "  Likely cause: WSL cannot reach GitHub (see TROUBLESHOOTING.txt section 1)." -ForegroundColor Yellow
     }

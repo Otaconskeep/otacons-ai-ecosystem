@@ -53,7 +53,7 @@ if not exist "%LOGDIR%" mkdir "%LOGDIR%" >nul 2>&1
 >>"%LOGFILE%" echo [%DATE% %TIME%] [BAT] Expansion Setup begin unattended=%OTACON_UNATTENDED%
 
 REM Dev tree: ONLY when explicitly opted in. Local helpers next to this bat used to
-REM skip GitHub refresh and strand users on stale scripts (Crist OneDrive path).
+REM skip GitHub refresh and strand users on stale scripts (friend OneDrive path).
 REM Set OTACON_DEV_TREE=1 to force local checkout scripts.
 if /I "%OTACON_DEV_TREE%"=="1" if exist "%~dp0deploy\install-otacon-expansion.ps1" if exist "%~dp0deploy\wsl-bash-file.ps1" if exist "%~dp0install_otacon_expansion.sh" (
   echo.
