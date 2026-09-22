@@ -60,6 +60,47 @@ def _m001_p2_living(layout: StateLayout) -> None:
     RoomRegistry(layout).seed_defaults()
 
 
+_STOCK_PERSONA_MARKERS = (
+    'command coordinator of this keep',
+    'greetings… how may i assist',
+    'soften only for the operator',
+    'human court diction',
+)
+
+
+def _m002_behavior_spine_personas(layout: StateLayout) -> None:
+    """Refresh stock Aria–Sentry personas to Keep-parity work-first voice.
+
+    Only overwrites personas that still match the old robotic stock text.
+    Owner-customized personas (no stock markers) are left alone. Learning,
+    emotion, and relationship stores are never touched.
+    """
+    from expansion.seed_defaults import build_default_roster
+    from expansion.schema import to_dict
+
+    layout.ensure_user_dirs()
+    agents_dir = layout.user_agents
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    fresh = {a.agent_id: a for a in build_default_roster()}
+    for agent_id, agent in fresh.items():
+        path = agents_dir / f'default-{agent_id}.json'
+        if not path.exists():
+            path.write_text(json.dumps(to_dict(agent), indent=2) + '\n', encoding='utf-8')
+            continue
+        try:
+            existing = json.loads(path.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        persona = str(existing.get('persona') or '')
+        low = persona.lower()
+        if not any(m in low for m in _STOCK_PERSONA_MARKERS):
+            # Not old stock — treat as owner customization
+            continue
+        existing['persona'] = agent.persona
+        existing['updated_at'] = time.time()
+        path.write_text(json.dumps(existing, indent=2) + '\n', encoding='utf-8')
+
+
 _REGISTRY: list[Migration] = [
     Migration(
         migration_id='m000_baseline',
@@ -74,6 +115,13 @@ _REGISTRY: list[Migration] = [
         from_agent_schema=1,
         to_agent_schema=1,
         apply=_m001_p2_living,
+    ),
+    Migration(
+        migration_id='m002_behavior_spine_personas',
+        description='Refresh stock personas to work-first Keep-parity voice; preserve custom personas + memory',
+        from_agent_schema=1,
+        to_agent_schema=1,
+        apply=_m002_behavior_spine_personas,
     ),
 ]
 

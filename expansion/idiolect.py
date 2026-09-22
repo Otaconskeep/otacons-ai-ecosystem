@@ -78,6 +78,13 @@ def apply_idiolect(text: str, agent_id: str) -> str:
     # Strip only leading opener debris — never eat the closing period of a real sentence
     out = re.sub(r'^[!?,;:\s]+', '', out).strip()
 
+    # Keep-parity: kill robotic briefing loops that survive the model
+    try:
+        from expansion.behavior_spine import scrub_robotic_delivery
+        out = scrub_robotic_delivery(out)
+    except Exception:
+        pass
+
     speech = {}
     try:
         from expansion.humanization import (

@@ -222,14 +222,38 @@ class ExpansionRuntime:
             if affect_lines else ''
         )
 
+        # Keep-parity clean-room spine: anti-briefing + work mode + layered IQ
+        work_section = ''
+        delivery_section = ''
+        layered_section = ''
+        try:
+            from expansion.behavior_spine import (
+                work_mode_directive,
+                delivery_rules_block,
+                layered_intelligence_block,
+            )
+            work_section = work_mode_directive(user_message or '')
+            delivery_section = delivery_rules_block(agent_id=agent_id) + '\n'
+            layered_section = layered_intelligence_block(
+                emotion_summary=str(emotion_summary),
+                learn_lines=learn_lines,
+                journal_lines=journal_lines,
+            )
+        except Exception:
+            pass
+
         system_prompt = (
             f"{view.persona}\n\n"
             f"{who_section}"
+            f"{delivery_section}"
+            f"{work_section}"
+            f"{layered_section}"
             f"[Expansion runtime context — stay in character; do not invent owner history]\n"
             f"Voice rules: never sound like a generic AI assistant. Never say "
             f"\"happy to help\", \"as an AI\", \"certainly\", \"I'd be glad to\", "
-            f"or dump emotion percentages. Speak as this person. Prefer concrete "
-            f"specifics over stock helpfulness.\n"
+            f"\"Greetings\", or dump emotion percentages. Speak as this person. "
+            f"Prefer concrete specifics and usable plans over stock helpfulness "
+            f"or Keep/ops continuity speeches.\n"
             f"Archetype: {dossier.character.archetype}\n"
             f"Communication: {dossier.character.communication_style}\n"
             f"{self_section}"

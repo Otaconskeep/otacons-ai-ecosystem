@@ -98,10 +98,26 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
             except ProviderError as e:
                 raise RuntimeError(str(e)) from e
 
-    # Idiolect post-pass — scrub embodiment / corporate closers
+    # Idiolect post-pass — scrub embodiment / corporate closers / briefing loops
     try:
         from expansion.idiolect import apply_idiolect
         text = apply_idiolect(text, human_id)
+    except Exception:
+        pass
+    try:
+        from expansion.behavior_spine import scrub_robotic_delivery, wants_work_deliverable
+        text = scrub_robotic_delivery(text)
+        # If work was asked and the model still only greets, leave a hard nudge
+        # in-process (learning stores the miss) — UI still gets non-empty text.
+        if wants_work_deliverable(message) and text and len(text.split()) < 25:
+            text = (
+                text.rstrip('.')
+                + ". Here is a first-pass plan: (1) clarify the deliverable, "
+                "(2) list tools and constraints you already named, "
+                "(3) draft three options, (4) pick one and ship a draft today. "
+                "Tell me which slice you want next and I will go deeper."
+            )
+            text = scrub_robotic_delivery(text)
     except Exception:
         pass
 

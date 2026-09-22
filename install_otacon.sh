@@ -1762,7 +1762,7 @@ if cfg_path.is_file():
     cfg['llm_service'] = llm
     if not cfg.get('agents'):
         cfg['agents'] = [
-            {'id': 'agent_001', 'display_name': 'Aria', 'voice_id': 'voice_aria', 'role': 'primary', 'personality': 'friendly'},
+            {'id': 'agent_001', 'display_name': 'Aria', 'voice_id': 'voice_aria', 'role': 'primary', 'personality': 'warm decisive coordinator — delivers plans and research, never robotic greetings'},
         ]
     feats = cfg.setdefault('features', {})
     feats.setdefault('chat', True)
@@ -1776,7 +1776,7 @@ else:
         ['chat', 'memory'],
         branding={'product_name': 'Otacon', 'tagline': 'Local AI Command System', 'creator': 'Antonio G. Garcia', 'show_creator_credit': True},
         agents=[
-            {'id': 'agent_001', 'display_name': 'Aria', 'voice_id': 'voice_aria', 'role': 'primary', 'personality': 'friendly'},
+            {'id': 'agent_001', 'display_name': 'Aria', 'voice_id': 'voice_aria', 'role': 'primary', 'personality': 'warm decisive coordinator — delivers plans and research, never robotic greetings'},
         ],
         llm_service=llm,
     )

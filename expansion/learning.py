@@ -668,6 +668,17 @@ def learn_from_autonomy_outcome(
 _CONCISE = re.compile(r'\b(concise|brief|short|tl;?dr|bullet)\b', re.I)
 _VERBOSE = re.compile(r'\b(detailed|thorough|long.?form|elaborate)\b', re.I)
 _CALL_ME = re.compile(r'\bcall me\s+([A-Za-z][\w\'-]{1,40})\b', re.I)
+_MY_NAME = re.compile(
+    r'\b(?:my name is|i am|i\'m)\s+([A-Z][a-zA-Z\'-]{1,40})\b'
+)
+_CRAFT = re.compile(
+    r'\b('
+    r't[-\s]?shirts?|laser\s*engrav(?:er|ing)|3d\s*prints?(?:er)?|'
+    r't[-\s]?shirt\s*press|wood\s*cut(?:ting)?|cnc|website\s*design|'
+    r'customers?|marketing'
+    r')\b',
+    re.I,
+)
 
 
 def ingest_owner_message(
@@ -697,12 +708,27 @@ def ingest_owner_message(
             scope='shared',
             actor=actor,
         )
-    m = _CALL_ME.search(text)
+    m = _CALL_ME.search(text) or _MY_NAME.search(text)
     if m:
         name = m.group(1).strip()
+        # Avoid treating "I am ready" style as a name
+        if name.lower() not in {
+            'ready', 'here', 'sorry', 'interested', 'looking', 'trying',
+            'working', 'fine', 'good', 'okay', 'ok',
+        }:
+            return engine.observe(
+                'ledger',
+                f'owner prefers to be called {name}',
+                learning_type='owner_preference',
+                evidence_ids=[event_id],
+                scope='shared',
+                actor=actor,
+            )
+    crafts = sorted({c.group(0).lower() for c in _CRAFT.finditer(text)})
+    if crafts:
         return engine.observe(
             'ledger',
-            f'owner prefers to be called {name}',
+            'owner crafts/tools/goals include: ' + ', '.join(crafts[:8]),
             learning_type='owner_preference',
             evidence_ids=[event_id],
             scope='shared',
