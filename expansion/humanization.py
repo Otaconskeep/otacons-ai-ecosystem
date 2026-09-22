@@ -320,7 +320,12 @@ def _first_personize(text: str, *, name: str = '') -> str:
     if not s:
         return s
     if name:
-        s = re.sub(rf'^{re.escape(name)}\s+', '', s, flags=re.I)
+        # "Aria is the household's first voice…" → "I am the household's first voice…"
+        # Stripping the name alone left a subjectless "is the…" sentence.
+        if re.match(rf'^{re.escape(str(name))}\s+is\b', s, flags=re.I):
+            s = re.sub(rf'^{re.escape(str(name))}\s+is\b', 'I am', s, flags=re.I)
+        else:
+            s = re.sub(rf'^{re.escape(str(name))}\s+', '', s, flags=re.I)
     for third in ('She ', 'He ', 'They '):
         if s.startswith(third):
             s = 'I ' + s[len(third):]
@@ -337,6 +342,11 @@ def _first_personize(text: str, *, name: str = '') -> str:
     for a, b in reps:
         s = s.replace(a, b)
     s = re.sub(r'\bshe treats\b', 'I treat', s, flags=re.I)
+    # Guard: never emit a leading lowercase verb fragment like "is the…".
+    if s and s[0].islower() and not s.startswith('I '):
+        s = 'I ' + s
+        s = re.sub(r'^I is\b', 'I am', s, flags=re.I)
+        s = re.sub(r'^I am am\b', 'I am', s, flags=re.I)
     return s
 
 

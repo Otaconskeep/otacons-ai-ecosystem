@@ -10,6 +10,7 @@ from unittest import mock
 from expansion.bootstrap import bootstrap_runtime_state
 from expansion.canonical_dossiers import clear_dossier_cache, get_canonical_dossier
 from expansion.humanization import (
+    _first_personize,
     clear_humanization_cache,
     contains_embodiment_tell,
     core_fallback_persona,
@@ -104,7 +105,14 @@ class HumanizationCase(unittest.TestCase):
         reply = render_dossier_self_reply('aria', 'tell me about yourself', layout=self.layout)
         self.assertTrue(reply)
         self.assertNotIn('as an AI', reply)
+        self.assertTrue(reply.startswith('I '), msg=repr(reply))
+        self.assertFalse(reply.lower().startswith('is '), msg=repr(reply))
         self.assertTrue(reply[0].isupper() or reply.startswith('I'))
+
+    def test_first_personize_name_is_becomes_i_am(self):
+        out = _first_personize('Aria is the household\'s first voice.', name='Aria')
+        self.assertTrue(out.startswith('I am '), msg=repr(out))
+        self.assertNotRegex(out, r'(?i)^is\s')
 
     def test_spoken_self_state_no_telemetry(self):
         line = spoken_self_state({'stress': 0.7, 'attachment': 0.8, 'jealousy': 0.5})

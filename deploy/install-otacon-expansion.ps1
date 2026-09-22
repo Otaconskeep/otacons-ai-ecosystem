@@ -948,7 +948,11 @@ if (-not $status -or -not $status.enabled -or -not $status.foundation_ready -or 
 
 Write-Host ""
 Write-Host " ============================================================"
-if ($entitled) {
+$degraded = ($installExit -eq 2)
+if ($degraded) {
+    Write-Host "   FOUNDATION DEGRADED"
+    Write-Host "   (roster/API healthy; Linux test suite did not fully pass - exit 2)"
+} elseif ($entitled) {
     Write-Host "   FOUNDATION INSTALLED + ENTITLED"
 } else {
     Write-Host "   FOUNDATION INSTALLED"
@@ -957,6 +961,7 @@ Write-Host " ============================================================"
 Write-Host "   enabled=true"
 Write-Host "   foundation_ready=true"
 Write-Host ("   expansion_entitled={0}" -f $entitled)
+Write-Host ("   linux_install_exit={0}" -f $installExit)
 if (-not $entitled) {
     $entMsg = if ($status -and $status.entitlement) { $status.entitlement.message } else { 'check /api/expansion/entitlement' }
     Write-Host ""
@@ -984,12 +989,14 @@ if ($status -and $status.report) { $ocr = [bool]$status.report.overall_core_read
 Write-Host ("   overall_core_ready={0} (foundation/entitled can be true while VOICE/etc. still LIMITED)" -f $ocr)
 Write-Host " ============================================================"
 Write-Host ""
-if ($entitled) {
+if ($degraded) {
+    Write-OtaconSay "Foundation is online, but Linux reported DEGRADED (test suite soft-fail). See the Expansion install log." "warn"
+} elseif ($entitled) {
     Write-OtaconSay "Foundation is online and entitled. Talk to Aria - she learns on chat turns." "ok"
 } else {
     Write-OtaconSay "Foundation installed. Entitlement is false - open entitlement API for the reason." "warn"
 }
-Write-ExpLog "SUCCESS foundation_ready=1 entitled=$entitled overall_core_ready=$ocr"
+Write-ExpLog "SUCCESS foundation_ready=1 entitled=$entitled overall_core_ready=$ocr degraded=$degraded linux_exit=$installExit"
 
 # Desktop + Start Menu launcher (Lite may have created Open-Otacon.bat; Expansion upgrades label)
 $launcherPs1 = Join-Path $InstDir "deploy\install-desktop-launcher.ps1"
@@ -1011,4 +1018,6 @@ if (Test-Path -LiteralPath $launcherPs1) {
 if ($OpenBrowser -and -not $Unattended -and $env:OTACON_UNATTENDED -ne "1") {
     try { Start-Process "$base/" } catch {}
 }
+# Propagate Linux DEGRADED (2) - do not flatten soft-fail into Windows exit 0.
+if ($degraded) { exit 2 }
 exit 0

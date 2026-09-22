@@ -160,6 +160,9 @@ set "RC=!ERRORLEVEL!"
 echo.
 if "!RC!"=="0" (
   echo  Expansion install finished.
+) else if "!RC!"=="2" (
+  echo  Expansion foundation degraded - roster online, test suite soft-fail. exit=2
+  echo  Log: %LOGFILE%
 ) else (
   echo  Expansion install failed. exit=!RC!
   echo  Log: %LOGFILE%
