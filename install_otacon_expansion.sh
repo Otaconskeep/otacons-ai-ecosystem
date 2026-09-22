@@ -186,11 +186,15 @@ else
   INSTALL_LOG_DIR="$OTACON_INSTALL_LOG_DIR"
 fi
 mkdir -p "$INSTALL_LOG_DIR"
-# Re-bind log if we discovered a better owner home after early tee setup
+# Re-bind log if we discovered a better owner home after early tee setup.
+# Critical: also restart tee — changing INSTALL_LOG alone leaves stdout on the root path.
 if [[ "$INSTALL_LOG" != "$INSTALL_LOG_DIR/"* ]]; then
+  OLD_LOG="$INSTALL_LOG"
   NEW_LOG="$INSTALL_LOG_DIR/install-expansion-$(date +%Y%m%d-%H%M%S).log"
-  cp -f "$INSTALL_LOG" "$NEW_LOG" 2>/dev/null || true
+  cp -f "$OLD_LOG" "$NEW_LOG" 2>/dev/null || true
   INSTALL_LOG="$NEW_LOG"
+  exec > >(tee -a "$INSTALL_LOG") 2>&1
+  log "Install log re-bound to owner path -> $INSTALL_LOG (was $OLD_LOG)"
 fi
 
 ok "Otacon Core found: $INSTALL_DIR (owner=$OWNER)"
@@ -251,7 +255,10 @@ CURRENT_BRANCH="$(run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" branch --show-c
 # Soft-update ALWAYS tracks origin/main tip — never an archived release.json.commit.
 if [[ "$CURRENT_BRANCH" == "main" || -z "$CURRENT_BRANCH" ]]; then
   # Defect #7: never silently destroy uncommitted local edits on soft-update.
-  _DIRTY="$(run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" status --porcelain 2>/dev/null || true)"
+  # Tracked edits only: git reset --hard already preserves untracked files, and
+  # stash -u previously swallowed .venv/.build (untracked build artifacts) and
+  # killed the service. Never use stash -u here.
+  _DIRTY="$(run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" status --porcelain -uno 2>/dev/null || true)"
   if [[ -n "${_DIRTY}" ]]; then
     _STAMP="$(date +%Y%m%d-%H%M%S)"
     _BACKUP_REF="backup/pre-soft-update-${_STAMP}"
@@ -270,12 +277,18 @@ Branch ref: ${_BACKUP_REF}
 Recover stash: git -C "${INSTALL_DIR}" stash list
 Recover branch: git -C "${INSTALL_DIR}" checkout ${_BACKUP_REF}
 Abort next time: OTACON_SOFT_UPDATE_ABORT_IF_DIRTY=1
+Note: untracked files (including .venv) are left on disk — only tracked edits are stashed.
 EOF
     run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" branch "$_BACKUP_REF" HEAD || true
-    if run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" stash push -u -m "otacon-soft-update-${_STAMP}"; then
-      ok "Local edits stashed as otacon-soft-update-${_STAMP}"
+    _VENV_BEFORE=0
+    [[ -x "$INSTALL_DIR/.venv/bin/python" ]] && _VENV_BEFORE=1
+    if run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" stash push -m "otacon-soft-update-${_STAMP}"; then
+      ok "Local tracked edits stashed as otacon-soft-update-${_STAMP}"
     else
       warn "git stash push failed — branch backup $_BACKUP_REF still saved if possible."
+    fi
+    if [[ "$_VENV_BEFORE" == "1" && ! -x "$INSTALL_DIR/.venv/bin/python" ]]; then
+      die "Soft-update backup removed .venv/bin/python — refusing to continue. Restore from stash (git stash show -p / stash apply) or re-run Core installer, then Expansion."
     fi
     warn "Backup details: $_BACKUP_DIR"
     warn "Branch: $_BACKUP_REF  |  stash: git -C \"$INSTALL_DIR\" stash list"
@@ -295,6 +308,9 @@ EOF
     log "Soft-update → origin/main tip=${ORIGIN_TIP}"
   fi
   run_as_owner "$OWNER" -- git -C "$INSTALL_DIR" reset --hard "$SYNC_TARGET"
+  if [[ ! -x "$INSTALL_DIR/.venv/bin/python" ]]; then
+    die "After soft-update, Core's Python venv is missing at $INSTALL_DIR/.venv/bin/python. Re-run Core installer to rebuild it, then Expansion."
+  fi
   ok "Working tree matches origin/main tip ${SYNC_TARGET}."
 else
   warn "Repository is on branch '${CURRENT_BRANCH:-detached}'. Fetched origin only; leaving your branch untouched."

@@ -176,15 +176,22 @@ if [ -d "$ROOT/.git" ]; then
     echo "APP_REV_FAIL=git_fetch_failed exit=$FETCH_EC"
     exit 3
   fi
-  # Preserve uncommitted local edits before reset --hard (defect #7).
-  DIRTY="$(git_as_owner status --porcelain 2>/dev/null || true)"
+  # Preserve uncommitted local tracked edits before reset --hard (defect #7).
+  # Do not stash -u: that swept .venv/.build and broke Otacon.
+  DIRTY="$(git_as_owner status --porcelain -uno 2>/dev/null || true)"
   if [ -n "$DIRTY" ]; then
     STAMP="$(date +%Y%m%d-%H%M%S)"
     BACKUP_REF="backup/pre-gpu-fix-${STAMP}"
     echo "LOCAL_EDITS_DETECTED=1"
-    echo "Backing up local edits before reset (branch + stash)."
+    echo "Backing up local tracked edits before reset (branch + stash)."
     git_as_owner branch "$BACKUP_REF" HEAD 2>/dev/null || true
-    git_as_owner stash push -u -m "otacon-gpu-fix-${STAMP}" 2>/dev/null || true
+    VENV_BEFORE=0
+    [ -x "$ROOT/.venv/bin/python" ] && VENV_BEFORE=1
+    git_as_owner stash push -m "otacon-gpu-fix-${STAMP}" 2>/dev/null || true
+    if [ "$VENV_BEFORE" = "1" ] && [ ! -x "$ROOT/.venv/bin/python" ]; then
+      echo "APP_REV_FAIL=venv_removed_by_stash"
+      exit 3
+    fi
     echo "BACKUP_REF=$BACKUP_REF"
     echo "Recover: git -C \"$ROOT\" stash list   or   git checkout $BACKUP_REF"
   fi

@@ -18,6 +18,9 @@ generated-media/
 volumes/
 node_modules/
 .target/
+.venv/
+venv/
+.build/
 __pycache__/
 *.pyc
 .vscode/

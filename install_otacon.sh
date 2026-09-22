@@ -1336,7 +1336,8 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
   # leave friends on an archived feature pin while tip moved on.
   if [[ "$CURRENT_BRANCH" == "main" || -z "$CURRENT_BRANCH" ]]; then
     # Defect #7: never silently destroy uncommitted local edits on soft-update.
-    _DIRTY="$(git -C "$INSTALL_DIR" status --porcelain 2>/dev/null || true)"
+    # Tracked edits only — stash -u previously swallowed .venv/.build and killed installs.
+    _DIRTY="$(git -C "$INSTALL_DIR" status --porcelain -uno 2>/dev/null || true)"
     if [[ -n "${_DIRTY}" ]]; then
       _STAMP="$(date +%Y%m%d-%H%M%S)"
       _BACKUP_REF="backup/pre-soft-update-${_STAMP}"
@@ -1355,12 +1356,18 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
         printf 'Recover stash: git -C "%s" stash list\n' "$INSTALL_DIR"
         printf 'Recover branch: git -C "%s" checkout %s\n' "$INSTALL_DIR" "$_BACKUP_REF"
         printf 'Abort next time: OTACON_SOFT_UPDATE_ABORT_IF_DIRTY=1\n'
+        printf 'Note: untracked files (including .venv) stay on disk — only tracked edits are stashed.\n'
       } > "$_BACKUP_DIR/README.txt" || true
       git -C "$INSTALL_DIR" branch "$_BACKUP_REF" HEAD 2>/dev/null || true
-      if git -C "$INSTALL_DIR" stash push -u -m "otacon-soft-update-${_STAMP}" 2>/dev/null; then
-        ok "Local edits stashed as otacon-soft-update-${_STAMP}"
+      _VENV_BEFORE=0
+      [[ -x "$INSTALL_DIR/.venv/bin/python" ]] && _VENV_BEFORE=1
+      if git -C "$INSTALL_DIR" stash push -m "otacon-soft-update-${_STAMP}" 2>/dev/null; then
+        ok "Local tracked edits stashed as otacon-soft-update-${_STAMP}"
       else
         warn "git stash push failed — branch backup $_BACKUP_REF still saved if possible."
+      fi
+      if [[ "$_VENV_BEFORE" == "1" && ! -x "$INSTALL_DIR/.venv/bin/python" ]]; then
+        die "Soft-update backup removed .venv/bin/python — refusing to continue. Restore the venv or re-run this installer."
       fi
       warn "Backup details: $_BACKUP_DIR"
       warn "Branch: $_BACKUP_REF  |  stash: git -C \"$INSTALL_DIR\" stash list"

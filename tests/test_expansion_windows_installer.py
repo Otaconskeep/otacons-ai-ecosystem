@@ -79,8 +79,11 @@ def test_expansion_windows_installer_contracts():
     must("backup/pre-expansion-" in SH, "saves backup branch before hard reset", fails)
     must("LOCAL EDITS DETECTED" in SH, "warns before wiping uncommitted soft-update edits", fails)
     must("stash push" in SH, "stashes dirty tree before soft-update reset", fails)
+    must("stash push -u" not in SH, "does not stash -u (would sweep .venv)", fails)
+    must("status --porcelain -uno" in SH, "dirty check ignores untracked build artifacts", fails)
     must("soft-update-backups" in SH, "writes soft-update backup folder for local edits", fails)
     must("OTACON_SOFT_UPDATE_ABORT_IF_DIRTY" in SH, "optional abort-if-dirty escape hatch", fails)
+    must(".venv/bin/python" in SH and "removed .venv" in SH, "aborts if soft-update backup kills venv", fails)
     must("EXP_GENOME_STATE" in SH and "Genome Voice Trainer" in SH,
          "Expansion installer owns Genome premium path", fails)
     must("resolve_nvidia_smi" in SH and "/usr/lib/wsl/lib/nvidia-smi" in SH,
