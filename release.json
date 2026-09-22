@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
-  "installer_version": "1.3.10",
-  "commit": "18a309d0c6bb1bd8016ecd586a786b8ece2cb348",
+  "installer_version": "1.3.11",
+  "commit": "69cf8b11dfcddaef8564f28869aeb6ce9989bf24",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -10,7 +10,7 @@
   "python_preferred": "3.12",
   "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on main). Soft-update of the ecosystem tree tracks origin/main tip, not this commit field.",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
-  "installer_revision": "122df7b60c0c1a7eb9228ed386fe9bfbd6147991",
+  "installer_revision": "69cf8b11dfcddaef8564f28869aeb6ce9989bf24",
   "files": [
     {
       "path": "install_otacon.bat",
@@ -24,8 +24,8 @@
     },
     {
       "path": "OtaconExpansion-Setup.bat",
-      "sha256": "3a98e0dd3302b8cdbccb0262ce7cc01a3967be0152c0b30f99d4e0a1586ecc4a",
-      "bytes": 8129
+      "sha256": "4d3f0bbc1f017ad5f489f4c3e660b159717d16d344f512d9452ed15689843092",
+      "bytes": 8263
     },
     {
       "path": "Reinstall-Otacon.bat",
@@ -64,8 +64,8 @@
     },
     {
       "path": "deploy/install-otacon-expansion.ps1",
-      "sha256": "9a3e4ae8f68d14f1ff52f62220f1a265722b2fdc5bc1332d121b74b4eafb0665",
-      "bytes": 48213
+      "sha256": "7f42c8d8b45580242b812c4c14820a10d4815cbacb767d503fe3f93427e2d97c",
+      "bytes": 48767
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.3.10 - Soft-update no longer stash -u (that swept .venv/.build and killed the service). Tracked-only stash + dirty check -uno; gitignore .venv/.build; abort if venv vanishes; Expansion log tee re-binds to owner path. Soft-update tracks origin/main tip."
+  "notes": "Otacon v1.3.11 - Aria self-reply keeps a subject (Name is \u2192 I am); Expansion Setup propagates Linux DEGRADED as Windows exit 2 instead of flattening to 0. Soft-update tracks origin/main tip."
 }
