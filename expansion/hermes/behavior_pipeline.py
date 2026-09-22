@@ -328,7 +328,8 @@ def run_post_generation(
             else:
                 text = scrubbed
                 source = 'scrubbed_candidate'
-        elif rendered.get('ok') and rendered.get('text'):
+        elif not (text or '').strip() and rendered.get('ok') and rendered.get('text'):
+            # Only fill empty candidates — keep short valid replies (name, praise templates)
             text = rendered['text']
             source = rendered.get('source') or 'hermes_render'
 
@@ -346,6 +347,31 @@ def run_post_generation(
                 + ". Next: I'll isolate the failure point and propose a fix path."
             )
             violations = policy_violations(text, policy)
+        # Stance failures: replace, don't subtract — scrub can't invent warmth
+        _stance = {
+            'praise_project_pivot', 'hostility_as_apology',
+            'hostility_project_pivot', 'interpersonal_project_pivot',
+        }
+        if _stance.intersection(violations):
+            try:
+                from expansion.humanization import spoken_interpersonal_reply
+                mode = policy.intent or 'greeting'
+                if mode == 'self_state':
+                    mode = 'greeting'
+                if mode not in ('praise', 'hostility', 'apology', 'greeting'):
+                    mode = 'greeting'
+                dims = {}
+                try:
+                    from expansion.emotion_store import EmotionStore
+                    emo = EmotionStore(layout).get_or_create(eid)
+                    dims = dict(emo.dimensions or {})
+                except Exception:
+                    dims = {}
+                text = spoken_interpersonal_reply(mode, dims, agent_id=eid)
+                source = 'stance_template'
+                violations = policy_violations(text, policy)
+            except Exception as exc:
+                record_failure('final_render', exc, detail='stance_repair')
         try:
             from expansion.behavior_spine import scrub_robotic_delivery
             text = scrub_robotic_delivery(text, user_message=user_message or '')

@@ -115,6 +115,41 @@ class OllamaProvider(LLMProvider):
   except urllib.error.URLError as e: raise ProviderError(f'Ollama connection failed: {e.reason}') from e
   except (TimeoutError, TimeoutError): raise ProviderError('Ollama request timed out')
   except json.JSONDecodeError as e: raise ProviderError('malformed Ollama JSON response') from e
+ def chat(self, model, messages, *, options=None, system=''):
+  """Role-separated chat via /api/chat (system ≠ flattened user blob)."""
+  try:
+   msgs=[]
+   if system and str(system).strip():
+    msgs.append({'role':'system','content':str(system).strip()})
+   for m in messages or []:
+    if not isinstance(m, dict):
+     continue
+    role=(m.get('role') or 'user').strip().lower()
+    if role not in ('system','user','assistant'):
+     role='user'
+    content=(m.get('content') or '').strip()
+    if content:
+     msgs.append({'role':role,'content':content})
+   if not msgs:
+    raise ProviderError('empty chat messages')
+   payload={'model':model,'messages':msgs,'stream':False}
+   opts=dict(options or {})
+   if 'temperature' not in opts and system and 'Expansion runtime context' in system:
+    opts['temperature']=0.85
+    opts['top_p']=0.92
+    opts['repeat_penalty']=1.15
+   if opts:
+    payload['options']=opts
+   req=urllib.request.Request(self.endpoint+'/api/chat',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})
+   with urllib.request.urlopen(req,timeout=self.timeout) as r: data=json.loads(r.read())
+   msg=data.get('message') if isinstance(data, dict) else None
+   content=(msg.get('content') if isinstance(msg, dict) else None) or data.get('response')
+   if not isinstance(content, str) or not content.strip():
+    raise ProviderError('malformed Ollama chat response')
+   return content.strip()
+  except urllib.error.URLError as e: raise ProviderError(f'Ollama connection failed: {e.reason}') from e
+  except (TimeoutError, TimeoutError): raise ProviderError('Ollama request timed out')
+  except json.JSONDecodeError as e: raise ProviderError('malformed Ollama JSON response') from e
 class TestProvider(LLMProvider):
  def health(self, model): return Health('ONLINE','deterministic test provider')
  def list_models(self): return ['test']
@@ -126,3 +161,8 @@ class TestProvider(LLMProvider):
   if 'what is your name' in prompt.lower(): return f'My name is {name}.'
   if "dog's name" in prompt.lower() and 'cooper' in prompt.lower(): return "Your dog's name is Cooper."
   return f'{name} received your message.'
+ def chat(self, model, messages, *, options=None, system=''):
+  blob=(system or '')+'\n'+'\n'.join(
+   f"{(m or {}).get('role')}: {(m or {}).get('content')}" for m in (messages or [])
+  )
+  return self.generate(model, blob)

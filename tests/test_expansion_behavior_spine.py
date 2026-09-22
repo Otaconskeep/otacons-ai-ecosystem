@@ -72,6 +72,60 @@ class BehaviorSpineTests(unittest.TestCase):
         kept = scrub_plan_restatement(raw, delivery_mode='work')
         self.assertIn('1.', kept)
 
+    def test_scrub_dangling_plan_lead_in(self):
+        """Excising numbered steps must not leave 'three key steps' alone."""
+        from expansion.behavior_spine import scrub_plan_restatement
+        dangling = (
+            "For our shirt project, we'll proceed in three key steps"
+        )
+        out = scrub_plan_restatement(dangling, delivery_mode='greeting')
+        self.assertNotRegex(out, r'(?i)shirt project')
+        self.assertNotRegex(out, r'(?i)key steps')
+        praise_pivot = (
+            "I appreciate your honesty, Chris. Let's get back to work "
+            "with a clear plan then."
+        )
+        out2 = scrub_robotic_delivery(
+            praise_pivot, user_message='i think you are amazing!',
+        )
+        self.assertNotRegex(out2, r'(?i)get back to work')
+        self.assertNotRegex(out2, r'(?i)clear plan')
+        self.assertIn('appreciate', out2.lower())
+
+    def test_spoken_interpersonal_praise_no_project(self):
+        from expansion.humanization import spoken_interpersonal_reply
+        reply = spoken_interpersonal_reply('praise', {}, agent_id='aria')
+        self.assertRegex(reply.lower(), r'thank|lands|hear you|grateful')
+        self.assertNotRegex(reply.lower(), r'plan|shirt|fabric|steps')
+        hostile = spoken_interpersonal_reply('hostility', {}, agent_id='aria')
+        self.assertNotRegex(hostile.lower(), r'apolog')
+        self.assertNotRegex(hostile.lower(), r'plan|shirt')
+
+    def test_policy_enforces_praise_and_hostility_stance(self):
+        from expansion.hermes.behavioral_policy import (
+            build_behavioral_policy,
+            policy_violations,
+        )
+        praise_pol = build_behavioral_policy('i think you are amazing!')
+        self.assertTrue(praise_pol.must_accept_praise_briefly)
+        bad = (
+            "I appreciate your honesty, Chris. Let's get back to work "
+            "with a clear plan then."
+        )
+        self.assertIn('praise_project_pivot', policy_violations(bad, praise_pol))
+        good = 'That lands — thank you. I hear you.'
+        self.assertNotIn('praise_project_pivot', policy_violations(good, praise_pol))
+
+        host_pol = build_behavioral_policy("youre a bitch!")
+        self.assertEqual(host_pol.intent, 'hostility')
+        misread = (
+            'Chris, I appreciate your apology and let\'s move forward '
+            'constructively. First up, let\'s kick off the shirt project.'
+        )
+        hits = policy_violations(misread, host_pol)
+        self.assertIn('hostility_as_apology', hits)
+        self.assertIn('hostility_project_pivot', hits)
+
     def test_scrub_fake_teammate_starts(self):
         raw = (
             'Chris, Vector will compile platform fees. '

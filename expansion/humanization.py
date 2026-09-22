@@ -258,6 +258,35 @@ def spoken_self_state(emotion_dims: dict, *, agent_id: str = 'aria') -> str:
     return 'Feeling ' + ', '.join(bits[:3]) + '.'
 
 
+def spoken_interpersonal_reply(
+    mode: str,
+    emotion_dims: dict | None = None,
+    *,
+    agent_id: str = 'aria',
+) -> str:
+    """Stance-bearing reply for praise/hostility/apology/greeting — not excised plans.
+
+    Small local models ignore PRAISE directives when project memory dominates.
+    Generate warmth/composure here the way spoken_self_state handles feeling probes.
+    """
+    mode = (mode or '').strip().lower()
+    feel = spoken_self_state(emotion_dims or {}, agent_id=agent_id).rstrip('.')
+    if mode == 'praise':
+        if agent_id == 'aria':
+            return f'{feel}. That lands — thank you. I hear you.'
+        return f'{feel}. Grateful you said that.'
+    if mode == 'hostility':
+        return (
+            "That landed. I'm still here — tell me what actually broke "
+            "and I'll face it. No project speech."
+        )
+    if mode == 'apology':
+        return "Apology received. We're good — no lecture from me."
+    if mode == 'greeting':
+        return "Hey. I'm here — what's on your mind?"
+    return feel + '.'
+
+
 def is_self_state_query(message: str) -> bool:
     msg = (message or '').strip()
     if not msg:

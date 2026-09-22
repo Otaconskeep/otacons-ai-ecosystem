@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -231,6 +232,37 @@ class ExpansionRuntime:
             if affect_lines else ''
         )
 
+        # Interpersonal turns: suppress jobs/journal/work pull — competing context
+        # is why small models pivot praise/insults back to the shirt project.
+        delivery_mode = 'chat'
+        interpersonal = False
+        try:
+            from expansion.behavior_spine import classify_delivery_mode
+            delivery_mode = classify_delivery_mode(user_message or '')
+            interpersonal = delivery_mode in (
+                'greeting', 'social', 'praise', 'hostility', 'apology',
+            )
+        except Exception:
+            pass
+        if interpersonal:
+            job_lines = []
+            journal_lines = []
+            board_truth = (
+                'BOARD GROUND TRUTH: Work board and journal suppressed this turn '
+                f'({delivery_mode}). Reply to the human beat only — no project '
+                'plans, no invented teammate status, no restating open work.\n'
+            )
+            # Drop project-shaped learned claims / memories that re-anchor WORK
+            _proj = re.compile(
+                r'(?i)\b(?:shirt|t-?shirt|fabric|inventory|ledger|vector|'
+                r'sentry|muse|rex\s*board|research\s+phase|project)\b',
+            )
+            learn_lines = [ln for ln in learn_lines if not _proj.search(ln or '')]
+            mem_lines = [
+                ln for ln in mem_lines
+                if not _proj.search(ln or '') and ln != '- (none retrieved)'
+            ] or ['- (none retrieved)']
+
         # Keep-parity clean-room spine: anti-briefing + work mode + layered IQ
         work_section = ''
         delivery_section = ''
@@ -245,11 +277,12 @@ class ExpansionRuntime:
             )
             work_section = work_mode_directive(user_message or '')
             delivery_section = delivery_rules_block(agent_id=agent_id) + '\n'
-            layered_section = layered_intelligence_block(
-                emotion_summary=str(emotion_summary),
-                learn_lines=learn_lines,
-                journal_lines=journal_lines,
-            )
+            if not interpersonal:
+                layered_section = layered_intelligence_block(
+                    emotion_summary=str(emotion_summary),
+                    learn_lines=learn_lines,
+                    journal_lines=journal_lines,
+                )
         except Exception:
             pass
         # Dual-affect + Hermes prompt blocks ONLY here.
@@ -338,6 +371,46 @@ class ExpansionRuntime:
             from expansion.continuity.health import record_failure
             record_failure('preferences', exc, detail='assemble')
 
+        # Re-apply project filter after Formula-9 may have overwritten mem_lines
+        if interpersonal:
+            _proj = re.compile(
+                r'(?i)\b(?:shirt|t-?shirt|fabric|inventory|ledger|vector|'
+                r'sentry|muse|rex\s*board|research\s+phase|project)\b',
+            )
+            job_lines = []
+            journal_lines = []
+            learn_lines = [ln for ln in learn_lines if not _proj.search(ln or '')]
+            living_lines = [ln for ln in living_lines if not _proj.search(ln or '')]
+            mem_lines = [
+                ln for ln in mem_lines
+                if not _proj.search(ln or '') and ln != '- (none retrieved)'
+            ] or ['- (none retrieved)']
+            voice_rules = (
+                'Voice rules: never sound like a generic AI assistant. Never say '
+                '"happy to help", "as an AI", "certainly", "I\'d be glad to", '
+                '"Greetings", or dump emotion percentages. Speak as this person. '
+                'This turn is interpersonal — answer the human beat only. Do NOT '
+                'offer usable plans, restate open work, or pivot to projects.\n'
+            )
+            jobs_block = (
+                f"Active jobs:\n- (suppressed — {delivery_mode} turn)\n"
+                f"{board_truth}"
+                f"Recent journal facts:\n- (suppressed)\n"
+            )
+        else:
+            voice_rules = (
+                'Voice rules: never sound like a generic AI assistant. Never say '
+                '"happy to help", "as an AI", "certainly", "I\'d be glad to", '
+                '"Greetings", or dump emotion percentages. Speak as this person. '
+                'Prefer concrete specifics and usable plans over stock helpfulness '
+                'or Keep/ops continuity speeches.\n'
+            )
+            jobs_block = (
+                f"Active jobs:\n" + '\n'.join(job_lines or ['- none']) + '\n'
+                f"{board_truth}"
+                f"Recent journal facts:\n" + '\n'.join(journal_lines or ['- none']) + '\n'
+            )
+
         system_prompt = (
             f"{view.persona}\n\n"
             f"{who_section}"
@@ -351,11 +424,7 @@ class ExpansionRuntime:
             f"{f5_section}"
             f"{prefs_section}"
             f"[Expansion runtime context — stay in character; do not invent owner history]\n"
-            f"Voice rules: never sound like a generic AI assistant. Never say "
-            f"\"happy to help\", \"as an AI\", \"certainly\", \"I'd be glad to\", "
-            f"\"Greetings\", or dump emotion percentages. Speak as this person. "
-            f"Prefer concrete specifics and usable plans over stock helpfulness "
-            f"or Keep/ops continuity speeches.\n"
+            f"{voice_rules}"
             f"Archetype: {dossier.character.archetype}\n"
             f"Communication: {dossier.character.communication_style}\n"
             f"{self_section}"
@@ -367,9 +436,7 @@ class ExpansionRuntime:
             f"Directional relationships:\n" + '\n'.join(rel_lines or ['- (none)']) + '\n'
             f"Living observations:\n" + '\n'.join(living_lines or ['- none yet']) + '\n'
             f"Learned claims (evidence-backed; revisable):\n" + '\n'.join(learn_lines or ['- none yet']) + '\n'
-            f"Active jobs:\n" + '\n'.join(job_lines or ['- none']) + '\n'
-            f"{board_truth}"
-            f"Recent journal facts:\n" + '\n'.join(journal_lines or ['- none']) + '\n'
+            f"{jobs_block}"
             f"Relevant memory (Formula 9 when available):\n" + '\n'.join(mem_lines) + '\n'
             f"Stress behavior: {dossier.stress.stress_behavior}\n"
         )

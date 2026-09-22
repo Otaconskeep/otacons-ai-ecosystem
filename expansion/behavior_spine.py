@@ -116,14 +116,20 @@ _FAKE_TEAM_START_RE = re.compile(
 )
 
 # Numbered / scaffolded project plans — strip on non-work interpersonal turns.
+# Includes dangling lead-ins after numbered lists were excised ("three key steps").
 _PLAN_SCAFFOLD_RE = re.compile(
     r'(?is)(?:'
-    r'(?:let\'?s|lets)\s+get\s+back\s+on\s+track[^.?!]*[.?!]\s*|'
+    r'(?:let\'?s|lets)\s+get\s+back\s+(?:on\s+track|to\s+work)[^.?!]*[.?!]?\s*|'
+    r'(?:let\'?s|lets)\s+(?:dive\s+in|kick\s+off|move\s+forward)[^.?!]*[.?!]?\s*|'
     r'(?:here\'?s|heres)\s+what\s+we(?:\'ll| will)\s+do\s+next\s*:?\s*|'
-    r'(?:here\'?s|heres)\s+(?:a\s+)?(?:the\s+)?(?:plan|next\s+steps?)[^.?!]*[.?!]\s*|'
-    r'(?:diving?|let\'?s\s+dive)\s+into\s+(?:the\s+)?(?:next\s+steps?|shirt|project|plan)[^.?!]*[.?!]\s*|'
-    r'\b(?:back\s+to|with)\s+your\s+(?:shirt|t-?shirt|fabric)\s+project[^.?!]*[.?!]\s*|'
-    r'\bwe(?:\'ll| will)\s+(?:keep\s+)?(?:this\s+)?(?:project\s+)?on\s+track[^.?!]*[.?!]\s*'
+    r'(?:here\'?s|heres)\s+(?:a\s+)?(?:the\s+)?(?:plan|next\s+steps?)[^.?!]*[.?!]?\s*|'
+    r'(?:diving?|let\'?s\s+dive)\s+into\s+(?:the\s+)?(?:next\s+steps?|shirt|project|plan)[^.?!]*[.?!]?\s*|'
+    r'\b(?:back\s+to|with)\s+your\s+(?:shirt|t-?shirt|fabric)\s+project\b[^.?!]*[.?!]?\s*|'
+    r'\bfor\s+(?:our|the|your)\s+(?:shirt|t-?shirt|fabric)\s+project\b[^.?!]*[.?!]?\s*|'
+    r'\bwe(?:\'ll| will)\s+(?:keep\s+)?(?:this\s+)?(?:project\s+)?on\s+track[^.?!]*[.?!]?\s*|'
+    r'\bwe(?:\'ll| will)\s+proceed\s+in\s+(?:\w+\s+)?(?:key\s+)?steps?\b[^.?!]*[.?!]?\s*|'
+    r'\b(?:with\s+)?(?:a\s+)?(?:clear|structured)\s+plan(?:\s+right\s+away|\s+then)?\b[^.?!]*[.?!]?\s*|'
+    r'\b(?:first|next)\s+up[,:]?\s+(?:let\'?s|lets)[^.?!]*[.?!]?\s*'
     r')',
 )
 _NUMBERED_PLAN_BLOCK_RE = re.compile(

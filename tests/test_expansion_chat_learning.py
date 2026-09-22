@@ -168,6 +168,22 @@ class ChatLearningCase(unittest.TestCase):
         ctx = ExpansionRuntime(self.layout).assemble_context('aria', user_message='hi')
         self.assertIn('Learned claims', ctx.system_prompt)
 
+    def test_interpersonal_context_suppresses_jobs(self):
+        """Praise/greeting must not compete with Active jobs + usable-plans voice."""
+        rt = ExpansionRuntime(self.layout)
+        praise = rt.assemble_context(
+            'aria', user_message='i think you are amazing!',
+        ).system_prompt.lower()
+        self.assertIn('suppressed', praise)
+        self.assertIn('interpersonal', praise)
+        self.assertNotIn('prefer concrete specifics and usable plans', praise)
+        work = rt.assemble_context(
+            'aria',
+            user_message='give me a plan for the shirt project',
+        ).system_prompt.lower()
+        self.assertIn('prefer concrete specifics and usable plans', work)
+        self.assertNotIn('suppressed —', work)
+
     def test_correction_mutates_and_learns(self):
         pre = before_reply('aria', "that's wrong, I meant the other one", layout=self.layout)
         self.assertEqual(pre['intent'], 'correct')

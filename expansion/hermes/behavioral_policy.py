@@ -353,4 +353,28 @@ def policy_violations(text: str, policy: BehavioralPolicy) -> list[str]:
     if policy.must_offer_action and policy.work_mode:
         if not any(w in t for w in ('next', 'try', 'fix', 'plan', 'step', 'option', 'let me')):
             hits.append('missing_action_offer')
+
+    # Stance checks — must_accept_praise_briefly was set but never enforced
+    _project_pivot = (
+        'shirt project', 't-shirt', 'fabric blend', 'fabric blends',
+        'key steps', 'structured plan', 'clear plan', 'get back to work',
+        'get back on track', 'kick off the', 'first up', 'proceed in',
+        'research phase', 'inventory update', 'numbered plan',
+        "let's dive", 'lets dive', 'with these steps', 'three key steps',
+    )
+    pivoted = any(frag in t for frag in _project_pivot)
+    if policy.must_accept_praise_briefly and pivoted:
+        hits.append('praise_project_pivot')
+    if policy.intent == 'hostility':
+        if any(
+            frag in t for frag in (
+                'appreciate your apology', 'your apology', 'apology received',
+                'you apologized', 'thanks for apologizing', 'forgive you',
+            )
+        ):
+            hits.append('hostility_as_apology')
+        if pivoted:
+            hits.append('hostility_project_pivot')
+    if policy.intent in ('greeting', 'apology', 'self_state') and pivoted:
+        hits.append('interpersonal_project_pivot')
     return hits

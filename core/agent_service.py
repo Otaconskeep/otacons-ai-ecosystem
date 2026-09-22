@@ -80,8 +80,13 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
                 render_dossier_self_reply,
                 is_self_state_query,
                 spoken_self_state,
+                spoken_interpersonal_reply,
             )
             text = render_dossier_self_reply(human_id, message)
+            dims = {}
+            exp = agent.get('_expansion_context') or {}
+            emo = exp.get('emotion') or {}
+            dims = emo.get('dimensions') or {}
             if text is None and is_self_state_query(message):
                 # Day / conversation invitations must reach the LLM — a fixed
                 # "I am quietly pleased." is not a reply to "lets talk about your day".
@@ -90,19 +95,56 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
                     allow_short = is_feeling_query_only(message)
                 except Exception:
                     allow_short = True
-                if allow_short:
-                    dims = {}
-                    exp = agent.get('_expansion_context') or {}
-                    emo = exp.get('emotion') or {}
-                    dims = emo.get('dimensions') or {}
-                    if dims:
-                        text = spoken_self_state(dims, agent_id=human_id)
+                if allow_short and dims:
+                    text = spoken_self_state(dims, agent_id=human_id)
+            # Stance-bearing interpersonal turns: generate affect, don't scrub toward it
+            if text is None:
+                try:
+                    from expansion.behavior_spine import classify_delivery_mode
+                    mode = classify_delivery_mode(message)
+                except Exception:
+                    mode = ''
+                if mode in ('praise', 'hostility', 'apology', 'greeting'):
+                    text = spoken_interpersonal_reply(
+                        mode, dims, agent_id=human_id,
+                    )
         except Exception:
             text = None
 
         if text is None:
             try:
-                text = provider.generate(model, system_prompt(agent) + '\n' + context + '\nUser: ' + message)
+                sys = system_prompt(agent)
+                # Role-separated chat when available — persona is system, not a
+                # flattened /api/generate blob with "User:" labels.
+                if hasattr(provider, 'chat'):
+                    chat_msgs = []
+                    if memory:
+                        for x in memory.messages(conversation_id)[-10:]:
+                            role = (x.get('role') or 'user').strip().lower()
+                            if role not in ('user', 'assistant', 'system'):
+                                role = 'assistant' if role in (
+                                    'aria', 'agent', 'bot',
+                                ) else 'user'
+                            content = (x.get('content') or '').strip()
+                            if content:
+                                chat_msgs.append({'role': role, 'content': content})
+                        facts = memory.retrieve(user_id, agent['id'], message)
+                        if facts:
+                            mem_bits = '; '.join(
+                                x['content'] for x in facts if x.get('content')
+                            )
+                            if mem_bits:
+                                sys = (
+                                    sys.rstrip()
+                                    + '\nRelevant memory: '
+                                    + mem_bits
+                                )
+                    chat_msgs.append({'role': 'user', 'content': message})
+                    text = provider.chat(model, chat_msgs, system=sys)
+                else:
+                    text = provider.generate(
+                        model, sys + '\n' + context + '\nUser: ' + message,
+                    )
             except ProviderError as e:
                 raise RuntimeError(str(e)) from e
 
@@ -155,7 +197,11 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
         except Exception as exc2:
             record_failure('final_render', exc2, detail='legacy_hermes_fallback')
     try:
-        from expansion.behavior_spine import scrub_robotic_delivery, wants_work_deliverable
+        from expansion.behavior_spine import (
+            scrub_robotic_delivery,
+            wants_work_deliverable,
+            classify_delivery_mode,
+        )
         text = scrub_robotic_delivery(text, user_message=message or '')
         if wants_work_deliverable(message) and text and len(text.split()) < 25:
             text = (
@@ -166,6 +212,19 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
                 "Tell me which slice you want next and I will go deeper."
             )
             text = scrub_robotic_delivery(text, user_message=message or '')
+        # Scrub emptied an interpersonal pivot — fill with affect, not silence
+        if not (text or '').strip():
+            mode = classify_delivery_mode(message or '')
+            if mode in ('praise', 'hostility', 'apology', 'greeting', 'social'):
+                from expansion.humanization import spoken_interpersonal_reply
+                dims = ((agent.get('_expansion_context') or {}).get('emotion') or {}).get(
+                    'dimensions'
+                ) or {}
+                text = spoken_interpersonal_reply(
+                    'greeting' if mode == 'social' else mode,
+                    dims,
+                    agent_id=human_id,
+                )
     except Exception as exc:
         from expansion.continuity.health import record_failure
         record_failure('final_render', exc, detail='behavior_spine')
