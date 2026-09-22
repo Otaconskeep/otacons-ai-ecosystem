@@ -2649,6 +2649,8 @@ function Get-WslNvidiaName {
     param([string]$Name)
     # Same PATH trap as Linux otacon.service: nvidia-smi often lives only under
     # /usr/lib/wsl/lib and bare `nvidia-smi` falsely reports "not visible".
+    # Also accept passthrough evidence (/proc, /dev/dxg, libcuda) when smi is flaky
+    # mid-install - Ollama can already be on GPU while query-gpu returns empty.
     $probe = @'
 export PATH="/usr/lib/wsl/lib:/usr/local/bin:/usr/bin:/bin:$PATH"
 export LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -2658,16 +2660,27 @@ elif [ -x /usr/lib/wsl/lib/nvidia-smi ]; then SMI=/usr/lib/wsl/lib/nvidia-smi
 elif [ -x /usr/bin/nvidia-smi ]; then SMI=/usr/bin/nvidia-smi
 fi
 if [ -n "$SMI" ]; then
-  "$SMI" --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1
-  exit 0
+  NAME="$("$SMI" --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1 | tr -d '\r')"
+  if [ -n "$NAME" ]; then
+    printf '%s\n' "$NAME"
+    exit 0
+  fi
 fi
-# Last resort: /proc names the card even when nvidia-smi is missing from PATH.
+# /proc names the card even when nvidia-smi is missing or returns empty.
 if [ -d /proc/driver/nvidia/gpus ]; then
   for d in /proc/driver/nvidia/gpus/*; do
     [ -f "$d/information" ] || continue
-    awk -F: 'tolower($1) ~ /^model$/ {gsub(/^[ \t]+/,"",$2); print $2; exit}' "$d/information"
-    exit 0
+    MODEL="$(awk -F: 'tolower($1) ~ /^model$/ {gsub(/^[ \t]+/,"",$2); print $2; exit}' "$d/information")"
+    if [ -n "$MODEL" ]; then
+      printf '%s\n' "$MODEL"
+      exit 0
+    fi
   done
+fi
+# Passthrough present without a friendly name (common mid-install false negative).
+if [ -e /dev/dxg ] || [ -e /dev/nvidia0 ] || [ -d /proc/driver/nvidia ] || ls /usr/lib/wsl/lib/libcuda.so* >/dev/null 2>&1; then
+  printf '%s\n' "WSL_GPU_PASSTHROUGH"
+  exit 0
 fi
 exit 1
 '@
@@ -2675,7 +2688,10 @@ exit 1
         $o = & wsl.exe -d $Name -- bash -lc $probe 2>$null
         if ($o) {
             $s = ($o | Out-String).Trim()
-            if ($s -and $s -notmatch '(?i)not visible|command not found|failed') { return $s }
+            if ($s -and $s -notmatch '(?i)not visible|command not found|failed') {
+                if ($s -eq "WSL_GPU_PASSTHROUGH") { return "passthrough (NVIDIA present)" }
+                return $s
+            }
         }
     } catch {}
     return "not visible in WSL"
@@ -2707,6 +2723,7 @@ function Get-WslGpuDiagnosis {
         wsl_name            = "not visible in WSL"
         wsl_lib_present     = $false
         wsl_smi_present     = $false
+        wsl_passthrough     = $false
         apt_nvidia_conflict = $false
         gpu_support_disabled = $false
         driver_hint         = ""
@@ -2722,6 +2739,10 @@ function Get-WslGpuDiagnosis {
 set +e
 echo "WSL_LIB=$([ -d /usr/lib/wsl/lib ] && echo 1 || echo 0)"
 echo "WSL_SMI=$([ -x /usr/lib/wsl/lib/nvidia-smi ] && echo 1 || echo 0)"
+echo "WSL_DXG=$([ -e /dev/dxg ] && echo 1 || echo 0)"
+echo "WSL_NVIDIA0=$([ -e /dev/nvidia0 ] && echo 1 || echo 0)"
+echo "WSL_PROC=$([ -d /proc/driver/nvidia ] && echo 1 || echo 0)"
+echo "WSL_CUDA=$([ -e /usr/lib/wsl/lib/libcuda.so ] || ls /usr/lib/wsl/lib/libcuda.so* >/dev/null 2>&1 && echo 1 || echo 0)"
 # Linux NVIDIA packages fight Windows passthrough - common false "no GPU".
 PKGS="$(dpkg-query -W -f='${Package}\n' 'nvidia-driver*' 'nvidia-utils*' 'cuda-drivers*' 2>/dev/null | head -n5 | tr '\n' ',')"
 echo "APT_NVIDIA=${PKGS:-}"
@@ -2736,6 +2757,9 @@ fi
         $txt = ($o | Out-String)
         if ($txt -match 'WSL_LIB=1') { $d.wsl_lib_present = $true }
         if ($txt -match 'WSL_SMI=1') { $d.wsl_smi_present = $true }
+        if ($txt -match 'WSL_DXG=1' -or $txt -match 'WSL_NVIDIA0=1' -or $txt -match 'WSL_PROC=1' -or $txt -match 'WSL_CUDA=1') {
+            $d.wsl_passthrough = $true
+        }
         if ($txt -match 'APT_NVIDIA=(\S+)' -and $Matches[1] -and $Matches[1] -ne '') {
             $d.apt_nvidia_conflict = $true
             $d.driver_hint = "Linux NVIDIA packages installed inside WSL ($($Matches[1])). Remove them; use Windows driver only."
@@ -2745,22 +2769,31 @@ fi
         }
     } catch {}
 
+    # Name query can fail while passthrough is healthy (Ollama already on GPU).
+    if ($d.wsl_passthrough -and ($d.wsl_name -eq "not visible in WSL" -or $d.wsl_name -match '(?i)^passthrough')) {
+        if ($d.windows_name -and $d.windows_name -ne "not visible") {
+            $d.wsl_name = ("{0} (WSL passthrough)" -f $d.windows_name)
+        } elseif ($d.wsl_name -eq "not visible in WSL") {
+            $d.wsl_name = "passthrough (NVIDIA present)"
+        }
+    }
+
     $winOk = ($d.windows_name -and $d.windows_name -ne "not visible")
     $wslOk = ($d.wsl_name -and $d.wsl_name -ne "not visible in WSL")
     $d.can_continue_hinted = [bool]($winOk)
     if ($d.gpu_support_disabled) {
         $d.next_action = "edit_wslconfig_gpuSupport"
-    } elseif ($winOk -and -not $wslOk -and -not $d.wsl_lib_present) {
+    } elseif ($winOk -and -not $wslOk -and -not $d.wsl_lib_present -and -not $d.wsl_passthrough) {
         $d.next_action = "update_windows_nvidia_and_wsl"
         if (-not $d.driver_hint) {
             $d.driver_hint = "Missing /usr/lib/wsl/lib - update Windows NVIDIA driver, then: wsl --update && wsl --shutdown"
         }
     } elseif ($winOk -and -not $wslOk -and $d.apt_nvidia_conflict) {
         $d.next_action = "purge_linux_nvidia_packages"
+    } elseif ($wslOk -or $d.wsl_passthrough) {
+        $d.next_action = "ok"
     } elseif ($winOk -and -not $wslOk) {
         $d.next_action = "fix_otacon_gpu_bat"
-    } elseif ($wslOk) {
-        $d.next_action = "ok"
     } else {
         $d.next_action = "no_windows_nvidia"
     }
@@ -4052,7 +4085,7 @@ function Step-InstallOtacon {
         $gpuWin = [string]$gpuDiag.windows_name
         $gpuWsl = [string]$gpuDiag.wsl_name
         $gpuWinVram = [double]$gpuDiag.windows_vram_gb
-        Write-KeepLog ("GPU diag next={0} lib={1} apt={2} disabled={3}" -f $gpuDiag.next_action, $gpuDiag.wsl_lib_present, $gpuDiag.apt_nvidia_conflict, $gpuDiag.gpu_support_disabled) -Stage "INSTALLING_OTACON"
+        Write-KeepLog ("GPU diag next={0} lib={1} apt={2} disabled={3} passthrough={4}" -f $gpuDiag.next_action, $gpuDiag.wsl_lib_present, $gpuDiag.apt_nvidia_conflict, $gpuDiag.gpu_support_disabled, $gpuDiag.wsl_passthrough) -Stage "INSTALLING_OTACON"
     } else {
         try { $gpuWin = Get-WindowsNvidiaName } catch { Write-KeepLog "Get-WindowsNvidiaName: $($_.Exception.Message)" -Level "WARN" -Stage "GPU" }
         try { $gpuWinVram = Get-WindowsNvidiaVramGb } catch { $gpuWinVram = 0 }
@@ -4065,8 +4098,19 @@ function Step-InstallOtacon {
     if ($winOk -and -not $wslOk) {
         $gpuWsl = Repair-WslGpuVisibility -Name $Name -WindowsGpuName $gpuWin
         $wslOk = ($gpuWsl -and $gpuWsl -ne "not visible in WSL")
+        # Re-read diagnosis: passthrough may be healthy even when nvidia-smi name is empty.
+        if (-not $wslOk -and $gpuDiag -and $gpuDiag.wsl_passthrough) {
+            $gpuWsl = if ($gpuWin -ne "not visible") { ("{0} (WSL passthrough)" -f $gpuWin) } else { "passthrough (NVIDIA present)" }
+            $wslOk = $true
+            Write-KeepLog "GPU passthrough present; suppressing false-negative Fix-Otacon-GPU banner" -Stage "GPU"
+            Write-OtaconSay ("GPU passthrough OK (nvidia-smi name pending): {0}" -f $gpuWsl) -Mood "ok" -NoType
+        }
         if (-not $wslOk) {
             $next = if ($gpuDiag) { [string]$gpuDiag.next_action } else { "fix_otacon_gpu_bat" }
+            if ($next -eq "ok") {
+                Write-KeepLog "GPU next_action=ok after repair path; skipping YOU MUST banner" -Stage "GPU"
+                Write-OtaconSay ("Continuing with Windows GPU hint: {0}" -f $gpuWin) -Mood "ok" -NoType
+            } else {
             $headline = "WINDOWS SEES GPU - LINUX DOES NOT"
             $must = "After setup: update NVIDIA Windows driver, run wsl --update && wsl --shutdown, then Fix-Otacon-GPU.bat"
             $lines = @(
@@ -4109,6 +4153,7 @@ function Step-InstallOtacon {
             if ($gpuDiag -and $gpuDiag.driver_hint) { $lines += @("", [string]$gpuDiag.driver_hint) }
             Show-GpuActionRequired -Headline $headline -Lines $lines -MustDo $must -Pause
             Write-OtaconSay ("Continuing install with Windows GPU hint: {0}" -f $gpuWin) -Mood "warn"
+            }
         } else {
             Write-OtaconSay ("Linux GPU visible after repair: {0}" -f $gpuWsl) -Mood "ok" -NoType
         }

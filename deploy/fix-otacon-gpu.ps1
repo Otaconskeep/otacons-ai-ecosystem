@@ -66,7 +66,31 @@ try {
 } catch {}
 $wslGpu = "not visible"
 try {
-    $probe = 'export PATH=/usr/lib/wsl/lib:$PATH; export LD_LIBRARY_PATH=/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}; SMI=$(command -v nvidia-smi 2>/dev/null); [ -z "$SMI" ] && [ -x /usr/lib/wsl/lib/nvidia-smi ] && SMI=/usr/lib/wsl/lib/nvidia-smi; [ -n "$SMI" ] && "$SMI" --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1'
+    $probe = @'
+export PATH="/usr/lib/wsl/lib:/usr/local/bin:/usr/bin:/bin:$PATH"
+export LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+SMI=""
+if command -v nvidia-smi >/dev/null 2>&1; then SMI="$(command -v nvidia-smi)"
+elif [ -x /usr/lib/wsl/lib/nvidia-smi ]; then SMI=/usr/lib/wsl/lib/nvidia-smi
+elif [ -x /usr/bin/nvidia-smi ]; then SMI=/usr/bin/nvidia-smi
+fi
+if [ -n "$SMI" ]; then
+  NAME="$("$SMI" --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1 | tr -d '\r')"
+  if [ -n "$NAME" ]; then printf '%s\n' "$NAME"; exit 0; fi
+fi
+if [ -d /proc/driver/nvidia/gpus ]; then
+  for d in /proc/driver/nvidia/gpus/*; do
+    [ -f "$d/information" ] || continue
+    MODEL="$(awk -F: 'tolower($1) ~ /^model$/ {gsub(/^[ \t]+/,"",$2); print $2; exit}' "$d/information")"
+    if [ -n "$MODEL" ]; then printf '%s\n' "$MODEL"; exit 0; fi
+  done
+fi
+if [ -e /dev/dxg ] || [ -e /dev/nvidia0 ] || [ -d /proc/driver/nvidia ] || ls /usr/lib/wsl/lib/libcuda.so* >/dev/null 2>&1; then
+  printf '%s\n' "passthrough (NVIDIA present)"
+  exit 0
+fi
+exit 1
+'@
     $o2 = & wsl.exe -d $distro -- bash -lc $probe 2>$null
     if ($o2) {
         $s = ($o2 | Out-String).Trim()
