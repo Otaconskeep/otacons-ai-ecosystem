@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
-  "installer_version": "1.3.1",
-  "commit": "faac7ea31927c000f203ae56fd6971e826a46612",
+  "installer_version": "1.3.2",
+  "commit": "9eee7b63a3cebe209a861ef9e37a3c8eca4685dc",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.3.1 \u2014 System-level Keep capability-parity acceptance suite: 267 differential scenarios, lifetime growth, soak 25/50/100, Chris/Josh isolation, failure injection, double-mutation guard. Acceptance gate PASS."
+  "notes": "Otacon v1.3.2 \u2014 Expansion Premium ships KeepRoute/OmniRoute \u2192 global route_learning \u2192 world_model \u2192 world_model:* REX proposals. Wire KeepRoute with OTACON_EXPANSION_URL."
 }
