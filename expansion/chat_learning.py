@@ -63,6 +63,12 @@ _INSULT = re.compile(
     r'dumb (?:bot|ai)|idiot)\b',
     re.I,
 )
+_TASK_RESEARCH = re.compile(
+    r'^\s*(?:(?:please|can you|could you)\s+)?'
+    r'(?:research|investigate|look\s+into|find\s+out(?:\s+about)?|'
+    r'draft\s+a\s+plan(?:\s+for)?|write\s+a\s+plan(?:\s+for)?)\s+(.+)$',
+    re.I | re.S,
+)
 _AGENT_ALT = '|'.join(CANONICAL_AGENTS)
 _COMPARE = re.compile(
     rf'\b({_AGENT_ALT})\s+is\s+(?:smarter|better|faster|stronger|cooler|more\s+\w+)\s+than\s+(?:you|({_AGENT_ALT}))\b',
@@ -165,12 +171,24 @@ def extract_task_delegation(message: str, *, default_agent: str = 'aria') -> Opt
             # Avoid treating "Muse is smarter..." as a task.
             agent = (default_agent or 'aria').lower()
             request = (m.group(1) or '').strip().rstrip('.')
+    if not agent:
+        m = _TASK_RESEARCH.match(msg)
+        if m and not extract_comparison(msg) and not _INSULT.search(msg):
+            agent = (default_agent or 'aria').lower()
+            request = (m.group(1) or '').strip().rstrip('.')
+            if not request:
+                request = msg
     if not agent or len(request) < 3:
         return None
     if agent not in CANONICAL_AGENTS:
         return None
     domain = 'coordination'
     low = request.lower()
+    # Whole-message research verbs → research domain even when request body is short.
+    if _TASK_RESEARCH.match(msg) or any(
+        n in low for n in ('research', 'investigate', 'look into', 'find out')
+    ):
+        domain = 'research'
     for needle, dom in _DOMAIN_HINTS:
         if needle in low:
             domain = dom
@@ -229,8 +247,8 @@ def _ack_remember(agent_id: str, fact: str) -> str:
 
 def _ack_task(agent_id: str, request: str, job_id: str) -> str:
     return (
-        f'Queued for {agent_id}: {request} '
-        f'(job {job_id}; status RUNNING — not marked complete until executed).'
+        f'Queued on the REX board for {agent_id}: {request} '
+        f'(job {job_id}; READY — not complete until researched/verified).'
     )
 
 
@@ -337,22 +355,47 @@ def before_reply(
             pass
         return out
 
-    # Explicit task delegation — queue real work (no fake COMPLETE)
+    # Explicit task delegation — queue real REX board work (no fake COMPLETE)
     if intent == 'task':
         task = extract_task_delegation(msg, default_agent=aid) or {}
         out['task'] = task
         assignee = task.get('agent_id') or aid
         request = task.get('request') or msg
         domain = task.get('domain') or 'coordination'
-        job_out = pipe.create_and_run_job(
-            request,
-            domain=domain,
-            simulate=False,
-            queue_only=True,
-            assigned_agent=assignee,
-        )
-        job = job_out.get('job')
-        job_id = getattr(job, 'job_id', '') if job else ''
+        # Prefer REX board queue so autonomy_tick / Keep-parity pilot can see it.
+        # Fall back to JobStore-only queue if rex meta is unavailable.
+        job_id = ''
+        try:
+            from expansion.rex import queue_rex_job, job_to_card
+            from expansion.jobs import DOMAIN_ROUTING as _DR
+            owner = assignee if assignee in _DR.values() or assignee in CANONICAL_AGENTS else None
+            # Route research to ledger even when Aria is named as coordinator.
+            if domain in ('research', 'records', 'continuity') and not owner:
+                owner = 'ledger'
+            if domain in ('research', 'records', 'continuity') and assignee == 'aria':
+                owner = 'ledger'
+            job = queue_rex_job(
+                request,
+                domain=domain,
+                layout=layout,
+                assigned_agent=owner or assignee,
+                discovered_by=f'chat:{aid}',
+                stage='READY',
+                priority=4,
+                proposal_source='chat_delegation',
+            )
+            job_id = job.job_id
+            out['rex_stage'] = job_to_card(job, layout).get('stage')
+        except Exception:
+            job_out = pipe.create_and_run_job(
+                request,
+                domain=domain,
+                simulate=False,
+                queue_only=True,
+                assigned_agent=assignee,
+            )
+            job = job_out.get('job')
+            job_id = getattr(job, 'job_id', '') if job else ''
         ev = new_event(
             'job.delegated',
             actor='user',
@@ -364,6 +407,7 @@ def before_reply(
                 'domain': domain,
                 'job_id': job_id,
                 'authorized': True,
+                'rex_board': True,
             },
         )
         applied = pipe.apply_event(ev, write_diary=True)

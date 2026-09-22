@@ -20,6 +20,7 @@ from expansion.pilot_governance import (
     record_pilot_close,
     save_status,
     scrub_poisoned_pilot_closes,
+    sandbox_research_capability,
 )
 from expansion.state_layout import resolve_layout
 
@@ -56,6 +57,29 @@ class PilotGovernanceCase(unittest.TestCase):
         self.assertEqual(blocked['kind'], 'production_gated')
         denied = dispatch_gate(domain='unknown_xyz', stage='IN_PROGRESS', layout=self.layout)
         self.assertFalse(denied['allow'])
+
+    def test_sandbox_capability_widening(self):
+        """Keep 2026-09-22: sandbox-proved requests may leave the domain allowlist."""
+        req = (
+            'Sandbox/test only research with no production mutation. '
+            'Baseline captured. Expected result measurable. Rollback plan ready.'
+        )
+        bad, reason = sandbox_research_capability(req, item={})
+        self.assertFalse(bad)
+        self.assertEqual(reason, 'awaiting_peer_or_sandbox_review')
+        ok, why = sandbox_research_capability(
+            req, item={'sandbox_reviewed': True},
+        )
+        self.assertTrue(ok, why)
+        gate = dispatch_gate(
+            domain='infrastructure',
+            stage='IN_PROGRESS',
+            layout=self.layout,
+            request=req,
+            item={'sandbox_reviewed': True},
+        )
+        self.assertTrue(gate['allow'])
+        self.assertEqual(gate['kind'], 'pilot_sandbox_capability')
 
     def test_dod_requires_before_after_in_pilot(self):
         weak = definition_of_done(

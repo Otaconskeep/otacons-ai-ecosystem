@@ -323,7 +323,14 @@ def step_execute(layout: StateLayout, job: Job) -> dict:
     try:
         from expansion.pilot_governance import dispatch_gate, bootstrap_pilot
         bootstrap_pilot(layout)
-        gate = dispatch_gate(domain=job.domain, stage='IN_PROGRESS', layout=layout)
+        from expansion.rex import get_item
+        gate = dispatch_gate(
+            domain=job.domain,
+            stage='IN_PROGRESS',
+            layout=layout,
+            request=job.request or '',
+            item=get_item(job.job_id, layout),
+        )
         if not gate.get('allow'):
             advance_stage(
                 job.job_id, HARD_BLOCK_STAGE, actor='aria', layout=layout,

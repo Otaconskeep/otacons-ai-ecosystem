@@ -61,11 +61,30 @@ class ChatLearningCase(unittest.TestCase):
         self.assertTrue(pre['job_id'])
         self.assertIn('Queued', pre['reply'])
         from expansion.jobs import JobStore
+        from expansion.rex import job_to_card
         job = JobStore(self.layout).get(pre['job_id'])
         self.assertIsNotNone(job)
-        self.assertEqual(job.status, 'RUNNING')
-        self.assertEqual(job.assigned_agent, 'aria')
+        self.assertEqual(job.status, 'QUEUED')
         self.assertNotEqual(job.status, 'COMPLETE')
+        card = job_to_card(job, self.layout)
+        self.assertEqual(card['stage'], 'READY')
+        self.assertIn('REX board', pre['reply'])
+
+    def test_research_phrase_queues_rex_board(self):
+        pre = before_reply(
+            'aria',
+            'research t-shirt design trends and print-on-demand platforms for 2026',
+            layout=self.layout,
+        )
+        self.assertEqual(pre['intent'], 'task')
+        self.assertTrue(pre['job_id'])
+        from expansion.rex import job_to_card
+        from expansion.jobs import JobStore
+        job = JobStore(self.layout).get(pre['job_id'])
+        card = job_to_card(job, self.layout)
+        self.assertEqual(card['stage'], 'READY')
+        self.assertEqual(card['domain'], 'research')
+        self.assertEqual(job.assigned_agent, 'ledger')
 
     def test_apology_and_insult_emit_typed_events(self):
         apo = before_reply('aria', 'I am sorry for insulting you', layout=self.layout)

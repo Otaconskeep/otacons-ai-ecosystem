@@ -1,12 +1,13 @@
 """Controlled-pilot REX governance for Expansion Premium (clean-room).
 
-Ports the *intent* of Keep's 2026-09-22 controlled pilot — not a copy of
-``autonomous/rex_recovery.py``:
+Ports the *intent* of Keep ``autonomous/rex_recovery.py`` on 192.168.50.219
+(incl. 2026-09-22 sandbox capability widening) — not a verbatim copy:
 
   - default-deny domain allowlist for autonomous implementation
   - hard-blocked production domains
-  - DoD requiring before/after evidence on pilot work
-  - graduation streak (N clean closes; any rollback resets)
+  - sandbox-research capability widening (request-text proof, not domain grant)
+  - DoD requiring before/after + research deliverables on pilot work
+  - graduation streak (N clean closes; rollback / poison scrub resets)
   - bootstrap that *preserves* pilot mode across restarts (no silent re-freeze)
 
 Persists under user_jobs/pilot_governance.json.
@@ -49,6 +50,20 @@ WEAK_VERIFY_PATTERNS = (
     r'python\s+-m\s+py_compile',
     r'compileall',
     r'curl\s+.*(/health|/healthz)\b',
+    r'RAW AGENT OUTPUT',
+)
+
+# Keep 2026-09-22 capability widening (clean-room): sandbox-only research may
+# dispatch outside the domain allowlist when the request text proves it.
+_SANDBOX_DESTRUCTIVE_RE = re.compile(
+    r'\b(delete|drop\s+table|drop\s+database|rm\s+-rf|destroy|purge|format|'
+    r'truncate|wipe|overwrite\s+production|revoke|delete\s+user)\b',
+    re.I,
+)
+_SANDBOX_CREDNET_RE = re.compile(
+    r'\b(credential|password|api[- ]?key|firewall|nftables|iptables|\bdns\b|'
+    r'ssl\s+cert|tls\s+cert|auth[ .-]?token|oauth\s+secret|production\s+deploy)\b',
+    re.I,
 )
 
 # Domains whose close bar requires research_refs (not just repo.search + journal).
@@ -253,13 +268,56 @@ def domain_key(domain: str) -> str:
     return (domain or '').strip().lower()
 
 
+def sandbox_research_capability(
+    request: str = '',
+    *,
+    item: dict | None = None,
+) -> tuple[bool, str]:
+    """Keep 2026-09-22 clean-room: prove sandbox-only research independent of domain.
+
+    Requires explicit sandbox scope, no destructive/cred/net language, baseline,
+    measurable criteria, rollback, and a peer/sandbox review mark.
+    """
+    text = (request or '').lower()
+    item = item if isinstance(item, dict) else {}
+    if (
+        'no production mutation' not in text
+        and 'sandbox/test only' not in text
+        and 'sandbox only' not in text
+    ):
+        return False, 'not_explicitly_scoped_sandbox_only'
+    if _SANDBOX_DESTRUCTIVE_RE.search(text):
+        return False, 'destructive_action_language_present'
+    if _SANDBOX_CREDNET_RE.search(text):
+        return False, 'touches_credentials_network_or_security'
+    if 'baseline' not in text:
+        return False, 'no_baseline_captured'
+    if not any(k in text for k in ('expected result', 'verification:', 'measurable')):
+        return False, 'no_measurable_success_criteria'
+    if 'rollback' not in text:
+        return False, 'no_rollback_plan'
+    reviews = item.get('peer_reviews') or []
+    reviewed = bool(item.get('sandbox_reviewed')) or any(
+        (r.get('verdict') or '').lower() == 'pass' for r in reviews if isinstance(r, dict)
+    )
+    if not reviewed:
+        return False, 'awaiting_peer_or_sandbox_review'
+    return True, 'sandbox_research_capability_ok'
+
+
 def dispatch_gate(
     *,
     domain: str,
     stage: str = 'IN_PROGRESS',
     layout: Optional[StateLayout] = None,
+    request: str = '',
+    item: dict | None = None,
 ) -> dict[str, Any]:
-    """Default-deny implementation dispatch under controlled_pilot."""
+    """Default-deny implementation dispatch under controlled_pilot.
+
+    Mirrors Keep ``rex_recovery.dispatch_gate`` (2026-09-22): allowlisted domains
+    plus sandbox-research capability widening — never a broad domain grant.
+    """
     st = load_status(layout)
     dom = domain_key(domain)
     stage_u = (stage or '').upper()
@@ -280,6 +338,17 @@ def dispatch_gate(
         return {'allow': True, 'kind': 'pre_implementation', 'domain': dom}
 
     if dom in HARD_BLOCKED_DOMAINS:
+        # Capability widening (Keep 2026-09-22): hard-blocked domains may still
+        # run when the job text proves sandbox-only research with peer review.
+        cap_ok, cap_reason = sandbox_research_capability(request, item=item)
+        if cap_ok:
+            return {
+                'allow': True,
+                'kind': 'pilot_sandbox_capability',
+                'domain': dom,
+                'capability_reason': cap_reason,
+                'max_workers': int(st.get('max_concurrent_workers') or 0),
+            }
         return {
             'allow': False,
             'kind': 'production_gated',
@@ -295,6 +364,17 @@ def dispatch_gate(
             'max_workers': int(st.get('max_concurrent_workers') or 0),
         }
 
+    # Non-allowlisted, non-hard-blocked: still try sandbox capability.
+    cap_ok, cap_reason = sandbox_research_capability(request, item=item)
+    if cap_ok:
+        return {
+            'allow': True,
+            'kind': 'pilot_sandbox_capability',
+            'domain': dom,
+            'capability_reason': cap_reason,
+            'max_workers': int(st.get('max_concurrent_workers') or 0),
+        }
+
     return {
         'allow': False,
         'kind': 'not_on_pilot_allowlist',
@@ -305,9 +385,12 @@ def dispatch_gate(
 
 
 def is_weak_verification(commands: list | None, summary: str = '') -> bool:
+    """Keep-aligned: empty / theater-only verification never satisfies DoD."""
     blob = ' '.join(str(c) for c in (commands or [])) + ' ' + (summary or '')
-    if not blob.strip():
-        return False
+    if not blob.strip() or blob.strip() in ('[]', '{}'):
+        return True
+    if 'RAW AGENT OUTPUT' in blob:
+        return True
     for pat in WEAK_VERIFY_PATTERNS:
         if re.search(pat, blob, re.I):
             # Weak if *only* weak signals (no other substantial text)
@@ -315,10 +398,37 @@ def is_weak_verification(commands: list | None, summary: str = '') -> bool:
             if len(cleaned.strip()) < 12:
                 return True
             if re.search(r'py_compile|compileall|/health', blob, re.I) and not re.search(
-                r'test|pytest|acceptance|before|after|metric', blob, re.I
+                r'test|pytest|acceptance|before|after|metric|deliverable', blob, re.I
             ):
                 return True
     return False
+
+
+def demote_research_without_deliverable(card: dict) -> tuple[dict, bool]:
+    """Keep rex_completion clean-room: research 'DONE' without deliverable ≠ shipped."""
+    card = dict(card or {})
+    domain = domain_key(card.get('domain') or '')
+    if domain not in RESEARCH_OUTCOME_DOMAINS:
+        return card, False
+    if (card.get('stage') or '') != 'DONE':
+        return card, False
+    evidence = list(card.get('evidence') or [])
+    ev = card.get('implementation_evidence') if isinstance(card.get('implementation_evidence'), dict) else {}
+    result = (card.get('result') or '').strip()
+    has_deliverable = bool(
+        ev.get('deliverable_path')
+        or any(str(x).startswith('deliverable:') for x in evidence)
+        or (len(result) >= 80 and not result.lower().startswith('autonomous close'))
+    )
+    if has_deliverable and (card.get('research_refs') or []):
+        return card, False
+    card['stage'] = 'REWORK'
+    card['completion_correction'] = {
+        'previous_status': 'DONE',
+        'reason': 'Research acceptance does not establish a deliverable.',
+    }
+    card['implementation_pending'] = True
+    return card, True
 
 
 def definition_of_done(
