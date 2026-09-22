@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
-  "installer_version": "1.3.5",
-  "commit": "c8db7b921451bc5a4018e90c3c756996136a60fa",
+  "installer_version": "1.3.6",
+  "commit": "d9ec37adfb5003582aa615671aa242230c7671b4",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -10,17 +10,17 @@
   "python_preferred": "3.12",
   "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on main). Soft-update of the ecosystem tree tracks origin/main tip, not this commit field.",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
-  "installer_revision": "08d2e03867008cca702859cf85b359288f23b878",
+  "installer_revision": "d9ec37adfb5003582aa615671aa242230c7671b4",
   "files": [
     {
       "path": "install_otacon.bat",
-      "sha256": "7a8ab163a1c2655fe6ca8ae1594a0ef932ec90c14ad33cdc5fd9ed6766869898",
-      "bytes": 14571
+      "sha256": "661e5b33e0f454b754bc0063d0c742793593c0104318e422a359a7c2bf96496a",
+      "bytes": 14706
     },
     {
       "path": "OtaconsKeep-Setup.bat",
-      "sha256": "ae92fb8facfa900cc0ff09a8a0c397a080227ab8f95b9a569aabc647e544631d",
-      "bytes": 19890
+      "sha256": "815e44dcfc22a29e1aaadad2025703b7ea10260c26c2b034baddce090eebc326",
+      "bytes": 20037
     },
     {
       "path": "OtaconExpansion-Setup.bat",
@@ -44,8 +44,8 @@
     },
     {
       "path": "install_otacon_expansion.sh",
-      "sha256": "d358a7aba02faa1f9ad25a7cda20862dfd5a19578b4b46872c939a3f28813950",
-      "bytes": 34953
+      "sha256": "a6103e710a3903769038108b0157c0f3c795e1ffeb3a92661e30e5b2742bb11b",
+      "bytes": 35250
     },
     {
       "path": "deploy/bootstrap-fetch.ps1",
@@ -54,8 +54,8 @@
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
-      "sha256": "e9c3ba5a5901caf4376c2d28d50f7a13d2600760b049963c26c6938941a1831b",
-      "bytes": 223668
+      "sha256": "b5932b4d1d61582aac9bfc47c92258dce55cdd1009009b85c65f3002923f6fb8",
+      "bytes": 227742
     },
     {
       "path": "deploy/repair-otacon-core.ps1",
@@ -64,8 +64,8 @@
     },
     {
       "path": "deploy/install-otacon-expansion.ps1",
-      "sha256": "d253d70465362b52e277c56360875ee28a4e3b579de444407674ab6fb10e8c18",
-      "bytes": 38151
+      "sha256": "89d6b332a10c8660e48019da3f0c69687859bb8f4b3995bca894ce6d4cece7dc",
+      "bytes": 41335
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.3.5 \u2014 Fix Windows Setup: PowerShell 5.1 parse errors in windows-setup-assistant.ps1 (winget::), bootstrap Environment.Exit, BAT honors EXIT_CODE=1. Soft-update tracks origin/main tip."
+  "notes": "Otacon v1.3.6 - Windows one-click: honor OTACON_UNATTENDED (no Enter stalls), detect/launch user-scoped Docker Desktop (LocalAppData Programs DockerDesktop), soft-skip heavy Studio packs on low disk. Soft-update tracks origin/main tip."
 }
