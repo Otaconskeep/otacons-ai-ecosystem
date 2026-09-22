@@ -10,7 +10,7 @@
   "python_preferred": "3.12",
   "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on 'main').",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
-  "installer_revision": "e9a8a0b1ae8306ea8884b5b6d325323165485667",
+  "installer_revision": "08d2e03867008cca702859cf85b359288f23b878",
   "files": [
     {
       "path": "install_otacon.bat",

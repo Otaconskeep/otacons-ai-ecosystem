@@ -1,4 +1,4 @@
-# Create Desktop + Start Menu launchers for OtaconsKeep (Lite / Expansion).
+﻿# Create Desktop + Start Menu launchers for OtaconsKeep (Lite / Expansion).
 # Idempotent. Does not print secrets. Safe to re-run after Lite or Expansion.
 #
 # Daily launch must NOT invoke the setup assistant / repair path (no UAC theater).
