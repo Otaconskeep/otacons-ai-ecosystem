@@ -156,79 +156,121 @@ Write-Log "begin DestRoot=$DestRoot RawBase=$RawBase Manifest=$Manifest count=$(
 Write-Log "env=Windows cwd=$(Get-Location) ps=$($PSVersionTable.PSVersion) tls=$([Net.ServicePointManager]::SecurityProtocol)"
 Show-Status -StepLabel "[0/$($files.Count)] preparing download" -Source $RawBase -Status "connecting..."
 
+function Get-OtaconFetchUrlCandidates {
+    param(
+        [string]$PrimaryUrl,
+        [string]$Rel,
+        [string]$Commit = ""
+    )
+    $urls = New-Object System.Collections.Generic.List[string]
+    if ($PrimaryUrl) { [void]$urls.Add($PrimaryUrl) }
+
+    $commit = ($Commit -replace '[^0-9a-fA-F]', '').ToLowerInvariant()
+    if ($commit.Length -ge 7) {
+        $js = "https://cdn.jsdelivr.net/gh/Otaconskeep/otacons-ai-ecosystem@$commit/$Rel"
+        if (-not $urls.Contains($js)) { [void]$urls.Add($js) }
+    }
+
+    # Site mirrors (tip bytes). Useful when raw.githubusercontent.com TLS flakes (curl 35).
+    foreach ($base in @(
+        "https://otaconskeep.github.io/downloads",
+        "https://www.otaconskeep.com/downloads"
+    )) {
+        $u = "$base/$Rel"
+        if (-not $urls.Contains($u)) { [void]$urls.Add($u) }
+    }
+    return @($urls)
+}
+
 function Save-FileDownload {
     param(
         [string]$Url,
         [string]$OutPath,
         [string]$Rel,
-        [string]$ExpectedSha256 = ""
+        [string]$ExpectedSha256 = "",
+        [string]$CommitHint = ""
     )
     $tmp = "$OutPath.otacon-download"
     $errParts = New-Object System.Collections.Generic.List[string]
-
-    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    $candidates = Get-OtaconFetchUrlCandidates -PrimaryUrl $Url -Rel $Rel -Commit $CommitHint
+    # Cache-bust query on first URL only (GitHub raw ignores unknown query; helps CDN)
+    if ($candidates.Count -gt 0 -and $candidates[0] -notmatch '\?') {
+        $candidates[0] = $candidates[0] + ("?otacon={0}" -f [DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+    }
 
     $curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
-    if ($curl) {
-        Write-Log "curl.exe GET $Url"
-        if ($DebugMode) {
-            Write-Host "[DEBUG] env=Windows cwd=$(Get-Location)"
-            Write-Host "[DEBUG] command=curl.exe -fsSL --connect-timeout 20 --max-time 120 -o `"$tmp`" `"$Url`""
-        }
-        $p = Start-Process -FilePath "curl.exe" -ArgumentList @(
-            "-fsSL", "--connect-timeout", "20", "--max-time", "120",
-            "-o", $tmp, $Url
-        ) -Wait -PassThru -NoNewWindow
-        $code = $p.ExitCode
-        Write-Log "curl.exe exit=$code for $Rel"
-        if ($DebugMode) { Write-Host "[DEBUG] errorlevel=$code" }
-        if ($code -eq 0 -and (Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -ge 40)) {
-            if ($ExpectedSha256) {
-                $got = Get-FileSha256Hex -Path $tmp
-                if ($got -ne $ExpectedSha256.ToLowerInvariant()) {
-                    $errParts.Add("sha256 mismatch expected=$ExpectedSha256 got=$got")
-                    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-                    return @{ Ok = $false; Error = ($errParts -join " | "); Method = "curl.exe"; Replaced = $false; Sha256 = $got }
-                }
-            }
-            Move-Item -LiteralPath $tmp -Destination $OutPath -Force
-            $sha = Get-FileSha256Hex -Path $OutPath
-            return @{ Ok = $true; Error = ""; Method = "curl.exe"; Replaced = $true; Sha256 = $sha }
-        }
-        $errParts.Add("curl.exe exit $code")
+    $transient = @(35, 28, 56, 52, 18, 7)  # SSL, timeout, recv, empty, partial, resolve
+
+    foreach ($tryUrl in $candidates) {
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
-    } else {
-        Write-Log "curl.exe not found" "WARN"
-        $errParts.Add("curl.exe not found")
-    }
 
-    try {
-        Write-Log "Invoke-WebRequest GET $Url"
-        if ($DebugMode) {
-            Write-Host "[DEBUG] command=Invoke-WebRequest -Uri $Url -OutFile $tmp -UseBasicParsing"
-        }
-        Invoke-WebRequest -Uri $Url -OutFile $tmp -UseBasicParsing -TimeoutSec 120
-        if ((Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -ge 40)) {
-            if ($ExpectedSha256) {
-                $got = Get-FileSha256Hex -Path $tmp
-                if ($got -ne $ExpectedSha256.ToLowerInvariant()) {
-                    $errParts.Add("sha256 mismatch expected=$ExpectedSha256 got=$got")
-                    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-                    return @{ Ok = $false; Error = ($errParts -join " | "); Method = "Invoke-WebRequest"; Replaced = $false; Sha256 = $got }
+        if ($curl) {
+            $attempt = 0
+            while ($attempt -lt 3) {
+                $attempt++
+                Write-Log "curl.exe GET try=$attempt url=$tryUrl"
+                if ($DebugMode) {
+                    Write-Host "[DEBUG] command=curl.exe -fsSL --connect-timeout 20 --max-time 120 -o `"$tmp`" `"$tryUrl`""
                 }
+                $p = Start-Process -FilePath "curl.exe" -ArgumentList @(
+                    "-fsSL", "--connect-timeout", "20", "--max-time", "120",
+                    "--retry", "2", "--retry-delay", "2", "--retry-all-errors",
+                    "-o", $tmp, $tryUrl
+                ) -Wait -PassThru -NoNewWindow
+                $code = $p.ExitCode
+                Write-Log "curl.exe exit=$code for $Rel via $tryUrl"
+                if ($DebugMode) { Write-Host "[DEBUG] errorlevel=$code" }
+                if ($code -eq 0 -and (Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -ge 40)) {
+                    if ($ExpectedSha256) {
+                        $got = Get-FileSha256Hex -Path $tmp
+                        if ($got -ne $ExpectedSha256.ToLowerInvariant()) {
+                            $errParts.Add("sha256 mismatch expected=$ExpectedSha256 got=$got url=$tryUrl")
+                            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                            break  # try next candidate URL (site tip may match fixed hash)
+                        }
+                    }
+                    Move-Item -LiteralPath $tmp -Destination $OutPath -Force
+                    $sha = Get-FileSha256Hex -Path $OutPath
+                    return @{ Ok = $true; Error = ""; Method = "curl.exe"; Replaced = $true; Sha256 = $sha; Url = $tryUrl }
+                }
+                $errParts.Add("curl.exe exit $code url=$tryUrl")
+                if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+                if ($transient -notcontains $code) { break }
+                Start-Sleep -Seconds (2 * $attempt)
             }
-            Move-Item -LiteralPath $tmp -Destination $OutPath -Force
-            $sha = Get-FileSha256Hex -Path $OutPath
-            return @{ Ok = $true; Error = ""; Method = "Invoke-WebRequest"; Replaced = $true; Sha256 = $sha }
+        } else {
+            Write-Log "curl.exe not found" "WARN"
+            if ($errParts -notcontains "curl.exe not found") { $errParts.Add("curl.exe not found") }
         }
-        $errParts.Add("Invoke-WebRequest wrote missing/small file")
-    } catch {
-        $msg = $_.Exception.Message
-        Write-Log "Invoke-WebRequest failed: $msg" "ERROR"
-        $errParts.Add($msg)
+
+        try {
+            Write-Log "Invoke-WebRequest GET $tryUrl"
+            if ($DebugMode) {
+                Write-Host "[DEBUG] command=Invoke-WebRequest -Uri $tryUrl -OutFile $tmp -UseBasicParsing"
+            }
+            Invoke-WebRequest -Uri $tryUrl -OutFile $tmp -UseBasicParsing -TimeoutSec 120
+            if ((Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -ge 40)) {
+                if ($ExpectedSha256) {
+                    $got = Get-FileSha256Hex -Path $tmp
+                    if ($got -ne $ExpectedSha256.ToLowerInvariant()) {
+                        $errParts.Add("sha256 mismatch expected=$ExpectedSha256 got=$got url=$tryUrl")
+                        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                        continue
+                    }
+                }
+                Move-Item -LiteralPath $tmp -Destination $OutPath -Force
+                $sha = Get-FileSha256Hex -Path $OutPath
+                return @{ Ok = $true; Error = ""; Method = "Invoke-WebRequest"; Replaced = $true; Sha256 = $sha; Url = $tryUrl }
+            }
+            $errParts.Add("Invoke-WebRequest wrote missing/small file url=$tryUrl")
+        } catch {
+            $msg = $_.Exception.Message
+            Write-Log "Invoke-WebRequest failed: $msg" "ERROR"
+            $errParts.Add("$msg url=$tryUrl")
+        }
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
     }
 
-    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
     return @{ Ok = $false; Error = ($errParts -join " | "); Method = "none"; Replaced = $false; Sha256 = "" }
 }
 
@@ -238,7 +280,7 @@ $releaseRel = "release.json"
 $releaseUrl = "$RawBase/$releaseRel"
 $releaseOut = Join-Path $DestRoot $releaseRel
 Show-Status -StepLabel "[meta] release.json" -Source $releaseUrl -Status "downloading..." -File $releaseRel
-$relResult = Save-FileDownload -Url $releaseUrl -OutPath $releaseOut -Rel $releaseRel
+$relResult = Save-FileDownload -Url $releaseUrl -OutPath $releaseOut -Rel $releaseRel -CommitHint ""
 if ($relResult.Ok) {
     try {
         $relJson = Get-Content -LiteralPath $releaseOut -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -306,7 +348,7 @@ if ($relResult.Ok) {
 $revRel = "deploy/installer-revision.txt"
 $revOut = Join-Path $DestRoot ($revRel -replace "/", [IO.Path]::DirectorySeparatorChar)
 $revUrl = "$branchRawBase/$revRel"
-$revResult = Save-FileDownload -Url $revUrl -OutPath $revOut -Rel $revRel
+$revResult = Save-FileDownload -Url $revUrl -OutPath $revOut -Rel $revRel -CommitHint ""
 if ($revResult.Ok) {
     Write-Log ("installer-revision.txt from branch tip ok sha={0}" -f $revResult.Sha256)
 } else {
@@ -348,7 +390,7 @@ foreach ($rel in $files) {
     Show-Status -StepLabel ("[{0}/{1}] downloading otaconskeep files" -f $i, $total) `
         -Source $url -Status "downloading..." -File $rel
 
-    $result = Save-FileDownload -Url $url -OutPath $out -Rel $rel -ExpectedSha256 $expected
+    $result = Save-FileDownload -Url $url -OutPath $out -Rel $rel -ExpectedSha256 $expected -CommitHint $bundleCommit
 
     Show-Status -StepLabel ("[{0}/{1}] downloading otaconskeep files" -f $i, $total) `
         -Source $url -Status "verifying files..." -File $rel
@@ -393,11 +435,94 @@ foreach ($rel in $files) {
     }
 }
 
+# Self-heal: stale/CDN release.json can list a hash that never matched GitHub blobs
+# (lying pin). Re-pull tip release.json once and retry only the failed paths.
+if ($failures.Count -gt 0) {
+    $hashFails = @($failures | Where-Object { $_ -match 'sha256 mismatch' })
+    if ($hashFails.Count -gt 0) {
+        Write-Log "sha256 mismatch detected - refreshing release.json from branch tip and retrying once" "WARN"
+        Write-Host "  Hash mismatch - refreshing installer manifest and retrying..." -ForegroundColor Yellow
+        $retryReleaseUrl = "$branchRawBase/release.json"
+        $retryRel = Save-FileDownload -Url $retryReleaseUrl -OutPath $releaseOut -Rel "release.json" -CommitHint ""
+        if ($retryRel.Ok) {
+            try {
+                $relJson2 = Get-Content -LiteralPath $releaseOut -Raw -Encoding UTF8 | ConvertFrom-Json
+                $hashByPath.Clear()
+                if ($relJson2.files) {
+                    foreach ($entry in $relJson2.files) {
+                        if ($entry.path -and $entry.sha256) {
+                            $hashByPath[[string]$entry.path] = ([string]$entry.sha256).ToLowerInvariant()
+                        }
+                    }
+                }
+                if ($hashByPath.ContainsKey("deploy/installer-revision.txt")) { $hashByPath.Remove("deploy/installer-revision.txt") }
+                if ($hashByPath.ContainsKey("release.json")) { $hashByPath.Remove("release.json") }
+                if ($hashByPath.ContainsKey("deploy/bootstrap-fetch.ps1")) { $hashByPath.Remove("deploy/bootstrap-fetch.ps1") }
+                $bundleCommit = [string]$relJson2.commit
+                if ($bundleCommit -match '^[0-9a-fA-F]{7,40}$' -and $branchRawBase -match '^(https?://raw\.githubusercontent\.com/[^/]+/[^/]+/)([^/]+)/?$') {
+                    $RawBase = $Matches[1] + $bundleCommit.ToLowerInvariant()
+                    Write-Log "retry pin RawBase=$RawBase"
+                }
+                $retryRels = New-Object System.Collections.Generic.List[string]
+                foreach ($msg in $failures) {
+                    if ($msg -match '^failed\s+(\S+)\s+') { [void]$retryRels.Add($Matches[1]) }
+                }
+                $failures = New-Object System.Collections.Generic.List[string]
+                $lastErrorBlock = New-Object System.Collections.Generic.List[string]
+                foreach ($rel in ($retryRels | Select-Object -Unique)) {
+                    $url = "$RawBase/$rel"
+                    $out = Join-Path $DestRoot ($rel -replace "/", [IO.Path]::DirectorySeparatorChar)
+                    $expected = ""
+                    if ($hashByPath.ContainsKey($rel)) { $expected = [string]$hashByPath[$rel] }
+                    Write-Log "RETRY GET $url expected_sha=$expected"
+                    $result = Save-FileDownload -Url $url -OutPath $out -Rel $rel -ExpectedSha256 $expected -CommitHint $bundleCommit
+                    if (-not $result.Ok -or -not (Test-Path -LiteralPath $out) -or ((Get-Item -LiteralPath $out).Length -lt 40)) {
+                        $len = if (Test-Path -LiteralPath $out) { (Get-Item -LiteralPath $out).Length } else { 0 }
+                        $msg = "failed $rel size=$len method=$($result.Method) err=$($result.Error)"
+                        Write-Log $msg "ERROR"
+                        $failures.Add($msg)
+                        $lastErrorBlock.Add($msg)
+                        Write-Host "  RETRY FAILED: $rel" -ForegroundColor Red
+                    } else {
+                        $replaced.Add($rel)
+                        Write-Host ("  RETRY OK: {0} sha={1}" -f $rel, $result.Sha256.Substring(0, [Math]::Min(12, $result.Sha256.Length))) -ForegroundColor Green
+                        if ($rel -like "*.ps1") {
+                            try {
+                                $bytes = [System.IO.File]::ReadAllBytes($out)
+                                $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+                                $text = if ($hasBom) { [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3) } else { [System.Text.Encoding]::UTF8.GetString($bytes) }
+                                $text = $text -replace "`r`n", "`n" -replace "`r", "`n"
+                                $text = $text -replace "`n", "`r`n"
+                                $utf8Bom = New-Object System.Text.UTF8Encoding $true
+                                [System.IO.File]::WriteAllText($out, $text, $utf8Bom)
+                            } catch {}
+                        }
+                    }
+                }
+            } catch {
+                Write-Log ("release.json retry parse warn: {0}" -f $_.Exception.Message) "WARN"
+            }
+        }
+    }
+}
+
 if ($failures.Count -gt 0) {
     Write-Log "FETCH FAILED count=$($failures.Count)" "ERROR"
     Write-Host ""
+    Write-Host " ################################################################" -ForegroundColor Red
+    Write-Host " #  !!!  ACTION REQUIRED - FETCH / DOWNLOAD  !!!" -ForegroundColor Red
+    Write-Host " ################################################################" -ForegroundColor Red
     Write-Host "FETCH SUMMARY: $($failures.Count) file(s) failed" -ForegroundColor Red
     foreach ($f in $failures) { Write-Host "  - $f" }
+    Write-Host ""
+    Write-Host "  Common causes:" -ForegroundColor Yellow
+    Write-Host "   - curl exit 35 = TLS/SSL flake to raw.githubusercontent.com (retry usually works)" -ForegroundColor White
+    Write-Host "   - sha256 mismatch = stale release pin vs GitHub bytes (clear installer cache)" -ForegroundColor White
+    Write-Host "  >>> YOU MUST:" -ForegroundColor Yellow
+    Write-Host "   1) Delete folder:  %LOCALAPPDATA%\OtaconsKeep\installer" -ForegroundColor Cyan
+    Write-Host "   2) Re-download OtaconsKeep-Setup.bat from the Otaconskeep website" -ForegroundColor Cyan
+    Write-Host "   3) Run the new Setup (leave the window open)" -ForegroundColor Cyan
+    Write-Host " ################################################################" -ForegroundColor Red
     Write-Host ""
     Write-Host "OTACON_FETCH_FAILED"
     Write-Host "FAILED_COMMAND=download otaconskeep setup files from github raw"

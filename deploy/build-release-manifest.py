@@ -128,6 +128,7 @@ def main() -> int:
         app_rev = (ROOT / "deploy" / "installer-revision.txt").read_text(encoding="utf-8").strip() or commit
 
     # Finalize on-disk published bytes, then hash those exact bytes.
+    dirty: list[str] = []
     for rel in BUNDLE_FILES:
         if rel == "release.json":
             continue
@@ -149,11 +150,22 @@ def main() -> int:
         blob = git_blob_bytes(rel)
         if blob is not None and sha256_bytes(blob) != digest:
             print(
-                f"WARN {rel}: working-tree publish bytes differ from HEAD blob "
-                f"(commit the finalized bytes so GitHub raw matches the manifest)",
+                f"ERROR {rel}: working-tree publish bytes differ from HEAD blob "
+                f"(WT={digest[:12]} HEAD={sha256_bytes(blob)[:12]}). "
+                f"Commit the finalized encoding BEFORE writing release.json, or GitHub raw "
+                f"will fail Windows sha256 checks (OTACON_FETCH_FAILED).",
                 file=sys.stderr,
             )
+            dirty.append(rel)
         files_meta.append({"path": rel, "sha256": digest, "bytes": len(data)})
+
+    if dirty and "--allow-dirty-hash" not in sys.argv:
+        print(
+            f"REFUSING to write lying release.json ({len(dirty)} file(s) dirty). "
+            f"Commit encoded installer bytes first, then re-run.",
+            file=sys.stderr,
+        )
+        return 2
 
     doc = {
         "product": "Otacon",

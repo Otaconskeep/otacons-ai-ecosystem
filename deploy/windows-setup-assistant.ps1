@@ -475,7 +475,20 @@ YOU MUST:
   D) Re-run Expansion Setup after login succeeds (no full wipe needed)
 
 ==============================================================================
-6) STALE INSTALLER CACHE
+6) STALE INSTALLER CACHE / FETCH FAILED (sha256 or curl 35)
+==============================================================================
+If Setup says OTACON_FETCH_FAILED, sha256 mismatch, or curl.exe exit 35:
+YOU MUST:
+  A) Delete:  %LOCALAPPDATA%\OtaconsKeep\installer\
+  B) Re-download OtaconsKeep-Setup.bat from the Otaconskeep website
+     (do not reuse an old Desktop copy)
+  C) Re-run Setup and leave the black window open
+curl exit 35 is a TLS flake to GitHub raw - Setup now retries and also tries
+jsDelivr + otaconskeep.github.io mirrors. Clearing the installer cache still
+helps when an old release.json expected the wrong hash.
+
+==============================================================================
+6b) STALE INSTALLER CACHE (flash and die / old bugs)
 ==============================================================================
 If Setup flashes and dies, or behaves like an old bug already fixed:
 YOU MUST:
