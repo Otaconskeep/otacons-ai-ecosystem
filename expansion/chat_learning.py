@@ -43,7 +43,7 @@ _CORRECT = re.compile(
 _PRAISE = re.compile(
     r'\b(?:thank(?:s| you)|good job|well done|proud of you|you did great|'
     r'appreciate (?:you|it)|i love (?:you|that)|you\'re the best|amazing|brilliant|'
-    r'nice work|perfect|love that)\b',
+    r'nice work|great work|perfect|love that|awesome|excellent)\b',
     re.I,
 )
 _PREFERENCE = re.compile(
@@ -58,9 +58,10 @@ _APOLOGY = re.compile(
 )
 _INSULT = re.compile(
     r'\b(?:you(?:\'re| are) (?:useless|worthless|stupid|dumb|an idiot|pathetic|'
-    r'ugly|hideous|gross|disgusting|fat|repulsive)|'
-    r'useless|shut up|i hate you|you suck|worst (?:agent|assistant)|'
-    r'dumb (?:bot|ai)|idiot)\b',
+    r'ugly|hideous|gross|disgusting|fat|repulsive|lazy|garbage)|'
+    r'useless|shut up|i hate you|i hate this|you suck|worst (?:agent|assistant|answer)|'
+    r'dumb (?:bot|ai)|idiot|fuck you|go to hell|asshole|piece of shit|'
+    r'absolute garbage|this is garbage|being lazy)\b',
     re.I,
 )
 _TASK_RESEARCH = re.compile(

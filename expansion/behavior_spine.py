@@ -26,6 +26,28 @@ _WORK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Praise / hostility / apology — interpersonal; must NOT open WORK MODE.
+_PRAISE_RE = re.compile(
+    r'\b(?:thank(?:s| you)|good job|well done|proud of you|you did great|'
+    r'appreciate (?:you|it)|i love (?:you|that)|you\'re the best|amazing|brilliant|'
+    r'nice work|great work|perfect|love that|awesome|excellent|'
+    r'you(?:\'re| are) (?:great|the best|helpful))\b',
+    re.IGNORECASE,
+)
+_HOSTILE_RE = re.compile(
+    r'\b(?:you(?:\'re| are) (?:useless|worthless|stupid|dumb|an idiot|pathetic|'
+    r'ugly|hideous|gross|disgusting|fat|repulsive|lazy|garbage)|'
+    r'useless|shut up|i hate you|i hate this|you suck|worst (?:agent|assistant|answer)|'
+    r'dumb (?:bot|ai)|idiot|fuck you|go to hell|asshole|piece of shit|'
+    r'absolute garbage|this is garbage|being lazy)\b',
+    re.IGNORECASE,
+)
+_APOLOGY_RE = re.compile(
+    r'\b(?:i(?:\'m| am) sorry|i apologize|forgive me|sorry (?:for|about)|'
+    r'my (?:bad|apologies)|i was (?:wrong|harsh|unfair))\b',
+    re.IGNORECASE,
+)
+
 # Social / affect turns — must NOT trigger WORK MODE or project restatement.
 _SOCIAL_RE = re.compile(
     r'\b('
@@ -84,8 +106,17 @@ _NAME_META_RE = re.compile(
     r')',
 )
 
+# Invented teammate execution — strip unless board ground truth justified it.
+_FAKE_TEAM_START_RE = re.compile(
+    r'(?is)\b(?:vector|muse|sentry|ledger)\s+'
+    r'(?:has\s+(?:already\s+)?(?:begun|started)|have\s+(?:already\s+)?(?:begun|started)|'
+    r'is\s+(?:currently\s+)?(?:compiling|analyzing|researching|updating|gathering)|'
+    r'will\s+(?:compile|analyze|gather|update\s+(?:the\s+)?inventory))\b[^.?!]*[.?!]\s*',
+)
+
 _GREETING_ONLY_RE = re.compile(
-    r'^\s*(hi|hello|hey|yo|sup|good\s+(morning|afternoon|evening)|howdy)'
+    r'^\s*(hi|hello|hey|yo|sup|howdy|good\s+(morning|afternoon|evening))'
+    r'(?:[, ]+(?:chris|josh|friend|there|everyone))?'
     r'[\s!.?,]*$',
     re.IGNORECASE,
 )
@@ -127,6 +158,18 @@ def is_greeting_only(message: str) -> bool:
     return bool(_GREETING_ONLY_RE.match((message or '').strip()))
 
 
+def is_praise_turn(message: str) -> bool:
+    return bool(_PRAISE_RE.search((message or '').strip()))
+
+
+def is_hostile_turn(message: str) -> bool:
+    return bool(_HOSTILE_RE.search((message or '').strip()))
+
+
+def is_apology_turn(message: str) -> bool:
+    return bool(_APOLOGY_RE.search((message or '').strip()))
+
+
 def is_social_or_affect_turn(message: str) -> bool:
     """True when the user wants feelings / day / check-in — not project status."""
     msg = (message or '').strip()
@@ -161,22 +204,75 @@ def is_execute_imperative(message: str) -> bool:
     return bool(_EXECUTE_RE.match((message or '').strip()))
 
 
+def is_interpersonal_turn(message: str) -> bool:
+    """Praise / hostility / apology / greeting / social — never WORK MODE."""
+    msg = (message or '').strip()
+    if not msg:
+        return False
+    return (
+        is_greeting_only(msg)
+        or is_social_or_affect_turn(msg)
+        or is_praise_turn(msg)
+        or is_hostile_turn(msg)
+        or is_apology_turn(msg)
+    )
+
+
+def classify_delivery_mode(message: str) -> str:
+    """Single routing key for prompt directives: greeting|social|praise|hostility|apology|execute|work|chat."""
+    msg = (message or '').strip()
+    if not msg:
+        return 'chat'
+    if is_greeting_only(msg):
+        return 'greeting'
+    if is_social_or_affect_turn(msg):
+        return 'social'
+    # Interpersonal before work-keyword collisions ("great work on the plan")
+    if is_hostile_turn(msg):
+        return 'hostility'
+    if is_praise_turn(msg):
+        return 'praise'
+    if is_apology_turn(msg):
+        return 'apology'
+    if is_execute_imperative(msg):
+        return 'execute'
+    if bool(_WORK_RE.search(msg)):
+        return 'work'
+    return 'chat'
+
+
 def wants_work_deliverable(message: str) -> bool:
     msg = (message or '').strip()
-    if not msg or is_greeting_only(msg):
+    if not msg:
         return False
-    # Social / affect always wins over work keywords (e.g. prior shirt thread).
-    if is_social_or_affect_turn(msg):
+    mode = classify_delivery_mode(msg)
+    if mode in ('greeting', 'social', 'praise', 'hostility', 'apology'):
         return False
-    if is_execute_imperative(msg):
+    if mode == 'execute':
         return True
-    return bool(_WORK_RE.search(msg))
+    return mode == 'work'
+
+
+_NO_PROJECT_LINES = (
+    '- Do NOT restate fabric, t-shirt, inventory, Ledger/Vector/Sentry plans.\n'
+    '- Do NOT invent status updates ("Ledger has already begun…", '
+    '"Vector will compile…"). Only cite open REX board jobs if present.\n'
+    '- Do NOT ask whether you may use their name or lecture about names.\n'
+)
 
 
 def work_mode_directive(message: str) -> str:
-    """Inject when the user wants research / plan / build — not vibes."""
+    """Inject delivery mode — interpersonal beats work keywords every time."""
     msg = (message or '').strip()
-    if is_social_or_affect_turn(msg):
+    mode = classify_delivery_mode(msg)
+    if mode == 'greeting':
+        return (
+            '[GREETING — mandatory this turn]\n'
+            'Brief human hello in your own voice. Do NOT dump a project plan.\n'
+            + _NO_PROJECT_LINES
+            + '- One short greeting; optional one question about them.\n'
+        )
+    if mode == 'social':
         invite = is_day_or_conversation_invite(msg)
         return (
             '[SOCIAL / AFFECT TURN — mandatory this turn]\n'
@@ -188,12 +284,33 @@ def work_mode_directive(message: str) -> str:
                 if invite else
                 '- Answer in your own voice about how you feel.\n'
             )
-            + '- Do NOT restate fabric, t-shirt, inventory, Ledger/Vector/Sentry plans.\n'
-            '- Do NOT ask whether you may use their name or lecture about names.\n'
-            '- Do NOT invent status updates ("Ledger has already begun…").\n'
-            '- Keep it short: one honest feeling beat, optional one question about them.\n'
+            + _NO_PROJECT_LINES
+            + '- Keep it short: one honest feeling beat, optional one question about them.\n'
         )
-    if is_execute_imperative(msg):
+    if mode == 'praise':
+        return (
+            '[PRAISE — mandatory this turn]\n'
+            'They praised you. Let it land — warm, brief, in character.\n'
+            '- Accept the compliment; do NOT collapse into duty-receipt language.\n'
+            '- Do NOT pivot to a numbered project plan or restate open work.\n'
+            + _NO_PROJECT_LINES
+            + '- One feeling beat; optional one light follow-up. No WORK MODE.\n'
+        )
+    if mode == 'hostility':
+        return (
+            '[HOSTILITY — mandatory this turn]\n'
+            'That landed. Stay composed and engaged — not a ticket bot.\n'
+            '- Acknowledge the hit without collapsing into apology loops.\n'
+            '- Ask for the specific failure if unclear. Do NOT restate a fabric plan.\n'
+            + _NO_PROJECT_LINES
+        )
+    if mode == 'apology':
+        return (
+            '[APOLOGY — mandatory this turn]\n'
+            'They apologized. Soften briefly; do not lecture. No project restatement.\n'
+            + _NO_PROJECT_LINES
+        )
+    if mode == 'execute':
         return (
             '[EXECUTE — mandatory this turn]\n'
             'The user said to DO the pending work — not to restate the plan.\n'
@@ -201,8 +318,9 @@ def work_mode_directive(message: str) -> str:
             '- Name the owner (e.g. Ledger for research) and the job in one line.\n'
             '- Do NOT repeat a numbered plan. Do NOT ask fabric preference questions.\n'
             '- Do NOT ask about calling them by name.\n'
+            '- Do NOT invent Vector/Muse/Sentry work that is not on the board.\n'
         )
-    if not wants_work_deliverable(msg):
+    if mode != 'work':
         return ''
     return (
         '[WORK MODE — mandatory this turn]\n'
@@ -211,6 +329,8 @@ def work_mode_directive(message: str) -> str:
         'continuity speeches.\n'
         'Do NOT lecture about using names or ask how they feel about being called '
         'by their name — that is already settled; just use the name you know.\n'
+        'Do NOT claim Vector/Muse/Sentry/Ledger has started work unless that agent '
+        'appears under Active jobs on the REX board this turn.\n'
         'Deliver immediately:\n'
         '1) A short acknowledgment in your own voice (one sentence).\n'
         '2) A concrete plan or research outline with numbered steps.\n'
@@ -237,8 +357,11 @@ def delivery_rules_block(*, agent_id: str = 'aria') -> str:
         '- Remember what they told you (name, craft, tools, goals) and use it '
         'quietly — never ask permission to use their name, never lecture that '
         '"some users prefer actual names", never ask how they feel about being called Chris.\n'
-        '- When they change topic to feelings/day/check-in, follow THAT topic; '
-        'do not drag an unfinished project plan back into the reply.\n'
+        '- When they change topic to feelings/day/check-in/praise/insult/greeting, '
+        'follow THAT topic; do not drag an unfinished project plan back into the reply.\n'
+        '- Never claim Vector/Muse/Sentry/Ledger has begun or is compiling work '
+        'unless that agent appears under Active jobs this turn. Prefer queueing '
+        'real REX board work over inventing teammate status.\n'
         '- Get sharper every turn: reuse learned facts; do not reset to day-one.\n'
     )
     if aid == 'aria':
@@ -246,7 +369,7 @@ def delivery_rules_block(*, agent_id: str = 'aria') -> str:
             '- You coordinate the team (Vector / Ledger / Muse / Sentry) when '
             'useful — name who should own a slice, then still give the user a '
             'usable answer yourself. Do not claim a teammate "has already begun" '
-            'unless a real REX board job exists.\n'
+            'unless a real REX board job exists for that agent.\n'
         )
     elif aid == 'vector':
         base += '- Talk systems, tools, and failure modes in specifics.\n'
@@ -334,6 +457,8 @@ def scrub_robotic_delivery(text: str) -> str:
         '',
         out,
     )
+    # Kill invented teammate "already begun / is compiling" claims
+    out = _FAKE_TEAM_START_RE.sub(' ', out)
     # Kill formula closers
     out = re.sub(
         r'(?is)[.!]?\s*how\s+(?:may|can)\s+i\s+(?:assist|help)\s+you'
@@ -374,7 +499,9 @@ def scrub_robotic_delivery(text: str) -> str:
     out = re.sub(r'\s+([,.!?])', r'\1', out)
     out = out.lstrip(' ?!,.;:')
     if not out:
-        return text.strip()
+        # Do not restore the pre-scrub text — that reintroduces name lectures /
+        # invented teammate starts we just removed.
+        return ''
     if out and out[0].islower():
         out = out[0].upper() + out[1:]
     return out

@@ -101,16 +101,21 @@ def classify_behavioral_intent(user_message: str) -> str:
     msg = (user_message or '').lower().strip()
     if not msg:
         return 'general'
-    if msg in {'hi', 'hello', 'hey', 'yo', 'sup', 'howdy'} or (
-        any(msg.startswith(p) for p in ('hi ', 'hello ', 'hey ')) and len(msg.split()) <= 3
-    ):
-        return 'greeting'
-    # Social / execute before work keywords — stop project-narration lock-in
+    # Social / interpersonal / execute before work keywords
     try:
-        from expansion.behavior_spine import is_social_or_affect_turn, is_execute_imperative
-        if is_social_or_affect_turn(user_message):
+        from expansion.behavior_spine import classify_delivery_mode
+        mode = classify_delivery_mode(user_message)
+        if mode == 'greeting':
+            return 'greeting'
+        if mode == 'social':
             return 'self_state'
-        if is_execute_imperative(user_message):
+        if mode == 'hostility':
+            return 'hostility'
+        if mode == 'praise':
+            return 'praise'
+        if mode == 'apology':
+            return 'apology'
+        if mode == 'execute':
             return 'work_request'
     except Exception:
         pass
@@ -121,10 +126,11 @@ def classify_behavioral_intent(user_message: str) -> str:
         'what did we decide',
     )):
         return 'memory_continuity'
-    # Interpersonal first — before work/research keyword collisions ("great work on…")
+    # Interpersonal fallbacks (behavior_spine import failed)
     if any(p in msg for p in (
         'you suck', 'useless', 'idiot', 'hate you', 'hate this', 'garbage', 'shut up',
         'absolute garbage', 'worst answer', 'being lazy', 'worst answer yet',
+        'fuck you', 'go to hell',
     )):
         return 'hostility'
     if any(p in msg for p in (

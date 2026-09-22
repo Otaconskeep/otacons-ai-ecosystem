@@ -30,6 +30,42 @@ class BehaviorSpineTests(unittest.TestCase):
         self.assertFalse(wants_work_deliverable('lets talk about your day\nwhat do you feel?'))
         self.assertTrue(wants_work_deliverable('do it'))
 
+    def test_praise_not_work_mode(self):
+        from expansion.behavior_spine import classify_delivery_mode
+        # Central failure Crist reported: praise recognized but WORK still injected
+        for msg in (
+            'thank you, that was brilliant',
+            'great work on the plan',
+            'nice work',
+            'good job on the research',
+        ):
+            self.assertEqual(classify_delivery_mode(msg), 'praise', msg)
+            self.assertFalse(wants_work_deliverable(msg), msg)
+            d = work_mode_directive(msg)
+            self.assertIn('PRAISE', d, msg)
+            self.assertNotIn('[WORK MODE', d, msg)
+
+    def test_greeting_and_hostility_modes(self):
+        from expansion.behavior_spine import classify_delivery_mode
+        self.assertEqual(classify_delivery_mode('hey chris'), 'greeting')
+        self.assertIn('GREETING', work_mode_directive('hi'))
+        self.assertEqual(classify_delivery_mode('fuck you'), 'hostility')
+        self.assertIn('HOSTILITY', work_mode_directive('you suck'))
+        self.assertFalse(wants_work_deliverable('fuck you'))
+
+    def test_scrub_fake_teammate_starts(self):
+        raw = (
+            'Chris, Vector will compile platform fees. '
+            'Muse is currently analyzing competitor strategies. '
+            'Ledger has already begun researching fabrics.'
+        )
+        out = scrub_robotic_delivery(raw)
+        self.assertNotRegex(out, r'(?i)vector will compile')
+        self.assertNotRegex(out, r'(?i)muse is currently analyzing')
+        self.assertNotRegex(out, r'(?i)ledger has already begun')
+        # Surviving stem should still be addressable
+        self.assertTrue(out.startswith('Chris') or 'Chris' in out or out == '')
+
     def test_social_and_execute(self):
         self.assertTrue(is_social_or_affect_turn('what do you feel?'))
         self.assertTrue(is_social_or_affect_turn('lets talk about your day'))
@@ -65,10 +101,10 @@ class BehaviorSpineTests(unittest.TestCase):
         d = work_mode_directive('I want you to research and build me a plan')
         self.assertIn('WORK MODE', d)
         self.assertIn('numbered steps', d)
-        self.assertEqual(work_mode_directive('hi'), '')
+        self.assertIn('GREETING', work_mode_directive('hi'))
         social = work_mode_directive('lets talk about your day\nwhat do you feel?')
         self.assertIn('SOCIAL', social)
-        self.assertNotIn('WORK MODE', social)
+        self.assertNotIn('[WORK MODE', social)
         exe = work_mode_directive('do it')
         self.assertIn('EXECUTE', exe)
 

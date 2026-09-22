@@ -144,15 +144,24 @@ class ExpansionRuntime:
             learn_lines = LearningEngine(self.layout).context_lines(agent_id, limit=6)
         except Exception:
             learn_lines = []
-        # Active jobs (bounded)
+        # Active jobs — full board ground truth (not only this agent's queue)
         job_lines = []
         try:
             from expansion.jobs import JobStore
-            for j in JobStore(self.layout).list(agent_id=agent_id, limit=5):
+            for j in JobStore(self.layout).list(limit=12):
                 if j.status in ('QUEUED', 'ASSIGNED', 'RUNNING', 'WAITING', 'BLOCKED'):
-                    job_lines.append(f"- {j.job_id} [{j.status}] {j.request[:80]}")
+                    owner = j.assigned_agent or j.coordinator or '?'
+                    job_lines.append(
+                        f"- {owner}: {j.job_id} [{j.status}] {j.request[:80]}"
+                    )
         except Exception:
             pass
+        board_truth = (
+            'BOARD GROUND TRUTH: Only agents listed under Active jobs have open work. '
+            'Never say Vector/Muse/Sentry/Ledger started or is compiling something '
+            'unless they appear above. Prefer "I\'ll queue that on the REX board" '
+            'over inventing teammate status.\n'
+        )
         # Recent journal facts (bounded)
         journal_lines = []
         try:
@@ -359,6 +368,7 @@ class ExpansionRuntime:
             f"Living observations:\n" + '\n'.join(living_lines or ['- none yet']) + '\n'
             f"Learned claims (evidence-backed; revisable):\n" + '\n'.join(learn_lines or ['- none yet']) + '\n'
             f"Active jobs:\n" + '\n'.join(job_lines or ['- none']) + '\n'
+            f"{board_truth}"
             f"Recent journal facts:\n" + '\n'.join(journal_lines or ['- none']) + '\n'
             f"Relevant memory (Formula 9 when available):\n" + '\n'.join(mem_lines) + '\n'
             f"Stress behavior: {dossier.stress.stress_behavior}\n"

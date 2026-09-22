@@ -15,7 +15,8 @@ from expansion.state_layout import StateLayout, resolve_layout
 _HOSTILE = re.compile(
     r'\b(?:you(?:\'re| are) (?:useless|lazy|stupid|dumb|garbage|worthless)|'
     r'shut up|i hate you|i hate this|you suck|worst|idiot|not a good job|being lazy|'
-    r'this is garbage|you failed|absolute garbage|hate this output)\b',
+    r'this is garbage|you failed|absolute garbage|hate this output|'
+    r'fuck you|go to hell|asshole|piece of shit)\b',
     re.I,
 )
 _PRAISE = re.compile(
