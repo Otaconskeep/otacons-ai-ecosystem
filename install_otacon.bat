@@ -44,6 +44,7 @@ echo.
 echo ============================================================
 echo  This window will stay open. Press a letter key to exit.
 echo ============================================================
+if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
 pause >nul
 exit /b 1
 :ENC_OK
@@ -182,6 +183,7 @@ echo.
 echo  [L] open logs
 echo  [X] exit
 echo ============================================================
+if /I "%OTACON_UNATTENDED%"=="1" exit /b !RC!
 if defined DEBUG echo [DEBUG] never auto-exit on failure
 :STAY_CHOICE
 set /p "STAY=  Choice [L/X]: "
@@ -258,6 +260,7 @@ echo  [X] exit
 echo.
 echo ============================================================
 echo.
+if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
 :SS_CHOICE
 set /p "CHOICE=  Choice [R/L/D/X]: "
 if /I "!CHOICE!"=="L" goto SS_OPEN_LOG

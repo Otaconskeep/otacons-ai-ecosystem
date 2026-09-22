@@ -27,6 +27,32 @@ $LogDir = Join-Path $KeepDir "Logs"
 $InstDir = Join-Path $KeepDir "installer"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $LogFile = Join-Path $LogDir "expansion-installer.log"
+$script:SkipHeavyStudioPacks = $false
+
+function Test-OtaconUnattended {
+    if ($Unattended) { return $true }
+    $v = [string]$env:OTACON_UNATTENDED
+    if ([string]::IsNullOrWhiteSpace($v)) { return $false }
+    return ($v -match '^(?i)1|true|yes$')
+}
+
+function Wait-OtaconEnter {
+    param(
+        [string]$Prompt = "Press Enter to continue...",
+        [int]$FallbackSleepSec = 4
+    )
+    if (Test-OtaconUnattended) {
+        Write-Host ("  [unattended] skip: {0}" -f $Prompt) -ForegroundColor DarkCyan
+        Write-ExpLog "unattended skip prompt: $Prompt"
+        return
+    }
+    try {
+        Write-Host ("  {0}" -f $Prompt) -ForegroundColor Cyan
+        [void](Read-Host)
+    } catch {
+        Start-Sleep -Seconds $FallbackSleepSec
+    }
+}
 
 function Write-ExpLog([string]$Message) {
     $line = "$(Get-Date -Format o)  $Message"
@@ -341,7 +367,7 @@ if (-not $netOk) {
     Write-Host ("  Guide: {0}" -f $guidePath) -ForegroundColor DarkCyan
     Write-Host " ################################################################" -ForegroundColor Red
     Write-Host ""
-    try { Write-Host "  Press Enter to try Expansion anyway..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 5 }
+    Wait-OtaconEnter -Prompt "Press Enter to try Expansion anyway..." -FallbackSleepSec 5
 }
 
 $freeGb = -1
@@ -350,29 +376,50 @@ try {
     if ($drv) { $freeGb = [math]::Round(([double]$drv.Free) / 1GB, 1) }
 } catch {}
 if ($freeGb -ge 0 -and $freeGb -lt 100) {
+    $script:SkipHeavyStudioPacks = $true
+    $env:OTACON_SKIP_STUDIO_PACKS = "1"
+    $env:OTACON_STUDIO_AUTO = "0"
     Write-Host ""
     Write-Host " ################################################################" -ForegroundColor Red
     Write-Host " #  !!!  ACTION REQUIRED - DISK  !!!" -ForegroundColor Red
     Write-Host (" #  LOW FREE SPACE ON C: (~{0} GB) - LTX NEEDS ~100 GB" -f $freeGb) -ForegroundColor Yellow
     Write-Host " ################################################################" -ForegroundColor Red
     Write-Host "  >>> YOU MUST: free disk space before large Studio pack downloads" -ForegroundColor Yellow
+    if (Test-OtaconUnattended) {
+        Write-Host "  Unattended: deferring heavy Studio packs until space is freed." -ForegroundColor Yellow
+    }
     Write-Host ("  Guide: {0}" -f $guidePath) -ForegroundColor DarkCyan
     Write-Host " ################################################################" -ForegroundColor Red
     Write-Host ""
-    try { Write-Host "  Press Enter to continue anyway..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 4 }
+    Write-ExpLog ("disk low free={0}GB skip_studio_packs=1 unattended={1}" -f $freeGb, (Test-OtaconUnattended))
+    Wait-OtaconEnter -Prompt "Press Enter to continue anyway..." -FallbackSleepSec 4
 }
 
 $dockerReady = $false
+function Get-ExpDockerDesktopCandidatePaths {
+    @(
+        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\Docker Desktop.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\Docker Desktop.exe"),
+        (Join-Path $env:LOCALAPPDATA "Docker\Docker Desktop.exe")
+    )
+}
+function Get-ExpDockerCliBinDirs {
+    @(
+        (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin"),
+        (Join-Path $env:ProgramFiles "Docker\Docker"),
+        (Join-Path $env:ProgramData "DockerDesktop\version-bin"),
+        (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\resources\bin"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\resources\bin")
+    )
+}
 function Update-ExpDockerPath {
     try {
         $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
         $user = [Environment]::GetEnvironmentVariable("Path", "User")
         if ($machine -or $user) { $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ";" }
-        foreach ($e in @(
-            (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin"),
-            (Join-Path $env:ProgramFiles "Docker\Docker"),
-            (Join-Path $env:ProgramData "DockerDesktop\version-bin")
-        )) {
+        foreach ($e in (Get-ExpDockerCliBinDirs)) {
             if ($e -and (Test-Path -LiteralPath $e) -and ($env:Path -notlike "*$e*")) { $env:Path = "$e;$env:Path" }
         }
     } catch {}
@@ -380,10 +427,13 @@ function Update-ExpDockerPath {
 function Test-ExpDockerPresent {
     Update-ExpDockerPath
     try { if (Get-Command docker -ErrorAction SilentlyContinue) { return $true } } catch {}
-    foreach ($p in @(
-        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
-        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe")
-    )) { if ($p -and (Test-Path -LiteralPath $p)) { return $true } }
+    foreach ($p in (Get-ExpDockerDesktopCandidatePaths)) {
+        if ($p -and (Test-Path -LiteralPath $p)) { return $true }
+    }
+    foreach ($bin in (Get-ExpDockerCliBinDirs)) {
+        $cli = Join-Path $bin "docker.exe"
+        if ($cli -and (Test-Path -LiteralPath $cli)) { return $true }
+    }
     return $false
 }
 function Test-ExpDockerEngineReady {
@@ -399,17 +449,41 @@ function Test-ExpDockerEngineReady {
     } catch { return $false }
 }
 function Start-ExpDockerDesktop {
-    $exe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
-    if (-not (Test-Path -LiteralPath $exe)) {
-        $exe = Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe"
+    $exe = $null
+    foreach ($p in (Get-ExpDockerDesktopCandidatePaths)) {
+        if ($p -and (Test-Path -LiteralPath $p)) { $exe = $p; break }
     }
-    if (-not (Test-Path -LiteralPath $exe)) { return $false }
-    try { Start-Process -FilePath $exe -ErrorAction SilentlyContinue | Out-Null } catch {}
+    if (-not $exe) {
+        foreach ($bin in (Get-ExpDockerCliBinDirs)) {
+            $cli = Join-Path $bin "docker.exe"
+            if (-not (Test-Path -LiteralPath $cli)) { continue }
+            $parent = Split-Path -Parent $bin
+            foreach ($cand in @(
+                (Join-Path $parent "Docker Desktop.exe"),
+                (Join-Path (Split-Path -Parent $parent) "Docker Desktop.exe")
+            )) {
+                if ($cand -and (Test-Path -LiteralPath $cand)) { $exe = $cand; break }
+            }
+            if ($exe) { break }
+        }
+    }
+    if (-not $exe) {
+        Write-ExpLog "Start-ExpDockerDesktop: no Docker Desktop.exe found (checked Program Files + LocalAppData)"
+        return $false
+    }
+    try {
+        Start-Process -FilePath $exe -ErrorAction SilentlyContinue | Out-Null
+        Write-ExpLog "Started Docker Desktop exe=$exe"
+    } catch {
+        Write-ExpLog ("Start Docker Desktop failed: {0}" -f $_.Exception.Message)
+        return $false
+    }
     try { Start-Service -Name "com.docker.service" -ErrorAction SilentlyContinue | Out-Null } catch {}
     return $true
 }
 function Wait-ExpDockerEngineReady {
     param([int]$TimeoutSec = 300, [int]$PollSec = 5)
+    if ((Test-OtaconUnattended) -and $TimeoutSec -gt 120) { $TimeoutSec = 120 }
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     $n = 0
     while ((Get-Date) -lt $deadline) {
@@ -456,12 +530,16 @@ if (-not $dockerReady -and -not (Test-ExpDockerPresent)) {
             Start-Process -FilePath $winget -ArgumentList @("source", "update", "--disable-interactivity") -Wait -PassThru -NoNewWindow | Out-Null
         } catch {}
         try {
-            $p = Start-Process -FilePath $winget -ArgumentList @(
-                "install", "-e", "--id", "Docker.DockerDesktop",
-                "--accept-package-agreements", "--accept-source-agreements",
-                "--disable-interactivity", "--scope", "machine"
-            ) -Wait -PassThru -NoNewWindow
-            Write-ExpLog ("winget Docker.DockerDesktop exit={0}" -f $p.ExitCode)
+            foreach ($scope in @("machine", "user")) {
+                $p = Start-Process -FilePath $winget -ArgumentList @(
+                    "install", "-e", "--id", "Docker.DockerDesktop",
+                    "--accept-package-agreements", "--accept-source-agreements",
+                    "--disable-interactivity", "--scope", $scope
+                ) -Wait -PassThru -NoNewWindow
+                Write-ExpLog ("winget Docker.DockerDesktop scope={0} exit={1}" -f $scope, $p.ExitCode)
+                Update-ExpDockerPath
+                if (Test-ExpDockerPresent) { break }
+            }
         } catch {
             Write-ExpLog ("winget docker install error: {0}" -f $_.Exception.Message)
         }
@@ -534,7 +612,7 @@ if (Test-ExpDockerPresent) {
         Write-Host " #  Enable WSL Integration; reboot if Docker asks                #" -ForegroundColor Yellow
         Write-Host " ################################################################" -ForegroundColor Yellow
         Write-Host ""
-        try { Write-Host "  Press Enter when Docker Desktop shows Running (or to continue)..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 8 }
+        Wait-OtaconEnter -Prompt "Press Enter when Docker Desktop shows Running (or to continue)..." -FallbackSleepSec 8
         if (Wait-ExpDockerEngineReady -TimeoutSec 90) { $dockerReady = $true }
     }
 } else {
@@ -549,7 +627,7 @@ if (Test-ExpDockerPresent) {
     Write-Host ("  Guide: {0}" -f $guidePath) -ForegroundColor DarkCyan
     Write-Host " ################################################################" -ForegroundColor Red
     Write-Host ""
-    try { Write-Host "  Press Enter to continue foundation install..." -ForegroundColor Cyan; [void](Read-Host) } catch { Start-Sleep -Seconds 4 }
+    Wait-OtaconEnter -Prompt "Press Enter to continue foundation install..." -FallbackSleepSec 4
 }
 
 # GPU hint: Expansion Studio packs need the same Windows->WSL bridge as Lite.
@@ -591,6 +669,10 @@ if ($gpuWin -ne "not visible" -and $gpuWsl -eq "not visible") {
 }
 $gpuWinEsc = $gpuWin.Replace("'", "'\''")
 $gpuVramEsc = $gpuWinVram.Replace("'", "'\''")
+$skipStudio = if ($script:SkipHeavyStudioPacks -or $env:OTACON_SKIP_STUDIO_PACKS -eq "1") { "1" } else { "0" }
+$studioAuto = if ($skipStudio -eq "1" -or $env:OTACON_STUDIO_AUTO -eq "0") { "0" } else { "" }
+$skipStudioEsc = $skipStudio.Replace("'", "'\''")
+$studioAutoEsc = $studioAuto.Replace("'", "'\''")
 
 # Bash body: only expand PowerShell $linuxSh / $runTests; escape bash vars with backtick-dollar.
 $bash = @"
@@ -600,6 +682,8 @@ export OTACON_RUN_TESTS=$runTests
 export OTACON_SKIP_NVIDIA_SMI=0
 export OTACON_WINDOWS_GPU_HINT='$gpuWinEsc'
 export OTACON_WINDOWS_GPU_VRAM_GB='$gpuVramEsc'
+export OTACON_SKIP_STUDIO_PACKS='$skipStudioEsc'
+export OTACON_STUDIO_AUTO='$studioAutoEsc'
 SCRIPT='$linuxSh'
 if [ ! -f "`$SCRIPT" ]; then
   echo "EXP_FAIL=missing_install_script"

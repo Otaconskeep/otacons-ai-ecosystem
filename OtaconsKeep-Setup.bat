@@ -44,6 +44,7 @@ echo.
 echo ============================================================
 echo  This window will stay open. Press a letter key to exit.
 echo ============================================================
+if /I "%OTACON_UNATTENDED%"=="1" exit /b 1
 pause >nul
 exit /b 1
 :ENC_OK
@@ -222,7 +223,7 @@ if defined DEBUG echo [DEBUG] command=powershell -File bootstrap-fetch.ps1 -Mani
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%FETCH_PS1%" -DestRoot "%INST%" -RawBase "%RAW%" -LogFile "%LOGFILE%" -Manifest full %DEBUG_SWITCH%
 set "RC=!ERRORLEVEL!"
-REM Some hosts swallow PowerShell `exit 1` — honor EXIT_CODE=1 written to the log/console capture.
+REM Some hosts swallow PowerShell `exit 1` - honor EXIT_CODE=1 written to the log/console capture.
 findstr /C:"EXIT_CODE=1" "%LOGFILE%" >nul 2>&1 && set "RC=1"
 if exist "%LASTOUT%" findstr /C:"EXIT_CODE=1" "%LASTOUT%" >nul 2>&1 && set "RC=1"
 call :LOG "bootstrap-fetch.ps1 exit=!RC!"
@@ -332,6 +333,7 @@ echo ============================================================
 echo  The setup helper finished with exit code %CHILD_RC%.
 echo  Log: %LOGFILE%
 echo ============================================================
+if /I "%OTACON_UNATTENDED%"=="1" exit /b %CHILD_RC%
 if defined DEBUG echo [DEBUG] never auto-close on failure
 pause >nul
 exit /b 0
@@ -376,6 +378,7 @@ echo  [X] exit
 echo.
 echo ============================================================
 echo.
+if /I "%OTACON_UNATTENDED%"=="1" exit /b %FAIL_RC%
 :SS_CHOICE
 set /p "CHOICE=  Choice [R/L/D/X]: "
 if /I "!CHOICE!"=="L" goto SS_OPEN_LOG

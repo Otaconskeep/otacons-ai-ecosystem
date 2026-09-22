@@ -16,7 +16,9 @@ param(
     [string]$ProbeDistro = "",
     [string]$RepoRoot = "",
     [string]$Branch = "main",
-    [string]$RawBase = "https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem"
+    [string]$RawBase = "https://raw.githubusercontent.com/Otaconskeep/otacons-ai-ecosystem",
+    # Friend / CI one-click: never block on Read-Host. Also honored via OTACON_UNATTENDED=1.
+    [switch]$Unattended
 )
 
 $ErrorActionPreference = "Continue"
@@ -48,6 +50,15 @@ $script:OtaconOpenBase = "http://127.0.0.1:$Port"
 # AutoPilot: no I/R/C menus on the happy path - Otacon runs the install.
 $script:AutoPilot = $true
 $script:OtaconUiReady = $false
+# Soft-skip heavy Studio packs when free disk is too low (unattended or user-continue).
+$script:SkipHeavyStudioPacks = $false
+
+function Test-OtaconUnattended {
+    if ($Unattended) { return $true }
+    $v = [string]$env:OTACON_UNATTENDED
+    if ([string]::IsNullOrWhiteSpace($v)) { return $false }
+    return ($v -match '^(?i)1|true|yes$')
+}
 
 New-Item -ItemType Directory -Force -Path $KeepDir, $LogDir, $DiagDir | Out-Null
 
@@ -381,11 +392,16 @@ function Show-ActionRequired {
     Write-KeepLog ("ACTION REQUIRED [{0}]: {1} | must={2}" -f $topic, $Headline, $MustDo) -Level "WARN" -Stage $topic
     if ($WriteGuide) { [void](Write-OtaconTroubleshootGuide -Highlight $topic) }
     if ($Pause) {
-        try {
-            Write-Host "  Press Enter to keep installing (read the red box above first)..." -ForegroundColor Cyan
-            [void](Read-Host)
-        } catch {
-            Start-Sleep -Seconds 6
+        if (Test-OtaconUnattended) {
+            Write-Host "  [unattended] continuing without waiting for Enter..." -ForegroundColor DarkCyan
+            Write-KeepLog "unattended skip pause topic=$topic headline=$Headline" -Stage $topic
+        } else {
+            try {
+                Write-Host "  Press Enter to keep installing (read the red box above first)..." -ForegroundColor Cyan
+                [void](Read-Host)
+            } catch {
+                Start-Sleep -Seconds 6
+            }
         }
     }
 }
@@ -578,28 +594,65 @@ function Get-WindowsFreeDiskGb {
     return -1
 }
 
+function Get-DockerDesktopCandidatePaths {
+    <# Machine-scoped + user-scoped (winget --scope user / Store-style) install layouts. #>
+    $list = New-Object System.Collections.Generic.List[string]
+    foreach ($p in @(
+        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\Docker Desktop.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\Docker Desktop.exe"),
+        (Join-Path $env:LOCALAPPDATA "Docker\Docker Desktop.exe")
+    )) {
+        if ($p) { [void]$list.Add($p) }
+    }
+    return $list
+}
+
+function Get-DockerCliBinDirs {
+    $list = New-Object System.Collections.Generic.List[string]
+    foreach ($p in @(
+        (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin"),
+        (Join-Path $env:ProgramFiles "Docker\Docker"),
+        (Join-Path $env:ProgramData "DockerDesktop\version-bin"),
+        (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\resources\bin"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\resources\bin")
+    )) {
+        if ($p) { [void]$list.Add($p) }
+    }
+    return $list
+}
+
 function Test-DockerDesktopPresent {
     try {
         $c = Get-Command docker -ErrorAction SilentlyContinue
         if ($c) { return $true }
     } catch {}
-    $paths = @(
-        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
-        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe")
-    )
-    foreach ($p in $paths) {
+    foreach ($p in (Get-DockerDesktopCandidatePaths)) {
         if ($p -and (Test-Path -LiteralPath $p)) { return $true }
+    }
+    foreach ($bin in (Get-DockerCliBinDirs)) {
+        $cli = Join-Path $bin "docker.exe"
+        if ($cli -and (Test-Path -LiteralPath $cli)) { return $true }
     }
     return $false
 }
 
 function Get-DockerDesktopExe {
-    $paths = @(
-        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
-        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe")
-    )
-    foreach ($p in $paths) {
+    foreach ($p in (Get-DockerDesktopCandidatePaths)) {
         if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+    }
+    # Last resort: sibling of resources\bin\docker.exe
+    foreach ($bin in (Get-DockerCliBinDirs)) {
+        $cli = Join-Path $bin "docker.exe"
+        if (-not (Test-Path -LiteralPath $cli)) { continue }
+        $parent = Split-Path -Parent $bin
+        foreach ($cand in @(
+            (Join-Path $parent "Docker Desktop.exe"),
+            (Join-Path (Split-Path -Parent $parent) "Docker Desktop.exe")
+        )) {
+            if ($cand -and (Test-Path -LiteralPath $cand)) { return $cand }
+        }
     }
     return $null
 }
@@ -612,12 +665,7 @@ function Update-SessionPathFromRegistry {
         if ($machine -or $user) {
             $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ";"
         }
-        $extra = @(
-            (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin"),
-            (Join-Path $env:ProgramFiles "Docker\Docker"),
-            (Join-Path $env:ProgramData "DockerDesktop\version-bin")
-        )
-        foreach ($e in $extra) {
+        foreach ($e in (Get-DockerCliBinDirs)) {
             if ($e -and (Test-Path -LiteralPath $e) -and ($env:Path -notlike "*$e*")) {
                 $env:Path = "$e;$env:Path"
             }
@@ -701,25 +749,28 @@ function Install-DockerDesktopViaWinget {
 
     $ids = @("Docker.DockerDesktop", "Docker.DockerDesktop.Edge")
     foreach ($id in $ids) {
-        try {
-            Write-KeepLog "winget install id=$id" -Stage "DOCKER"
-            $p = Start-Process -FilePath $winget -ArgumentList @(
-                "install", "-e", "--id", $id,
-                "--accept-package-agreements", "--accept-source-agreements",
-                "--disable-interactivity", "--scope", "machine"
-            ) -Wait -PassThru -NoNewWindow
-            $code = $p.ExitCode
-            Write-KeepLog ("winget {0} exit={1}" -f $id, $code) -Stage "DOCKER"
-            # 0 ok; -1978335189 already installed; -1978335135 no newer upgrade / ok-ish
-            if ($code -eq 0 -or $code -eq -1978335189 -or $code -eq -1978335135) {
-                return @{ ok = $true; reason = ("winget:{0}:{1}" -f $id, $code) }
+        foreach ($scope in @("machine", "user")) {
+            try {
+                Write-KeepLog "winget install id=$id scope=$scope" -Stage "DOCKER"
+                $p = Start-Process -FilePath $winget -ArgumentList @(
+                    "install", "-e", "--id", $id,
+                    "--accept-package-agreements", "--accept-source-agreements",
+                    "--disable-interactivity", "--scope", $scope
+                ) -Wait -PassThru -NoNewWindow
+                $code = $p.ExitCode
+                Write-KeepLog ("winget {0} scope={1} exit={2}" -f $id, $scope, $code) -Stage "DOCKER"
+                # 0 ok; -1978335189 already installed; -1978335135 no newer upgrade / ok-ish
+                if ($code -eq 0 -or $code -eq -1978335189 -or $code -eq -1978335135) {
+                    return @{ ok = $true; reason = ("winget:{0}:{1}:{2}" -f $id, $scope, $code) }
+                }
+                # Reboot required class - treat as soft ok if files appear
+                Update-SessionPathFromRegistry
+                if (Test-DockerDesktopPresent) {
+                    return @{ ok = $true; reason = ("winget_present_after:{0}:{1}:{2}" -f $id, $scope, $code) }
+                }
+            } catch {
+                Write-KeepLog "winget $id scope=$scope threw: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
             }
-            # Reboot required class (APPINSTALLER often 0x8A150101 / similar) - treat as soft ok if files appear
-            if (Test-DockerDesktopPresent) {
-                return @{ ok = $true; reason = ("winget_present_after:{0}:{1}" -f $id, $code) }
-            }
-        } catch {
-            Write-KeepLog "winget $id threw: $($_.Exception.Message)" -Level "WARN" -Stage "DOCKER"
         }
     }
     return @{ ok = (Test-DockerDesktopPresent); reason = "winget_exhausted" }
@@ -795,6 +846,10 @@ function Wait-DockerEngineReady {
         [int]$TimeoutSec = 300,
         [int]$PollSec = 5
     )
+    if ((Test-OtaconUnattended) -and $TimeoutSec -gt 120) {
+        # Friend one-click: do not stall ~5 min on an engine that never starts.
+        $TimeoutSec = 120
+    }
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     $n = 0
     while ((Get-Date) -lt $deadline) {
@@ -922,12 +977,20 @@ function Invoke-InstallRiskPreflight {
     $free = Get-WindowsFreeDiskGb
     $need = if ($ForExpansion) { 120 } else { 40 }
     if ($free -ge 0 -and $free -lt $need) {
+        $script:SkipHeavyStudioPacks = $true
+        $env:OTACON_SKIP_STUDIO_PACKS = "1"
+        $env:OTACON_STUDIO_AUTO = "0"
+        $diskPause = -not (Test-OtaconUnattended)
         Show-ActionRequired -Topic "DISK" -Headline ("LOW FREE SPACE ON C: (~{0} GB)" -f $free) -Lines @(
             ("This PC reports about {0} GB free on C:." -f $free),
             ("Recommended free before {0}: ~{1} GB+." -f ($(if ($ForExpansion) { "Expansion / Studio (LTX packs)" } else { "Lite install" }), $need)),
             "Studio video on 24GB GPUs (RTX 4090) can need ~100 GB for LTX-2 packs.",
-            "Keep models inside WSL/Docker volumes - avoid /mnt/c when possible."
-        ) -MustDo "Free disk space on C: (or the WSL drive), then press Enter to continue anyway" -Pause -WriteGuide
+            "Keep models inside WSL/Docker volumes - avoid /mnt/c when possible.",
+            $(if (Test-OtaconUnattended) { "Unattended: skipping heavy Studio pack downloads until space is freed." } else { "Continuing Core install; large Studio packs will be deferred." })
+        ) -MustDo $(if (Test-OtaconUnattended) { "Free disk space later, then Set Up Video Studio from Codec" } else { "Free disk space on C: (or the WSL drive), then press Enter to continue anyway" }) `
+            -Pause:$diskPause -WriteGuide `
+            -ContinueNote "Setup continues; heavy Studio packs are deferred while disk is low."
+        Write-KeepLog ("disk low free={0}GB need={1}GB skip_studio_packs=1 unattended={2}" -f $free, $need, (Test-OtaconUnattended)) -Level "WARN" -Stage "DISK"
     }
 
     if ($ForExpansion -or $script:ForceInstall) {
@@ -974,6 +1037,15 @@ function Show-WorkingPanel {
 
 function Read-Choice {
     param([string]$Prompt, [string[]]$Allowed)
+    if (Test-OtaconUnattended) {
+        if ($Allowed -contains "ENTER") {
+            Write-KeepLog "unattended Read-Choice default=ENTER prompt=$Prompt" -Stage "UI"
+            return "ENTER"
+        }
+        $first = $Allowed | Select-Object -First 1
+        Write-KeepLog "unattended Read-Choice default=$first prompt=$Prompt" -Stage "UI"
+        return $first
+    }
     while ($true) {
         Write-Host -NoNewline $Prompt
         try {
@@ -4119,6 +4191,9 @@ function Step-InstallOtacon {
         OTACON_WINDOWS_GPU_VRAM_GB   = $(if ($gpuWinVram -gt 0) { "$gpuWinVram" } else { "" })
         # Never leave SKIP=1 sticky from a prior hung probe on this host.
         OTACON_SKIP_NVIDIA_SMI       = "0"
+        # Soft-skip heavy Studio packs when preflight marked low disk / unattended.
+        OTACON_SKIP_STUDIO_PACKS     = $(if ($script:SkipHeavyStudioPacks -or $env:OTACON_SKIP_STUDIO_PACKS -eq "1") { "1" } else { "" })
+        OTACON_STUDIO_AUTO           = $(if ($script:SkipHeavyStudioPacks -or $env:OTACON_STUDIO_AUTO -eq "0") { "0" } else { "" })
     }
     $envBits = New-Object System.Collections.Generic.List[string]
     foreach ($k in $envPairs.Keys) {

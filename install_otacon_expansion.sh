@@ -545,6 +545,11 @@ if [[ -n "${VPY:-}" ]] && [[ -f "$INSTALL_DIR/core/hardware_profile.py" ]]; then
   EXP_STUDIO_COMFY="$(printf '%s\n' "$STUDIO_OUT" | sed -n '2p')"
   EXP_STUDIO_AUTO="$(printf '%s\n' "$STUDIO_OUT" | sed -n '3p')"
   EXP_STUDIO_ASSETS="$(printf '%s\n' "$STUDIO_OUT" | sed -n '4p')"
+  # Windows preflight / unattended low-disk: defer multi-GB Studio packs.
+  if [[ "${OTACON_SKIP_STUDIO_PACKS:-0}" == "1" ]] || [[ "${OTACON_STUDIO_AUTO:-}" == "0" ]]; then
+    EXP_STUDIO_AUTO=0
+    warn "Studio pack auto-download deferred (OTACON_SKIP_STUDIO_PACKS / OTACON_STUDIO_AUTO=0)."
+  fi
   ok "Studio profile=${EXP_STUDIO_PROFILE:-?} comfy=${EXP_STUDIO_COMFY:-?} auto=${EXP_STUDIO_AUTO:-?} assets=${EXP_STUDIO_ASSETS:-none}"
   case "${EXP_STUDIO_PROFILE:-}" in
     *LTX2*|*24GB*|*32GB*)
