@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
-  "installer_version": "1.3.3",
-  "commit": "f2a2c003df350985b8a47cbc6a6d05bc2d5e49bd",
+  "installer_version": "1.3.4",
+  "commit": "dc31007fa6b90e92f4dee81e1ae167050c266ecb",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.3.3 \u2014 Command Center homescreen + top tabs + companion tiles. Soft-update always syncs to origin/main tip (latest). release.json.commit is provenance only."
+  "notes": "Otacon v1.3.4 \u2014 Controlled-pilot REX governance in Expansion (domain allowlist, before/after DoD, auto-rollback graduation streak, restart-safe bootstrap). Soft-update tracks origin/main tip."
 }
