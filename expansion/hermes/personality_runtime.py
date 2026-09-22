@@ -153,17 +153,49 @@ def build_personality_runtime_packet(
     except Exception:
         learn_lines = []
 
+    f5_summary = ''
+    f9_memories: list[dict] = []
+    state_summary = ''
+    try:
+        from expansion.continuity.relationship import RelationshipEngine
+        f5_summary = RelationshipEngine.relationship_summary_for_prompt(
+            eid, layout=layout,
+        )
+    except Exception:
+        f5_summary = ''
+    try:
+        from expansion.continuity.memory_engine import MemoryEngine
+        f9_memories = MemoryEngine.retrieve_relevant_memory(
+            eid, user_message or '', top_k=4, layout=layout,
+        )
+    except Exception:
+        f9_memories = []
+    try:
+        from expansion.continuity.state_engine import StateEngine
+        state_summary = StateEngine.summary_for_prompt(eid, layout=layout)
+    except Exception:
+        state_summary = ''
+
     packet = {
-        'schema': 'expansion.hermes.personality_runtime.v1',
+        'schema': 'expansion.hermes.personality_runtime.v2',
         'agent_id': eid,
         'route': route,
         'intent_class': intent,
         'user_message': user_message,
         'profile': profile,
         'emotion_vector': vec,
+        'state_summary': state_summary,
+        'relationship_summary': f5_summary,
+        'formula9_memories': [
+            {
+                'score': m.get('_formula9_score'),
+                'source': m.get('_source'),
+                'note': (m.get('note') or m.get('text') or '')[:160],
+            }
+            for m in f9_memories
+        ],
         'bond': {k: v for k, v in bond.items() if k != 'emotional_residue'} | {
             'emotional_residue': bond.get('emotional_residue') or {},
-            # Strip any accidental private keys
         },
         'dual_affect_block': dual,
         'learned_claims': learn_lines,
@@ -318,8 +350,20 @@ def layered_system_prompt_section(
         f"Drive: {profile.get('core_drive')}",
         f"Intent class: {packet.get('intent_class')}",
         f"Formula-8 mood: {vec.get('mood')} (score={vec.get('formula8_score')})",
+        f"Formulas active: {', '.join(packet.get('formula_catalog_keys') or [])}",
         'Speak from long-term bond + short-term affect; never dump gauges.',
     ]
+    if packet.get('state_summary'):
+        lines.append(str(packet['state_summary']))
+    if packet.get('relationship_summary'):
+        lines.append(str(packet['relationship_summary']))
+    f9 = packet.get('formula9_memories') or []
+    if f9:
+        lines.append('Formula-9 memory hits:')
+        for m in f9[:3]:
+            note = (m.get('note') or '').strip()
+            if note:
+                lines.append(f"  - [{m.get('source')}] {note}")
     dual = packet.get('dual_affect_block') or ''
     if dual:
         lines.append(dual.rstrip())

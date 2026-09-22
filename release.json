@@ -1,6 +1,6 @@
 {
   "product": "Otacon",
-  "installer_version": "1.1.1",
+  "installer_version": "1.2.0",
   "commit": "ea45b226772b7d79b15f2b057fbf54cb1a02f375",
   "channel": "public",
   "ecosystem_ref": "main",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.1.1 \u2014 Hermes personality runtime + emotion bridge Formula 4/7/8 + conversational affect on public Aria roster (clean-room; no private Keep data)."
+  "notes": "Otacon v1.2.0 \u2014 Premium Keep-parity layered intelligence: Formula 4/5/7/8/9, StateEngine, RelationshipEngine, MemoryEngine, Hermes + conversational affect. Clean-room; mock profiles; no private Keep data."
 }

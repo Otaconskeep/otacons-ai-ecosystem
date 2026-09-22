@@ -8,6 +8,10 @@
 
 
 
+
+## Otacon v1.2.0
+
+Premium Expansion now ships Keep-parity **Formula 4 / 5 / 7 / 8 / 9** with StateEngine, RelationshipEngine, MemoryEngine, Hermes personality runtime, and conversational affect. Public Aria roster only; mock bonds; no private Keep data. Tag: [`v1.2.0`](https://github.com/Otaconskeep/otacons-ai-ecosystem/releases/tag/v1.2.0).
 ## Otacon v1.1.1
 
 Hermes personality runtime, emotion bridge (Formula 4/7/8), and conversational affect are now wired into public Expansion chat — clean-room Keep-parity layers with mock psych profiles for Aria/Vector/Ledger/Muse/Sentry only. Tag: [`v1.1.1`](https://github.com/Otaconskeep/otacons-ai-ecosystem/releases/tag/v1.1.1).

@@ -180,35 +180,67 @@ def get_emotion_vector(
     *,
     layout: Optional[StateLayout] = None,
 ) -> dict:
+    """Prefer StateEngine (Formula 4/7/8 vector). Fall back to dims / mock baseline."""
     canon = canonical_entity_id(entity_id)
     layout = layout or resolve_layout()
     raw: dict = {}
+    # Primary authority: StateEngine agent_states (fixes 15-dim remap collapse)
     try:
-        from expansion.emotion_store import EmotionStore
-        state = EmotionStore(layout).get(canon)
-        if state is not None:
-            raw = _dims_to_vector(state.dimensions or {})
-            raw['updated_at'] = state.updated_at
-            # Placeholder residue channel file (owner-local, never ships Keep data)
-            residue_path = layout.user_data_root / 'emotion_residue' / f'{canon}.json'
-            if residue_path.is_file():
-                try:
-                    extra = json.loads(residue_path.read_text(encoding='utf-8'))
-                    if isinstance(extra, dict) and 'residue' in extra:
-                        raw['residue'] = _as_residue(extra.get('residue'), raw['residue'])
-                except Exception:
-                    pass
+        from expansion.continuity.state_engine import StateEngine
+        st = StateEngine.get(canon, layout=layout)
+        if st and not st.get('_seeded'):
+            raw = {
+                'happiness': st.get('happiness'),
+                'confidence': st.get('confidence'),
+                'energy': st.get('energy'),
+                'residue': st.get('_residue', 0.0),
+                'mood': st.get('mood'),
+                '_updated': st.get('updated_at') or time.time(),
+                'last_event': st.get('last_event') or '',
+            }
+        elif st and st.get('_seeded'):
+            # Seeded baseline still valid as Formula vector
+            raw = {
+                'happiness': st.get('happiness'),
+                'confidence': st.get('confidence'),
+                'energy': st.get('energy'),
+                'residue': st.get('_residue', 0.0),
+                'mood': st.get('mood'),
+                '_updated': time.time(),
+                'last_event': 'mock_baseline',
+            }
     except Exception:
         raw = {}
     if not raw:
-        # Mock resting baseline — not private Keep state
+        try:
+            from expansion.emotion_store import EmotionStore
+            state = EmotionStore(layout).get(canon)
+            if state is not None:
+                raw = _dims_to_vector(state.dimensions or {})
+                raw['updated_at'] = state.updated_at
+                residue_path = layout.user_data_root / 'emotion_residue' / f'{canon}.json'
+                if residue_path.is_file():
+                    try:
+                        extra = json.loads(residue_path.read_text(encoding='utf-8'))
+                        if isinstance(extra, dict) and 'residue' in extra:
+                            raw['residue'] = _as_residue(extra.get('residue'), raw['residue'])
+                    except Exception:
+                        pass
+        except Exception:
+            raw = {}
+    if not raw:
         raw = dict(_BASELINE)
         raw['residue'] = 0.0
         raw['_updated'] = time.time()
         raw['last_event'] = 'mock_baseline'
     vec = normalize_vector(raw, entity_id=canon)
-    vec['state_found'] = bool(raw.get('last_event') != 'mock_baseline' or True)
+    vec['state_found'] = True
     vec['state_key_resolved'] = canon
+    try:
+        from expansion.continuity.state_engine import StateEngine
+        vec['is_stressed'] = StateEngine.is_stressed(canon, layout=layout)
+    except Exception:
+        pass
     return vec
 
 
@@ -221,6 +253,29 @@ def load_bond(
     canon = canonical_entity_id(entity_id)
     tid = canonical_entity_id(target_id) or 'user_primary'
     layout = layout or resolve_layout()
+    # Prefer Formula 5 RelationshipEngine (operator bond)
+    try:
+        from expansion.continuity.relationship import RelationshipEngine
+        RelationshipEngine.ensure_seeded(layout=layout)
+        ally = RelationshipEngine.strength(canon, tid, 'ally', layout=layout)
+        rival = RelationshipEngine.strength(canon, tid, 'rival', layout=layout)
+        level = RelationshipEngine.operator_rel_level(canon, layout=layout) if tid == 'user_primary' else 'neutral'
+        return {
+            'trust': round(0.35 + 0.55 * ally, 4),
+            'affection': round(0.30 + 0.55 * ally, 4),
+            'bond_level': round(0.30 + 0.50 * ally, 4),
+            'attachment': round(0.30 + 0.50 * ally, 4),
+            'jealousy': 0.15,
+            'rivalry': round(rival, 4),
+            'operator_rel_level': level,
+            'emotional_residue': {
+                'hurt': 0.0, 'concern': 0.0, 'warmth_surge': 0.0, 'pride': 0.0,
+            },
+            '_placeholder': ally == 0.5 and rival == 0.5,
+            '_formula5': True,
+        }
+    except Exception:
+        pass
     try:
         from expansion.relationship_store import RelationshipStore
         rel = RelationshipStore(layout).get(canon, tid)
@@ -234,15 +289,11 @@ def load_bond(
                 'jealousy': float(dims.get('jealousy', 0.15)),
                 'rivalry': float(dims.get('rivalry', 0.1)),
                 'emotional_residue': {
-                    'hurt': 0.0,
-                    'concern': 0.0,
-                    'warmth_surge': 0.0,
-                    'pride': 0.0,
+                    'hurt': 0.0, 'concern': 0.0, 'warmth_surge': 0.0, 'pride': 0.0,
                 },
             }
     except Exception:
         pass
-    # Placeholder neutral bond — protects privacy; no owner history
     return {
         'trust': 0.55,
         'affection': 0.50,
@@ -286,6 +337,13 @@ def formula_catalog() -> dict:
             'baseline': dict(_BASELINE),
             'plain': 'Each event nudges happiness/confidence/energy, then drifts toward baseline.',
         },
+        'formula_5': {
+            'name': 'Relationship Update Model',
+            'equation': 'new = cur + delta − DRIFT·(cur − NEUTRAL)',
+            'drift': 0.008,
+            'neutral': 0.50,
+            'plain': 'Agent↔agent and agent↔operator bonds drift slowly toward neutral without events.',
+        },
         'formula_7': {
             'name': 'Emotional Residue',
             'equation': 'new_residue = prev·RESIDUE_DECAY + impact',
@@ -298,6 +356,11 @@ def formula_catalog() -> dict:
             'equation': 'score = 0.40·happiness + 0.35·confidence + 0.15·energy + 0.10·residue',
             'weights': dict(_EMO_W),
             'plain': 'Maps the live vector to a mood label agents speak from.',
+        },
+        'formula_9': {
+            'name': 'Memory Retrieval Score',
+            'equation': 'topic + emotion_wt + recency − repetition_penalty',
+            'plain': 'Ranks reflections and episodic memory for prompt injection.',
         },
     }
 

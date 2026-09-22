@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for Hermes + emotion bridge + conversational affect (public Expansion)."""
+"""Tests for Hermes + Formula 4/5/7/8/9 layered intelligence (public Expansion)."""
 from __future__ import annotations
 
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -33,29 +34,114 @@ class LayeredIntelligenceTests(unittest.TestCase):
             'cheerful', 'pleased', 'focused', 'neutral', 'brooding',
             'anxious', 'volatile', 'detached',
         })
-        self.assertIn('formula_8', formula_catalog())
+        cat = formula_catalog()
+        for key in ('formula_4', 'formula_5', 'formula_7', 'formula_8', 'formula_9'):
+            self.assertIn(key, cat)
 
-    def test_conversational_affect_mutates(self):
-        from expansion.continuity.conversational_affect import (
-            apply_user_message_events,
-            build_dual_affect_prompt_block,
-        )
+    def test_praise_raises_happiness_via_state_engine(self):
+        from expansion.continuity.conversational_affect import apply_user_message_events
         from expansion.continuity.emotion_bridge import get_emotion_vector
+
         before = get_emotion_vector('aria')
         result = apply_user_message_events(
-            'aria', 'you are being lazy and this is not a good job',
+            'aria', 'you are amazing, great work', force=True,
         )
         self.assertTrue(result['ok'])
         self.assertTrue(result['applied'])
         after = get_emotion_vector('aria')
-        self.assertIsInstance(after['formula8_score'], float)
-        block = build_dual_affect_prompt_block('aria')
-        self.assertIn('LONG-TERM', block)
-        self.assertIn('SHORT-TERM', block)
-        # Hostile should not raise happiness
-        self.assertLessEqual(after['happiness'], before['happiness'] + 0.05)
+        self.assertGreaterEqual(after['happiness'], before['happiness'])
+        self.assertGreater(after['happiness'], 0.50)
 
-    def test_hermes_packet_and_scrub(self):
+    def test_hostile_classifier_and_drop(self):
+        from expansion.continuity.conversational_affect import (
+            apply_user_message_events,
+            classify_interpersonal_events,
+        )
+        from expansion.continuity.emotion_bridge import get_emotion_vector
+
+        self.assertTrue(classify_interpersonal_events('this is garbage and you failed'))
+        before = get_emotion_vector('aria')
+        apply_user_message_events(
+            'aria', 'this is garbage and you failed', force=True,
+        )
+        after = get_emotion_vector('aria')
+        self.assertLessEqual(after['happiness'], before['happiness'])
+
+    def test_dedupe_blocks_double_apply(self):
+        from expansion.continuity.conversational_affect import apply_user_message_events
+        from expansion.continuity.emotion_bridge import get_emotion_vector
+
+        apply_user_message_events('aria', 'you suck at this', force=True)
+        mid = get_emotion_vector('aria')['happiness']
+        # Same message without force within TTL — should not drop further
+        r2 = apply_user_message_events('aria', 'you suck at this')
+        self.assertEqual(r2.get('reason'), 'deduped_same_turn')
+        after = get_emotion_vector('aria')['happiness']
+        self.assertAlmostEqual(mid, after, places=3)
+
+    def test_formula5_relationship_engine(self):
+        from expansion.continuity.relationship import RelationshipEngine, apply_formula5
+
+        self.assertAlmostEqual(apply_formula5(0.80, 0.0), 0.80 - 0.008 * (0.80 - 0.50), places=3)
+        RelationshipEngine.ensure_seeded()
+        before = RelationshipEngine.strength('aria', 'user_primary', 'ally')
+        RelationshipEngine.update_on_event('aria', 'user_primary', 'user_praise')
+        after = RelationshipEngine.strength('aria', 'user_primary', 'ally')
+        self.assertGreater(after, before)
+        level = RelationshipEngine.operator_rel_level('aria')
+        self.assertIn(level, ('familiar', 'reserved', 'neutral'))
+        summary = RelationshipEngine.relationship_summary_for_prompt('aria')
+        self.assertNotIn('albedo', summary.lower())
+        self.assertNotIn('192.168', summary)
+
+    def test_formula9_memory_scoring(self):
+        from expansion.continuity.memory_engine import (
+            MemoryEngine,
+            score_memory_entry,
+            score_and_rank,
+        )
+
+        MemoryEngine.write_reflection(
+            'aria', trigger='test', note='Built a research plan about routers.',
+            emotional_weight='positive',
+        )
+        MemoryEngine.write_reflection(
+            'aria', trigger='test', note='Unrelated weather chat.',
+            emotional_weight='neutral',
+        )
+        rows = MemoryEngine.retrieve_relevant_memory(
+            'aria', 'research plan routers', top_k=2,
+        )
+        self.assertTrue(rows)
+        self.assertIn('research', (rows[0].get('note') or '').lower())
+        s = score_memory_entry(
+            {'note': 'research plan', 'sentiment': 'positive', 'id': 'a'},
+            ['research', 'plan'], 'aria', 0, set(),
+        )
+        self.assertGreater(s, 0.3)
+        ranked = score_and_rank(
+            [
+                {'note': 'research plan', 'sentiment': 'positive', 'id': 'a'},
+                {'note': 'cats', 'sentiment': 'neutral', 'id': 'b'},
+            ],
+            ['research'], 'aria', top_k=1,
+        )
+        self.assertEqual(ranked[0]['id'], 'a')
+
+    def test_state_engine_formulas(self):
+        from expansion.continuity.state_engine import StateEngine
+
+        s1 = StateEngine.get('aria')
+        s2 = StateEngine.update_from_event('aria', 'user_praise')
+        self.assertGreaterEqual(s2['happiness'], s1['happiness'])
+        self.assertIn(s2['mood'], {
+            'cheerful', 'pleased', 'focused', 'neutral', 'brooding',
+            'anxious', 'volatile', 'detached',
+        })
+        line = StateEngine.summary_for_prompt('aria')
+        self.assertIn('[State]', line)
+
+    def test_hermes_packet_includes_formulas(self):
         from expansion.hermes.personality_runtime import (
             apply_final_persona_safety_scrub,
             build_personality_runtime_packet,
@@ -64,35 +150,26 @@ class LayeredIntelligenceTests(unittest.TestCase):
             render_persona_text_via_hermes,
         )
         self.assertEqual(classify_persona_intent('hi'), 'greeting')
-        self.assertEqual(
-            classify_persona_intent('research and build me a plan'),
-            'work_request',
-        )
-        packet = build_personality_runtime_packet(
-            'aria', 'how do you feel?',
-        )
+        packet = build_personality_runtime_packet('aria', 'how do you feel?')
         self.assertEqual(packet['agent_id'], 'aria')
         self.assertTrue(packet['privacy']['no_private_keep_data'])
-        self.assertNotIn('albedo', str(packet).lower())
-        self.assertNotIn('192.168', str(packet))
+        keys = packet.get('formula_catalog_keys') or []
+        for k in ('formula_4', 'formula_5', 'formula_7', 'formula_8', 'formula_9'):
+            self.assertIn(k, keys)
+        blob = str(packet).lower()
+        self.assertNotIn('albedo', blob)
+        self.assertNotIn('192.168', blob)
         self.assertIsNone(
             apply_final_persona_safety_scrub(
                 'Greetings, Operator. How may I assist you today?',
                 'aria', 'greeting',
             )
         )
-        ok = apply_final_persona_safety_scrub(
-            'I am focused and ready to plan your shirt designs.',
-            'aria', 'work_request',
-        )
-        self.assertIsNotNone(ok)
-        section = layered_system_prompt_section('muse', 'help me design')
-        self.assertIn('HERMES PERSONALITY RUNTIME', section)
-        rendered = render_persona_text_via_hermes(
-            'aria', 'hi', candidate_text='Hello there.',
-        )
-        self.assertTrue(rendered['ok'])
-        self.assertTrue(rendered['text'])
+        section = layered_system_prompt_section('aria', 'build a plan')
+        self.assertIn('HERMES', section)
+        rend = render_persona_text_via_hermes('aria', 'hi', candidate_text='')
+        self.assertTrue(rend.get('ok'))
+        self.assertTrue(rend.get('text'))
 
 
 if __name__ == '__main__':

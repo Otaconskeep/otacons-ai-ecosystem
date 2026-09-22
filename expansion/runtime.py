@@ -243,13 +243,11 @@ class ExpansionRuntime:
             )
         except Exception:
             pass
+        # Dual-affect + Hermes prompt blocks ONLY here.
+        # Mutations (F4/5/7/9) run once in chat_learning.before_reply — never double-apply.
         try:
             from expansion.continuity.conversational_affect import (
-                apply_user_message_events,
                 build_dual_affect_prompt_block,
-            )
-            apply_user_message_events(
-                agent_id, user_message or '', layout=self.layout,
             )
             dual_affect = build_dual_affect_prompt_block(
                 agent_id, layout=self.layout,
@@ -264,6 +262,39 @@ class ExpansionRuntime:
         except Exception:
             hermes_section = ''
 
+        # Formula 5 relationship summary + Formula 9 scored memory
+        f5_section = ''
+        f9_section = ''
+        try:
+            from expansion.continuity.relationship import RelationshipEngine
+            f5_section = RelationshipEngine.relationship_summary_for_prompt(
+                agent_id, layout=self.layout,
+            )
+            if f5_section:
+                f5_section = f5_section + '\n'
+        except Exception:
+            f5_section = ''
+        try:
+            from expansion.continuity.memory_engine import MemoryEngine
+            f9_section = MemoryEngine.memory_prompt_block(
+                agent_id, user_message or '', top_k=memory_limit, layout=self.layout,
+            )
+            if f9_section:
+                f9_section = f9_section + '\n'
+                # Prefer Formula 9 ranked lines when available
+                mem_lines = [
+                    ln for ln in f9_section.splitlines() if ln.startswith('- ')
+                ] or mem_lines
+        except Exception:
+            f9_section = ''
+        try:
+            from expansion.continuity.state_engine import StateEngine
+            state_section = StateEngine.summary_for_prompt(
+                agent_id, layout=self.layout,
+            ) + '\n'
+        except Exception:
+            state_section = ''
+
         system_prompt = (
             f"{view.persona}\n\n"
             f"{who_section}"
@@ -272,6 +303,8 @@ class ExpansionRuntime:
             f"{hermes_section}"
             f"{dual_affect}"
             f"{layered_section}"
+            f"{state_section}"
+            f"{f5_section}"
             f"[Expansion runtime context — stay in character; do not invent owner history]\n"
             f"Voice rules: never sound like a generic AI assistant. Never say "
             f"\"happy to help\", \"as an AI\", \"certainly\", \"I'd be glad to\", "
@@ -291,7 +324,7 @@ class ExpansionRuntime:
             f"Learned claims (evidence-backed; revisable):\n" + '\n'.join(learn_lines or ['- none yet']) + '\n'
             f"Active jobs:\n" + '\n'.join(job_lines or ['- none']) + '\n'
             f"Recent journal facts:\n" + '\n'.join(journal_lines or ['- none']) + '\n'
-            f"Relevant memory:\n" + '\n'.join(mem_lines) + '\n'
+            f"Relevant memory (Formula 9 when available):\n" + '\n'.join(mem_lines) + '\n'
             f"Stress behavior: {dossier.stress.stress_behavior}\n"
         )
 
