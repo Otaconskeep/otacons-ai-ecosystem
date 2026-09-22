@@ -83,12 +83,20 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
             )
             text = render_dossier_self_reply(human_id, message)
             if text is None and is_self_state_query(message):
-                dims = {}
-                exp = agent.get('_expansion_context') or {}
-                emo = exp.get('emotion') or {}
-                dims = emo.get('dimensions') or {}
-                if dims:
-                    text = spoken_self_state(dims, agent_id=human_id)
+                # Day / conversation invitations must reach the LLM — a fixed
+                # "I am quietly pleased." is not a reply to "lets talk about your day".
+                try:
+                    from expansion.behavior_spine import is_feeling_query_only
+                    allow_short = is_feeling_query_only(message)
+                except Exception:
+                    allow_short = True
+                if allow_short:
+                    dims = {}
+                    exp = agent.get('_expansion_context') or {}
+                    emo = exp.get('emotion') or {}
+                    dims = emo.get('dimensions') or {}
+                    if dims:
+                        text = spoken_self_state(dims, agent_id=human_id)
         except Exception:
             text = None
 

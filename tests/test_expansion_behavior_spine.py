@@ -37,6 +37,30 @@ class BehaviorSpineTests(unittest.TestCase):
         self.assertTrue(is_execute_imperative('go ahead'))
         self.assertFalse(is_execute_imperative('do it later with the fabric plan'))
 
+    def test_social_near_miss_regex_gaps(self):
+        from expansion.behavior_spine import (
+            is_day_or_conversation_invite,
+            is_feeling_query_only,
+        )
+        # Near-misses that previously fell through to WORK lock-in
+        for msg in (
+            'are you doing okay?',
+            'you doing alright?',
+            'whats on your mind',
+            'tell me something about yourself',
+        ):
+            self.assertTrue(is_social_or_affect_turn(msg), msg)
+            self.assertFalse(wants_work_deliverable(msg), msg)
+        self.assertTrue(is_day_or_conversation_invite('lets talk about your day'))
+        self.assertTrue(is_day_or_conversation_invite('whats on your mind'))
+        self.assertFalse(is_feeling_query_only('lets talk about your day'))
+        self.assertTrue(is_feeling_query_only('what do you feel?'))
+        self.assertTrue(is_feeling_query_only('are you doing okay?'))
+        social = work_mode_directive('are you doing okay?')
+        self.assertIn('SOCIAL', social)
+        invite = work_mode_directive('lets talk about your day')
+        self.assertIn('invited conversation', invite)
+
     def test_work_mode_injects(self):
         d = work_mode_directive('I want you to research and build me a plan')
         self.assertIn('WORK MODE', d)

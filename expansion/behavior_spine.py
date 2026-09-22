@@ -31,10 +31,39 @@ _SOCIAL_RE = re.compile(
     r'\b('
     r'how\s+do\s+you\s+feel|what\s+do\s+you\s+feel|how\s+are\s+you(?:\s+feeling)?|'
     r'how(?:\'s|\s+is|\s+was)?\s+your\s+day|talk\s+about\s+your\s+day|'
-    r'how\s+are\s+you\s+doing|what(?:\'s|\s+is)\s+on\s+your\s+mind|'
-    r'are\s+you\s+ok|are\s+you\s+okay|your\s+mood|emotionally|'
+    r'how\s+are\s+you\s+doing|'
+    # apostrophe-less "whats" + standard forms
+    r'what(?:\'s|s|\s+is)\s+on\s+your\s+mind|'
+    # optional "doing" infix: are you (doing) ok(ay)?; you (doing) alright?
+    r'are\s+you(?:\s+doing)?\s+ok(?:ay)?|'
+    r'(?:are\s+)?you(?:\s+doing)?\s+(?:ok(?:ay)?|alright)|'
+    r'your\s+mood|emotionally|'
+    r'tell\s+me\s+(?:something\s+)?about\s+yourself|'
     r'lets?\s+talk(?:\s+about)?(?!\s+the\s+(?:plan|project|fabric|shirt))|'
     r'just\s+checking\s+in|miss\s+you'
+    r')\b',
+    re.IGNORECASE,
+)
+
+# Day / conversation invitations — must reach the LLM, not a mood-label short-circuit.
+_DAY_INVITE_RE = re.compile(
+    r'\b('
+    r'how(?:\'s|\s+is|\s+was)?\s+your\s+day|talk\s+about\s+your\s+day|'
+    r'what(?:\'s|s|\s+is)\s+on\s+your\s+mind|'
+    r'tell\s+me\s+(?:something\s+)?about\s+yourself|'
+    r'lets?\s+talk(?:\s+about)?(?!\s+the\s+(?:plan|project|fabric|shirt))|'
+    r'just\s+checking\s+in'
+    r')\b',
+    re.IGNORECASE,
+)
+
+# Narrow feeling probes — safe to answer with spoken_self_state alone.
+_FEELING_ONLY_RE = re.compile(
+    r'\b('
+    r'how\s+do\s+you\s+feel|what\s+do\s+you\s+feel|how\s+are\s+you(?:\s+feeling)?|'
+    r'how\s+are\s+you\s+doing|your\s+mood|emotionally|'
+    r'are\s+you(?:\s+doing)?\s+ok(?:ay)?|'
+    r'(?:are\s+)?you(?:\s+doing)?\s+(?:ok(?:ay)?|alright)'
     r')\b',
     re.IGNORECASE,
 )
@@ -106,6 +135,27 @@ def is_social_or_affect_turn(message: str) -> bool:
     return bool(_SOCIAL_RE.search(msg))
 
 
+def is_day_or_conversation_invite(message: str) -> bool:
+    """True for day/check-in invitations that need a real conversational reply."""
+    msg = (message or '').strip()
+    if not msg:
+        return False
+    return bool(_DAY_INVITE_RE.search(msg))
+
+
+def is_feeling_query_only(message: str) -> bool:
+    """Narrow 'how do you feel / are you okay' — may use spoken_self_state short-circuit.
+
+    Day invitations and "tell me about yourself" return False so the LLM path runs.
+    """
+    msg = (message or '').strip()
+    if not msg:
+        return False
+    if is_day_or_conversation_invite(msg):
+        return False
+    return bool(_FEELING_ONLY_RE.search(msg))
+
+
 def is_execute_imperative(message: str) -> bool:
     """Short 'do it' / 'go ahead' — execute pending work, do not restate the plan."""
     return bool(_EXECUTE_RE.match((message or '').strip()))
@@ -127,11 +177,18 @@ def work_mode_directive(message: str) -> str:
     """Inject when the user wants research / plan / build — not vibes."""
     msg = (message or '').strip()
     if is_social_or_affect_turn(msg):
+        invite = is_day_or_conversation_invite(msg)
         return (
             '[SOCIAL / AFFECT TURN — mandatory this turn]\n'
             'The user asked about YOU (feelings, your day, check-in) — not the open project.\n'
-            '- Answer in your own voice about how you feel / how your day is going.\n'
-            '- Do NOT restate fabric, t-shirt, inventory, Ledger/Vector/Sentry plans.\n'
+            + (
+                '- They invited conversation (day / mind / about you) — answer with a lived '
+                'beat in your own voice, then ask them one question back. Do NOT reply with '
+                'only a fixed mood label like "I am quietly pleased."\n'
+                if invite else
+                '- Answer in your own voice about how you feel.\n'
+            )
+            + '- Do NOT restate fabric, t-shirt, inventory, Ledger/Vector/Sentry plans.\n'
             '- Do NOT ask whether you may use their name or lecture about names.\n'
             '- Do NOT invent status updates ("Ledger has already begun…").\n'
             '- Keep it short: one honest feeling beat, optional one question about them.\n'

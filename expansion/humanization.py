@@ -272,7 +272,9 @@ def is_self_state_query(message: str) -> bool:
     return any(p in low for p in (
         'how are you', 'how do you feel', 'how are you feeling',
         'what are you feeling', 'what do you feel', 'you okay', 'you alright',
-        'your day', 'on your mind',
+        'are you doing okay', 'are you doing ok', 'you doing alright',
+        'your day', 'on your mind', 'whats on your mind',
+        'tell me something about yourself', 'tell me about yourself',
     ))
 
 

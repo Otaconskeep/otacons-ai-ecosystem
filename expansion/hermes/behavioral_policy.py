@@ -171,8 +171,11 @@ def classify_behavioral_intent(user_message: str) -> str:
         return 'work_request'
     if any(p in msg for p in (
         'how do you feel', 'what do you feel', 'are you ok', 'are you okay',
+        'are you doing ok', 'are you doing okay', 'you doing alright',
         'your mood', 'emotionally', 'what is your mood', 'how are you feeling',
         'how was your day', 'how is your day', "how's your day", 'talk about your day',
+        'whats on your mind', "what's on your mind", 'on your mind',
+        'tell me something about yourself', 'tell me about yourself',
     )):
         return 'self_state'
     if any(p in msg for p in ('lol', 'haha', 'joke', 'funny')):
