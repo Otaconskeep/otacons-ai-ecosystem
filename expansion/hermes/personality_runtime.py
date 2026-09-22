@@ -332,7 +332,7 @@ def render_persona_text_via_hermes(
     # Post-scrub robotic openers
     try:
         from expansion.behavior_spine import scrub_robotic_delivery
-        text = scrub_robotic_delivery(text)
+        text = scrub_robotic_delivery(text, user_message=user_message or '')
     except Exception:
         pass
 

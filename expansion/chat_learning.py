@@ -51,17 +51,18 @@ _PREFERENCE = re.compile(
     r'i (?:like|dislike|hate|want) (?:you to|when)|call me)\b',
     re.I,
 )
-_APOLOGY = re.compile(
-    r'\b(?:i(?:\'m| am) sorry|i apologize|forgive me|sorry (?:for|about)|'
-    r'my (?:bad|apologies)|i was (?:wrong|harsh|unfair))\b',
+_INSULT = re.compile(
+    r'\b(?:you(?:\'re|re| are) (?:useless|worthless|stupid|dumb|an idiot|pathetic|'
+    r'ugly|hideous|gross|disgusting|fat|repulsive|lazy|garbage|a\s+bitch)|'
+    r'useless|shut up|i hate you|i hate this|you suck|worst (?:agent|assistant|answer)|'
+    r'dumb (?:bot|ai)|idiot|fuck you|fuck off|go to hell|asshole|piece of shit|'
+    r'absolute garbage|this is garbage|being lazy|bitch|cunt|whore|bastard|'
+    r'motherfucker|dumbass)\b',
     re.I,
 )
-_INSULT = re.compile(
-    r'\b(?:you(?:\'re| are) (?:useless|worthless|stupid|dumb|an idiot|pathetic|'
-    r'ugly|hideous|gross|disgusting|fat|repulsive|lazy|garbage)|'
-    r'useless|shut up|i hate you|i hate this|you suck|worst (?:agent|assistant|answer)|'
-    r'dumb (?:bot|ai)|idiot|fuck you|go to hell|asshole|piece of shit|'
-    r'absolute garbage|this is garbage|being lazy)\b',
+_APOLOGY = re.compile(
+    r'\b(?:i(?:\'m|m| am) sorry|i apologize|forgive me|sorry (?:for|about)|'
+    r'my (?:bad|apologies)|i was (?:wrong|harsh|unfair))\b',
     re.I,
 )
 _TASK_RESEARCH = re.compile(

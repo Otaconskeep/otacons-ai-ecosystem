@@ -56,7 +56,8 @@ def _prefer_contractions(text: str) -> str:
     return out
 
 
-def apply_idiolect(text: str, agent_id: str) -> str:
+def apply_idiolect(text: str, agent_id: str, *, user_message: str = '') -> str:
+
     """Return text reshaped for agent_id's speech profile."""
     if not text or not text.strip():
         return text
@@ -81,7 +82,7 @@ def apply_idiolect(text: str, agent_id: str) -> str:
     # Keep-parity: kill robotic briefing loops that survive the model
     try:
         from expansion.behavior_spine import scrub_robotic_delivery
-        out = scrub_robotic_delivery(out)
+        out = scrub_robotic_delivery(out, user_message=user_message or '')
     except Exception:
         pass
 

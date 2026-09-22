@@ -109,7 +109,7 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
     # Idiolect post-pass — scrub embodiment / corporate closers / briefing loops
     try:
         from expansion.idiolect import apply_idiolect
-        text = apply_idiolect(text, human_id)
+        text = apply_idiolect(text, human_id, user_message=message or '')
     except Exception:
         pass
     # Hermes personality runtime — final scrub + layered fallback if thin
@@ -156,7 +156,7 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
             record_failure('final_render', exc2, detail='legacy_hermes_fallback')
     try:
         from expansion.behavior_spine import scrub_robotic_delivery, wants_work_deliverable
-        text = scrub_robotic_delivery(text)
+        text = scrub_robotic_delivery(text, user_message=message or '')
         if wants_work_deliverable(message) and text and len(text.split()) < 25:
             text = (
                 text.rstrip('.')
@@ -165,7 +165,7 @@ def chat(deployment, agent, message, conversation_id='default', provider=None, m
                 "(3) draft three options, (4) pick one and ship a draft today. "
                 "Tell me which slice you want next and I will go deeper."
             )
-            text = scrub_robotic_delivery(text)
+            text = scrub_robotic_delivery(text, user_message=message or '')
     except Exception as exc:
         from expansion.continuity.health import record_failure
         record_failure('final_render', exc, detail='behavior_spine')

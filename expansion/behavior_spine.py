@@ -35,15 +35,16 @@ _PRAISE_RE = re.compile(
     re.IGNORECASE,
 )
 _HOSTILE_RE = re.compile(
-    r'\b(?:you(?:\'re| are) (?:useless|worthless|stupid|dumb|an idiot|pathetic|'
-    r'ugly|hideous|gross|disgusting|fat|repulsive|lazy|garbage)|'
+    r'\b(?:you(?:\'re|re| are) (?:useless|worthless|stupid|dumb|an idiot|pathetic|'
+    r'ugly|hideous|gross|disgusting|fat|repulsive|lazy|garbage|a\s+bitch|a\s+cunt)|'
     r'useless|shut up|i hate you|i hate this|you suck|worst (?:agent|assistant|answer)|'
-    r'dumb (?:bot|ai)|idiot|fuck you|go to hell|asshole|piece of shit|'
-    r'absolute garbage|this is garbage|being lazy)\b',
+    r'dumb (?:bot|ai)|idiot|fuck you|fuck off|go to hell|asshole|piece of shit|'
+    r'absolute garbage|this is garbage|being lazy|bitch|cunt|whore|bastard|'
+    r'motherfucker|dumbass)\b',
     re.IGNORECASE,
 )
 _APOLOGY_RE = re.compile(
-    r'\b(?:i(?:\'m| am) sorry|i apologize|forgive me|sorry (?:for|about)|'
+    r'\b(?:i(?:\'m|m| am) sorry|i apologize|forgive me|sorry (?:for|about)|'
     r'my (?:bad|apologies)|i was (?:wrong|harsh|unfair))\b',
     re.IGNORECASE,
 )
@@ -112,6 +113,30 @@ _FAKE_TEAM_START_RE = re.compile(
     r'(?:has\s+(?:already\s+)?(?:begun|started)|have\s+(?:already\s+)?(?:begun|started)|'
     r'is\s+(?:currently\s+)?(?:compiling|analyzing|researching|updating|gathering)|'
     r'will\s+(?:compile|analyze|gather|update\s+(?:the\s+)?inventory))\b[^.?!]*[.?!]\s*',
+)
+
+# Numbered / scaffolded project plans — strip on non-work interpersonal turns.
+_PLAN_SCAFFOLD_RE = re.compile(
+    r'(?is)(?:'
+    r'(?:let\'?s|lets)\s+get\s+back\s+on\s+track[^.?!]*[.?!]\s*|'
+    r'(?:here\'?s|heres)\s+what\s+we(?:\'ll| will)\s+do\s+next\s*:?\s*|'
+    r'(?:here\'?s|heres)\s+(?:a\s+)?(?:the\s+)?(?:plan|next\s+steps?)[^.?!]*[.?!]\s*|'
+    r'(?:diving?|let\'?s\s+dive)\s+into\s+(?:the\s+)?(?:next\s+steps?|shirt|project|plan)[^.?!]*[.?!]\s*|'
+    r'\b(?:back\s+to|with)\s+your\s+(?:shirt|t-?shirt|fabric)\s+project[^.?!]*[.?!]\s*|'
+    r'\bwe(?:\'ll| will)\s+(?:keep\s+)?(?:this\s+)?(?:project\s+)?on\s+track[^.?!]*[.?!]\s*'
+    r')',
+)
+_NUMBERED_PLAN_BLOCK_RE = re.compile(
+    r'(?is)'
+    # Multi-line: 1. foo\n2. bar  OR same-line: 1. **foo** 2. **bar**
+    r'(?:(?:^|(?<=[.!?]))\s*)?'
+    r'(?:\d+[\.)]\s*\*{0,2}[^\n\d]{3,}?\*{0,2})'
+    r'(?:(?:\n+\s*|\s+)\d+[\.)]\s*\*{0,2}[^\n\d]{3,}?\*{0,2}){1,}'
+)
+_PHASE_PLAN_RE = re.compile(
+    r'(?is)\b(?:'
+    r'research\s+phase|inventory\s+update|review\s*(?:&|and)\s*selection'
+    r')\s*:?[^\n]*',
 )
 
 _GREETING_ONLY_RE = re.compile(
@@ -412,7 +437,52 @@ def layered_intelligence_block(
     return '\n'.join(parts) + '\n'
 
 
-def scrub_robotic_delivery(text: str) -> str:
+def scrub_plan_restatement(text: str, *, delivery_mode: str = '') -> str:
+    """Strip numbered project plans from interpersonal replies (post-LLM).
+
+    Prompt-only rules lose on small models when memory is full of the open
+    project. Same pattern as fake-teammate scrub: deterministic after generate.
+    """
+    mode = (delivery_mode or '').strip().lower()
+    if mode in ('work', 'execute'):
+        return text
+    if mode not in ('greeting', 'social', 'praise', 'hostility', 'apology', 'chat'):
+        return text
+    if not text or not text.strip():
+        return text
+    out = text.strip()
+    out = _PLAN_SCAFFOLD_RE.sub(' ', out)
+    out = _PHASE_PLAN_RE.sub(' ', out)
+    # Shirt/fabric plan bullets that survived without numbers
+    out = re.sub(
+        r'(?is)\b(?:ledger|vector|sentry|muse)\s+will\s+'
+        r'(?:start|kick\s+off|begin|ensure|adjust|update|research)[^.?!]*[.?!]\s*',
+        ' ',
+        out,
+    )
+    # Two or more numbered steps → cut from the first marker to end (same-line or multiline)
+    markers = list(re.finditer(r'(?:^|[\s:])\d+[\.)]\s+\*?\*?', out, flags=re.M))
+    if len(markers) >= 2:
+        cut = markers[0].start()
+        # Keep prior interpersonal sentence; drop the plan dump
+        out = out[:cut].rstrip(' :,\n\t-')
+    else:
+        out = _NUMBERED_PLAN_BLOCK_RE.sub(' ', out)
+    out = re.sub(r'[ \t]{2,}', ' ', out)
+    out = re.sub(r'\n{3,}', '\n\n', out)
+    out = re.sub(r'\s+([,.!?])', r'\1', out).strip(' ,;:')
+    out = out.lstrip(' ?!,.;:')
+    if out and out[0].islower():
+        out = out[0].upper() + out[1:]
+    return out
+
+
+def scrub_robotic_delivery(
+    text: str,
+    *,
+    user_message: str = '',
+    delivery_mode: str = '',
+) -> str:
     """Post-pass: kill briefing-mode openers/closers that survive the LLM."""
     if not text or not text.strip():
         return text
@@ -459,6 +529,12 @@ def scrub_robotic_delivery(text: str) -> str:
     )
     # Kill invented teammate "already begun / is compiling" claims
     out = _FAKE_TEAM_START_RE.sub(' ', out)
+    # Non-work modes: strip plan scaffolding the model ignored in the prompt
+    mode = (delivery_mode or '').strip()
+    if not mode and user_message:
+        mode = classify_delivery_mode(user_message)
+    if mode and mode not in ('work', 'execute'):
+        out = scrub_plan_restatement(out, delivery_mode=mode)
     # Kill formula closers
     out = re.sub(
         r'(?is)[.!]?\s*how\s+(?:may|can)\s+i\s+(?:assist|help)\s+you'

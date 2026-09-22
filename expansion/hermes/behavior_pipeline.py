@@ -348,7 +348,7 @@ def run_post_generation(
             violations = policy_violations(text, policy)
         try:
             from expansion.behavior_spine import scrub_robotic_delivery
-            text = scrub_robotic_delivery(text)
+            text = scrub_robotic_delivery(text, user_message=user_message or '')
         except Exception as exc:
             record_failure('final_render', exc, detail='scrub_robotic')
     if g.error:

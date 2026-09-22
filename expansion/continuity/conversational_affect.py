@@ -13,10 +13,11 @@ from typing import Any, Optional
 from expansion.state_layout import StateLayout, resolve_layout
 
 _HOSTILE = re.compile(
-    r'\b(?:you(?:\'re| are) (?:useless|lazy|stupid|dumb|garbage|worthless)|'
+    r'\b(?:you(?:\'re|re| are) (?:useless|lazy|stupid|dumb|garbage|worthless|a\s+bitch)|'
     r'shut up|i hate you|i hate this|you suck|worst|idiot|not a good job|being lazy|'
     r'this is garbage|you failed|absolute garbage|hate this output|'
-    r'fuck you|go to hell|asshole|piece of shit)\b',
+    r'fuck you|fuck off|go to hell|asshole|piece of shit|bitch|cunt|whore|bastard|'
+    r'motherfucker|dumbass)\b',
     re.I,
 )
 _PRAISE = re.compile(
@@ -35,7 +36,7 @@ _CRITIQUE = re.compile(
     re.I,
 )
 _APOLOGY = re.compile(
-    r'\b(?:i(?:\'m| am) sorry|i apologize|forgive me|my bad)\b',
+    r'\b(?:i(?:\'m|m| am) sorry|i apologize|forgive me|my bad)\b',
     re.I,
 )
 _GRATITUDE = re.compile(

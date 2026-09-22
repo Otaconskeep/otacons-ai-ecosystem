@@ -50,8 +50,27 @@ class BehaviorSpineTests(unittest.TestCase):
         self.assertEqual(classify_delivery_mode('hey chris'), 'greeting')
         self.assertIn('GREETING', work_mode_directive('hi'))
         self.assertEqual(classify_delivery_mode('fuck you'), 'hostility')
+        self.assertEqual(classify_delivery_mode("youre a bitch!"), 'hostility')
+        self.assertEqual(classify_delivery_mode("im sorry"), 'apology')
         self.assertIn('HOSTILITY', work_mode_directive('you suck'))
+        self.assertIn('HOSTILITY', work_mode_directive("youre a bitch!"))
         self.assertFalse(wants_work_deliverable('fuck you'))
+
+    def test_scrub_plan_restatement_on_praise(self):
+        from expansion.behavior_spine import scrub_plan_restatement
+        raw = (
+            'I appreciate the honesty, Chris. Let\'s get back on track with your '
+            'shirt project. Here\'s what we\'ll do next: 1. **Clarify the design '
+            'concepts** 2. **Research fabric blends** 3. **Update inventory**'
+        )
+        out = scrub_robotic_delivery(raw, user_message='great work on the plan')
+        self.assertNotRegex(out, r'(?i)here\'?s what we')
+        self.assertNotRegex(out, r'(?i)1\.\s+\*?Clarify')
+        self.assertNotRegex(out, r'(?i)get back on track')
+        self.assertIn('appreciate', out.lower())
+        # WORK mode keeps the plan
+        kept = scrub_plan_restatement(raw, delivery_mode='work')
+        self.assertIn('1.', kept)
 
     def test_scrub_fake_teammate_starts(self):
         raw = (
