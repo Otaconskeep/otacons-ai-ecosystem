@@ -1,7 +1,7 @@
 {
   "product": "Otacon",
-  "installer_version": "1.3.6",
-  "commit": "dbd0ae26d14a473e3a4406ef5ba322d8d79101cb",
+  "installer_version": "1.3.7",
+  "commit": "899d4333c83d2875f4e878d6132fc2dc30d200ad",
   "channel": "public",
   "ecosystem_ref": "main",
   "genome_voice_trainer_ref": "main",
@@ -10,7 +10,7 @@
   "python_preferred": "3.12",
   "hash_rule": "Each sha256 is the exact git blob / commit-pinned raw.githubusercontent.com bytes. Downloader verifies those raw bytes before any local normalization. Do not use branch-name raw URLs for hashed files (GitHub may normalize EOL on main). Soft-update of the ecosystem tree tracks origin/main tip, not this commit field.",
   "rule": "Installer-owned files are valid only when they match this release commit/hash. Existence alone is never enough.",
-  "installer_revision": "d9ec37adfb5003582aa615671aa242230c7671b4",
+  "installer_revision": "899d4333c83d2875f4e878d6132fc2dc30d200ad",
   "files": [
     {
       "path": "install_otacon.bat",
@@ -54,8 +54,8 @@
     },
     {
       "path": "deploy/windows-setup-assistant.ps1",
-      "sha256": "b5932b4d1d61582aac9bfc47c92258dce55cdd1009009b85c65f3002923f6fb8",
-      "bytes": 227742
+      "sha256": "8adfcbde9aa20f942d6ac72d73dbc0e6f94b80b1bff3b8753ddd936c4d133aab",
+      "bytes": 230414
     },
     {
       "path": "deploy/repair-otacon-core.ps1",
@@ -64,8 +64,8 @@
     },
     {
       "path": "deploy/install-otacon-expansion.ps1",
-      "sha256": "89d6b332a10c8660e48019da3f0c69687859bb8f4b3995bca894ce6d4cece7dc",
-      "bytes": 41335
+      "sha256": "c108a5cb1e121cd9b60531e8be47cc2723613e32f3675828e8b0c1f706b45b2f",
+      "bytes": 43171
     },
     {
       "path": "deploy/wsl-bash-file.ps1",
@@ -74,8 +74,8 @@
     },
     {
       "path": "deploy/fix-otacon-gpu.ps1",
-      "sha256": "d68ff971d293853ea10a6d88ee0d32c0d99f6c234980d81dd4adcc569b6e937f",
-      "bytes": 12470
+      "sha256": "10ae3cab04745d2a8eee8e62a77362c31432a997cc550e63c4397ed361e5051e",
+      "bytes": 13219
     },
     {
       "path": "deploy/get-fix-codec.cmd",
@@ -128,5 +128,5 @@
       "bytes": 1981
     }
   ],
-  "notes": "Otacon v1.3.6 - Windows one-click: honor OTACON_UNATTENDED (no Enter stalls), detect/launch user-scoped Docker Desktop (LocalAppData Programs DockerDesktop), soft-skip heavy Studio packs on low disk. Soft-update tracks origin/main tip."
+  "notes": "Otacon v1.3.7 - Fix WSL GPU false negative: detect /dev/dxg /proc/libcuda passthrough when nvidia-smi name is empty, and stop sending healthy GPU hosts to Fix-Otacon-GPU.bat. Soft-update tracks origin/main tip."
 }
