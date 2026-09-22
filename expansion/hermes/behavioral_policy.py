@@ -105,6 +105,15 @@ def classify_behavioral_intent(user_message: str) -> str:
         any(msg.startswith(p) for p in ('hi ', 'hello ', 'hey ')) and len(msg.split()) <= 3
     ):
         return 'greeting'
+    # Social / execute before work keywords — stop project-narration lock-in
+    try:
+        from expansion.behavior_spine import is_social_or_affect_turn, is_execute_imperative
+        if is_social_or_affect_turn(user_message):
+            return 'self_state'
+        if is_execute_imperative(user_message):
+            return 'work_request'
+    except Exception:
+        pass
     # Memory continuity before failure keywords ("remember when … failed")
     if any(p in msg for p in (
         'remember when', 'last time', 'you said', 'do you recall', 'recall the',
@@ -161,7 +170,9 @@ def classify_behavioral_intent(user_message: str) -> str:
     if 'help me' in msg or (msg.startswith('build me') or 'design a' in msg):
         return 'work_request'
     if any(p in msg for p in (
-        'how do you feel', 'are you ok', 'your mood', 'emotionally', 'what is your mood',
+        'how do you feel', 'what do you feel', 'are you ok', 'are you okay',
+        'your mood', 'emotionally', 'what is your mood', 'how are you feeling',
+        'how was your day', 'how is your day', "how's your day", 'talk about your day',
     )):
         return 'self_state'
     if any(p in msg for p in ('lol', 'haha', 'joke', 'funny')):
@@ -282,8 +293,19 @@ def build_behavioral_policy(
         policy.verbosity = 'short'
         policy.required_moves.append('skip_to_substance_or_brief_ack')
     if intent == 'self_state':
+        policy.work_mode = False
+        policy.must_offer_action = False
+        policy.verbosity = 'short'
         policy.required_moves.append('speak_from_mood_not_gauges')
-        policy.forbidden_patterns.append('percent_readout')
+        policy.forbidden_patterns.extend([
+            'percent_readout',
+            'project_restatement',
+            'name_etiquette_lecture',
+        ])
+        policy.notes = (
+            'Answer about YOUR feelings/day only. No fabric/t-shirt/Ledger plan. '
+            'No name-etiquette lectures.'
+        )
 
     return policy
 
@@ -301,6 +323,15 @@ def policy_violations(text: str, policy: BehavioralPolicy) -> list[str]:
         'telemetry_dump': ('happiness:', 'confidence:', 'formula-8', 'formula8'),
         'duty_speech': ('it is my duty', 'honored to serve'),
         'fake_empathy': ('i understand how you feel as an ai',),
+        'name_etiquette_lecture': (
+            'prefer being called', 'using names helps',
+            'how do you feel about being called', 'called by your name',
+            'actual names out of respect',
+        ),
+        'project_restatement': (
+            'ledger will', 'ledger has already', 'fabric blends',
+            'research phase', 'inventory update',
+        ),
     }
     for name in policy.forbidden_patterns:
         for frag in checks.get(name, ()):

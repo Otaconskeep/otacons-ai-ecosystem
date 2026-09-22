@@ -53,6 +53,30 @@ class ChatLearningCase(unittest.TestCase):
         self.assertEqual(classify_chat_intent('Muse is smarter than you'), 'comparison')
         self.assertEqual(classify_chat_intent('Aria, handle the release'), 'task')
         self.assertEqual(classify_chat_intent('You are useless'), 'insult')
+        self.assertEqual(classify_chat_intent('do it'), 'task')
+        self.assertEqual(classify_chat_intent('go ahead'), 'task')
+
+    def test_do_it_queues_pending_from_memory(self):
+        from expansion.memory_bridge import new_memory
+        ExpansionMemory(self.layout).add(new_memory(
+            'aria',
+            'User: help me research fabric blends for custom printed t-shirts / '
+            'Me: 1. Ledger will start researching the best fabric blends for '
+            'custom printed t-shirts. Also, just a note—using names helps.',
+            kind='episodic',
+            source='chat_turn',
+            importance=0.55,
+        ))
+        pre = before_reply('aria', 'do it', layout=self.layout)
+        self.assertEqual(pre['intent'], 'task')
+        self.assertTrue(pre['intercept'])
+        self.assertTrue(pre['job_id'])
+        self.assertIn('Queued', pre['reply'])
+        self.assertNotIn('How do you feel about being called', pre['reply'])
+        from expansion.jobs import JobStore
+        job = JobStore(self.layout).get(pre['job_id'])
+        self.assertEqual(job.assigned_agent, 'ledger')
+        self.assertIn('fabric', (job.request or job.title or '').lower())
 
     def test_task_queues_job_without_complete(self):
         pre = before_reply('aria', 'Aria, handle the release', layout=self.layout)

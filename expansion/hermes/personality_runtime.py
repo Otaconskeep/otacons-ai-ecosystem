@@ -98,7 +98,18 @@ def classify_persona_intent(user_message: str) -> str:
         'hi ', 'hello ', 'hey ',
     )) and len(msg.split()) <= 3:
         return 'greeting'
-    if any(m in msg for m in ('how do you feel', 'how are you', 'your mood', 'emotionally')):
+    try:
+        from expansion.behavior_spine import is_social_or_affect_turn, is_execute_imperative
+        if is_social_or_affect_turn(user_message):
+            return 'self_state'
+        if is_execute_imperative(user_message):
+            return 'work_request'
+    except Exception:
+        pass
+    if any(m in msg for m in (
+        'how do you feel', 'what do you feel', 'how are you', 'your mood',
+        'emotionally', 'your day',
+    )):
         return 'self_state'
     if any(m in msg for m in ('who are you', 'what are you', 'your role', 'what do you do')):
         if not any(x in msg for x in ('doing', 'working', 'feeling')):
@@ -264,7 +275,10 @@ def local_persona_safe_fallback(
     if intent == 'greeting':
         return f'{name} here. What are we working on?'
     if intent == 'self_state':
-        return f"I'm {mood} right now — ready to work, not to recite telemetry."
+        return (
+            f"I'm {mood} right now — present with you, not wrapping this "
+            f"in a project status update."
+        )
     if intent == 'work_request':
         return (
             f"Understood. Here's a first pass: (1) clarify the deliverable, "

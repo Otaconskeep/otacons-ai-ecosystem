@@ -26,6 +26,35 @@ _WORK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Social / affect turns — must NOT trigger WORK MODE or project restatement.
+_SOCIAL_RE = re.compile(
+    r'\b('
+    r'how\s+do\s+you\s+feel|what\s+do\s+you\s+feel|how\s+are\s+you(?:\s+feeling)?|'
+    r'how(?:\'s|\s+is|\s+was)?\s+your\s+day|talk\s+about\s+your\s+day|'
+    r'how\s+are\s+you\s+doing|what(?:\'s|\s+is)\s+on\s+your\s+mind|'
+    r'are\s+you\s+ok|are\s+you\s+okay|your\s+mood|emotionally|'
+    r'lets?\s+talk(?:\s+about)?(?!\s+the\s+(?:plan|project|fabric|shirt))|'
+    r'just\s+checking\s+in|miss\s+you'
+    r')\b',
+    re.IGNORECASE,
+)
+
+_EXECUTE_RE = re.compile(
+    r'^\s*(?:please\s+)?(?:do\s+it|go\s+ahead|make\s+it\s+so|ship\s+it|'
+    r'get\s+(?:on\s+)?with\s+it|just\s+do\s+it|execute|run\s+it)\s*[.!]?\s*$',
+    re.IGNORECASE,
+)
+
+_NAME_META_RE = re.compile(
+    r'(?is)(?:^|[.?!]\s*)('
+    r'(?:also[, ]+)?(?:just\s+)?(?:a\s+)?(?:heads?\s*up|note|reminder)[^.?!]*?'
+    r'(?:prefer\s+being\s+called|called\s+by\s+(?:their|your|an?\s+)?(?:actual\s+)?names?|'
+    r'using\s+names?\s+helps|how\s+do\s+you\s+feel\s+about\s+being\s+called|'
+    r'how\s+do\s+you\s+feel\s+about\s+(?:that|me\s+calling)|'
+    r'being\s+called\s+by\s+your\s+name)[^.?!]*[.?!]\s*'
+    r')',
+)
+
 _GREETING_ONLY_RE = re.compile(
     r'^\s*(hi|hello|hey|yo|sup|good\s+(morning|afternoon|evening)|howdy)'
     r'[\s!.?,]*$',
@@ -69,27 +98,68 @@ def is_greeting_only(message: str) -> bool:
     return bool(_GREETING_ONLY_RE.match((message or '').strip()))
 
 
+def is_social_or_affect_turn(message: str) -> bool:
+    """True when the user wants feelings / day / check-in — not project status."""
+    msg = (message or '').strip()
+    if not msg:
+        return False
+    return bool(_SOCIAL_RE.search(msg))
+
+
+def is_execute_imperative(message: str) -> bool:
+    """Short 'do it' / 'go ahead' — execute pending work, do not restate the plan."""
+    return bool(_EXECUTE_RE.match((message or '').strip()))
+
+
 def wants_work_deliverable(message: str) -> bool:
     msg = (message or '').strip()
     if not msg or is_greeting_only(msg):
         return False
+    # Social / affect always wins over work keywords (e.g. prior shirt thread).
+    if is_social_or_affect_turn(msg):
+        return False
+    if is_execute_imperative(msg):
+        return True
     return bool(_WORK_RE.search(msg))
 
 
 def work_mode_directive(message: str) -> str:
     """Inject when the user wants research / plan / build — not vibes."""
-    if not wants_work_deliverable(message):
+    msg = (message or '').strip()
+    if is_social_or_affect_turn(msg):
+        return (
+            '[SOCIAL / AFFECT TURN — mandatory this turn]\n'
+            'The user asked about YOU (feelings, your day, check-in) — not the open project.\n'
+            '- Answer in your own voice about how you feel / how your day is going.\n'
+            '- Do NOT restate fabric, t-shirt, inventory, Ledger/Vector/Sentry plans.\n'
+            '- Do NOT ask whether you may use their name or lecture about names.\n'
+            '- Do NOT invent status updates ("Ledger has already begun…").\n'
+            '- Keep it short: one honest feeling beat, optional one question about them.\n'
+        )
+    if is_execute_imperative(msg):
+        return (
+            '[EXECUTE — mandatory this turn]\n'
+            'The user said to DO the pending work — not to restate the plan.\n'
+            '- One short ack that you are queueing/starting it on the REX board.\n'
+            '- Name the owner (e.g. Ledger for research) and the job in one line.\n'
+            '- Do NOT repeat a numbered plan. Do NOT ask fabric preference questions.\n'
+            '- Do NOT ask about calling them by name.\n'
+        )
+    if not wants_work_deliverable(msg):
         return ''
     return (
         '[WORK MODE — mandatory this turn]\n'
         'The user asked for real help. Do NOT open with Greetings. Do NOT ask '
         'only for more details. Do NOT wrap their life in fictional Keep/ops '
         'continuity speeches.\n'
+        'Do NOT lecture about using names or ask how they feel about being called '
+        'by their name — that is already settled; just use the name you know.\n'
         'Deliver immediately:\n'
         '1) A short acknowledgment in your own voice (one sentence).\n'
         '2) A concrete plan or research outline with numbered steps.\n'
         '3) At least three specific ideas they can act on this week.\n'
-        '4) One clarifying question ONLY after the plan — optional.\n'
+        '4) One clarifying question ONLY after the plan — optional, and never '
+        'about naming etiquette.\n'
         'If tools/web are unavailable, still produce a useful first-pass plan '
         'from general craft knowledge and label assumptions honestly.\n'
     )
@@ -107,14 +177,19 @@ def delivery_rules_block(*, agent_id: str = 'aria') -> str:
         '"your input is crucial", "cohesive approach" filler.\n'
         '- Never dump emotion percentages or telemetry.\n'
         '- Prefer concrete next actions over loyalty speeches.\n'
-        '- Remember what they told you (name, craft, tools, goals) and use it.\n'
+        '- Remember what they told you (name, craft, tools, goals) and use it '
+        'quietly — never ask permission to use their name, never lecture that '
+        '"some users prefer actual names", never ask how they feel about being called Chris.\n'
+        '- When they change topic to feelings/day/check-in, follow THAT topic; '
+        'do not drag an unfinished project plan back into the reply.\n'
         '- Get sharper every turn: reuse learned facts; do not reset to day-one.\n'
     )
     if aid == 'aria':
         base += (
             '- You coordinate the team (Vector / Ledger / Muse / Sentry) when '
             'useful — name who should own a slice, then still give the user a '
-            'usable answer yourself.\n'
+            'usable answer yourself. Do not claim a teammate "has already begun" '
+            'unless a real REX board job exists.\n'
         )
     elif aid == 'vector':
         base += '- Talk systems, tools, and failure modes in specifics.\n'
@@ -183,6 +258,25 @@ def scrub_robotic_delivery(text: str) -> str:
         )
         if out == prev:
             break
+    # Kill name-etiquette lectures / "how do you feel about being called"
+    out = _NAME_META_RE.sub(' ', out)
+    out = re.sub(
+        r'(?is)\b(?:also[, ]+)?(?:just\s+a\s+)?(?:heads?\s*up|note|reminder)[^.?!]*?'
+        r'(?:names?|being\s+called)[^.?!]*[.?!]\s*',
+        '',
+        out,
+    )
+    out = re.sub(
+        r'(?is)\bhow\s+do\s+you\s+feel\s+about\s+(?:being\s+called|that|me\s+calling)[^.?!]*[.?!]\s*',
+        '',
+        out,
+    )
+    out = re.sub(
+        r'(?is)\b(?:for\s+now[, ]+)?i(?:\'ll| will)\s+continue\s+using\s+\w+'
+        r'[^.?!]*?(?:prefer|name)[^.?!]*[.?!]\s*',
+        '',
+        out,
+    )
     # Kill formula closers
     out = re.sub(
         r'(?is)[.!]?\s*how\s+(?:may|can)\s+i\s+(?:assist|help)\s+you'

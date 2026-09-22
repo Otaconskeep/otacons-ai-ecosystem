@@ -259,10 +259,20 @@ def spoken_self_state(emotion_dims: dict, *, agent_id: str = 'aria') -> str:
 
 
 def is_self_state_query(message: str) -> bool:
-    msg = (message or '').lower()
-    return any(p in msg for p in (
+    msg = (message or '').strip()
+    if not msg:
+        return False
+    try:
+        from expansion.behavior_spine import is_social_or_affect_turn
+        if is_social_or_affect_turn(msg):
+            return True
+    except Exception:
+        pass
+    low = msg.lower()
+    return any(p in low for p in (
         'how are you', 'how do you feel', 'how are you feeling',
-        'what are you feeling', 'you okay', 'you alright',
+        'what are you feeling', 'what do you feel', 'you okay', 'you alright',
+        'your day', 'on your mind',
     ))
 
 

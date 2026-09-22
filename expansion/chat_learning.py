@@ -157,6 +157,18 @@ def extract_task_delegation(message: str, *, default_agent: str = 'aria') -> Opt
     msg = (message or '').strip()
     if not msg:
         return None
+    # Short execute imperatives resolve via resolve_pending_execute (needs layout).
+    try:
+        from expansion.behavior_spine import is_execute_imperative
+        if is_execute_imperative(msg):
+            return {
+                'agent_id': (default_agent or 'aria').lower(),
+                'request': '__EXECUTE_PENDING__',
+                'domain': 'research',
+                'execute_pending': True,
+            }
+    except Exception:
+        pass
     agent = ''
     request = ''
     for pat in (_TASK_NAMED, _TASK_HAVE):
@@ -202,6 +214,85 @@ def extract_task_delegation(message: str, *, default_agent: str = 'aria') -> Opt
     }
 
 
+def resolve_pending_execute(
+    agent_id: str,
+    *,
+    layout: Optional[StateLayout] = None,
+) -> dict:
+    """Resolve 'do it' to a concrete REX request from recent episodic turns."""
+    layout = layout or resolve_layout()
+    aid = (agent_id or 'aria').strip().lower() or 'aria'
+    fallback = {
+        'agent_id': 'ledger',
+        'request': 'Execute the pending plan from our recent conversation',
+        'domain': 'research',
+    }
+    try:
+        from expansion.behavior_spine import (
+            is_execute_imperative,
+            is_social_or_affect_turn,
+            wants_work_deliverable,
+        )
+        mem = ExpansionMemory(layout)
+        rows = sorted(
+            mem.list(aid),
+            key=lambda r: float(getattr(r, 'timestamp', 0) or 0),
+            reverse=True,
+        )[:24]
+    except Exception:
+        return fallback
+
+    ledger_research = re.compile(
+        r'(?is)ledger\s+will\s+(?:start\s+|kick\s+off\s+|begin\s+)?'
+        r'research(?:ing)?\s+(?:on\s+|the\s+)?(.+?)(?:\.|$)',
+    )
+    for r in rows:
+        content = (getattr(r, 'content', None) or '').strip()
+        if not content:
+            continue
+        if '/ Me:' in content or content.startswith('User:'):
+            user_part = content.split('/ Me:')[0]
+            user_part = re.sub(r'(?is)^User:\s*', '', user_part).strip()
+            if not user_part:
+                continue
+            if is_execute_imperative(user_part) or is_social_or_affect_turn(user_part):
+                continue
+            prior = extract_task_delegation(user_part, default_agent=aid)
+            if prior and not prior.get('execute_pending'):
+                return prior
+            if wants_work_deliverable(user_part):
+                domain = 'research' if any(
+                    w in user_part.lower()
+                    for w in ('research', 'fabric', 'shirt', 'investigate', 'compare')
+                ) else 'coordination'
+                owner = 'ledger' if domain == 'research' else aid
+                return {
+                    'agent_id': owner,
+                    'request': user_part[:500],
+                    'domain': domain,
+                }
+        m = ledger_research.search(content)
+        if m:
+            topic = (m.group(1) or '').strip().rstrip('.')
+            if len(topic) >= 8:
+                return {
+                    'agent_id': 'ledger',
+                    'request': f'Research {topic}'[:500],
+                    'domain': 'research',
+                }
+        low = content.lower()
+        if 'fabric' in low and ('shirt' in low or 't-shirt' in low or 'blend' in low):
+            return {
+                'agent_id': 'ledger',
+                'request': (
+                    'Research the best fabric blends for custom printed t-shirts '
+                    '(comfort, durability, printability)'
+                ),
+                'domain': 'research',
+            }
+    return fallback
+
+
 def classify_chat_intent(message: str) -> str:
     """Return remember|praise|correct|preference|apology|insult|comparison|task|chat."""
     msg = (message or '').strip()
@@ -209,6 +300,12 @@ def classify_chat_intent(message: str) -> str:
         return 'chat'
     if extract_remember_fact(msg):
         return 'remember'
+    try:
+        from expansion.behavior_spine import is_execute_imperative
+        if is_execute_imperative(msg):
+            return 'task'
+    except Exception:
+        pass
     if extract_task_delegation(msg):
         return 'task'
     if extract_comparison(msg):
@@ -357,6 +454,8 @@ def before_reply(
     # Explicit task delegation — queue real REX board work (no fake COMPLETE)
     if intent == 'task':
         task = extract_task_delegation(msg, default_agent=aid) or {}
+        if task.get('execute_pending') or task.get('request') == '__EXECUTE_PENDING__':
+            task = resolve_pending_execute(aid, layout=layout)
         out['task'] = task
         assignee = task.get('agent_id') or aid
         request = task.get('request') or msg
