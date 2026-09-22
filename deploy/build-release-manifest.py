@@ -45,7 +45,7 @@ BUNDLE_FILES = [
     "deploy/check-bat-encoding.ps1",
 ]
 
-INSTALLER_VERSION = "1.3.7"
+INSTALLER_VERSION = "1.3.8"
 BOM = b"\xef\xbb\xbf"
 
 

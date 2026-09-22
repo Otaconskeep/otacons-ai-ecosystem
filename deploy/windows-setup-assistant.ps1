@@ -2645,12 +2645,84 @@ function Get-WindowsNvidiaVramGb {
     return 0
 }
 
+function Invoke-WslGpuProbeScript {
+    <#
+      Run a small Bash probe via a temp .sh file (not bash -lc multiline).
+      Returns: Ok, ExitCode, Output, ErrOut, FailureKind (none|empty|error|transport)
+      Never conflate transport/WSL churn failure with "GPU absent".
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$ScriptBody,
+        [string]$Label = "otacon-gpu-probe"
+    )
+    $out = @{
+        Ok          = $false
+        ExitCode    = 1
+        Output      = ""
+        ErrOut      = ""
+        FailureKind = "transport"
+    }
+    $winTmp = Join-Path $env:TEMP ("$Label-" + [guid]::NewGuid().ToString("n") + ".sh")
+    $errFile = Join-Path $env:TEMP ("$Label-" + [guid]::NewGuid().ToString("n") + ".err")
+    try {
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        $lf = ([string]$ScriptBody) -replace "`r`n", "`n" -replace "`r", "`n"
+        if (-not $lf.EndsWith("`n")) { $lf += "`n" }
+        [System.IO.File]::WriteAllText($winTmp, $lf, $utf8)
+
+        $linuxPath = $null
+        try {
+            $linuxPath = (& wsl.exe -d $Name --exec wslpath -a $winTmp 2>$null | Out-String).Trim()
+        } catch {}
+        if (-not $linuxPath -or -not $linuxPath.StartsWith("/")) {
+            if ($winTmp -match '^([A-Za-z]):\\(.*)$') {
+                $linuxPath = "/mnt/$($Matches[1].ToLowerInvariant())/$($Matches[2] -replace '\\','/')"
+            }
+        }
+        if (-not $linuxPath) {
+            $out.FailureKind = "transport"
+            $out.Output = "wslpath_failed"
+            return $out
+        }
+
+        # Wake the distro; Docker Desktop churn often makes the first call fail.
+        try { & wsl.exe -d $Name --exec /bin/true 2>$null | Out-Null } catch {}
+
+        $stdout = & wsl.exe -d $Name --exec bash $linuxPath 2>$errFile
+        $code = $LASTEXITCODE
+        if ($null -eq $code) { $code = 1 }
+        $out.ExitCode = [int]$code
+        $out.Output = (($stdout | Out-String) + "").Trim()
+        try { if (Test-Path -LiteralPath $errFile) { $out.ErrOut = (Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue) } } catch {}
+        if ([int]$code -ne 0 -and -not $out.Output) {
+            $out.FailureKind = "error"
+            $out.Ok = $false
+        } elseif (-not $out.Output) {
+            $out.FailureKind = "empty"
+            $out.Ok = $false
+        } else {
+            $out.FailureKind = "none"
+            $out.Ok = $true
+        }
+    } catch {
+        $out.FailureKind = "error"
+        $out.Output = $_.Exception.Message
+        $out.Ok = $false
+    } finally {
+        try { Remove-Item -LiteralPath $winTmp -Force -ErrorAction SilentlyContinue } catch {}
+        try { Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    return $out
+}
+
 function Get-WslNvidiaName {
-    param([string]$Name)
+    param(
+        [string]$Name,
+        [int]$Attempts = 2
+    )
     # Same PATH trap as Linux otacon.service: nvidia-smi often lives only under
-    # /usr/lib/wsl/lib and bare `nvidia-smi` falsely reports "not visible".
-    # Also accept passthrough evidence (/proc, /dev/dxg, libcuda) when smi is flaky
-    # mid-install - Ollama can already be on GPU while query-gpu returns empty.
+    # /usr/lib/wsl/lib. Also accept passthrough evidence when smi name is empty.
     $probe = @'
 export PATH="/usr/lib/wsl/lib:/usr/local/bin:/usr/bin:/bin:$PATH"
 export LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -2666,7 +2738,6 @@ if [ -n "$SMI" ]; then
     exit 0
   fi
 fi
-# /proc names the card even when nvidia-smi is missing or returns empty.
 if [ -d /proc/driver/nvidia/gpus ]; then
   for d in /proc/driver/nvidia/gpus/*; do
     [ -f "$d/information" ] || continue
@@ -2677,23 +2748,30 @@ if [ -d /proc/driver/nvidia/gpus ]; then
     fi
   done
 fi
-# Passthrough present without a friendly name (common mid-install false negative).
 if [ -e /dev/dxg ] || [ -e /dev/nvidia0 ] || [ -d /proc/driver/nvidia ] || ls /usr/lib/wsl/lib/libcuda.so* >/dev/null 2>&1; then
   printf '%s\n' "WSL_GPU_PASSTHROUGH"
   exit 0
 fi
 exit 1
 '@
-    try {
-        $o = & wsl.exe -d $Name -- bash -lc $probe 2>$null
-        if ($o) {
-            $s = ($o | Out-String).Trim()
+    for ($i = 1; $i -le [Math]::Max(1, $Attempts); $i++) {
+        $r = Invoke-WslGpuProbeScript -Name $Name -ScriptBody $probe -Label "otacon-gpu-name"
+        $rawOut = (($r.Output -replace '\s+', ' ').Trim())
+        if ($rawOut.Length -gt 120) { $rawOut = $rawOut.Substring(0, 120) }
+        $rawErr = (($r.ErrOut -replace '\s+', ' ').Trim())
+        if ($rawErr.Length -gt 80) { $rawErr = $rawErr.Substring(0, 80) }
+        Write-KeepLog ("Get-WslNvidiaName attempt={0} ok={1} kind={2} exit={3} out='{4}' err='{5}'" -f `
+            $i, $r.Ok, $r.FailureKind, $r.ExitCode, $rawOut, $rawErr) -Stage "GPU"
+        if ($r.Ok -and $r.Output) {
+            $s = ($r.Output | Out-String).Trim() -split "`n" | Select-Object -First 1
+            $s = ($s | Out-String).Trim()
             if ($s -and $s -notmatch '(?i)not visible|command not found|failed') {
                 if ($s -eq "WSL_GPU_PASSTHROUGH") { return "passthrough (NVIDIA present)" }
                 return $s
             }
         }
-    } catch {}
+        if ($i -lt $Attempts) { Start-Sleep -Seconds 3 }
+    }
     return "not visible in WSL"
 }
 
@@ -2712,27 +2790,34 @@ function Test-WslGpuConfigDisabled {
 }
 
 function Get-WslGpuDiagnosis {
-    param([string]$Name)
+    param(
+        [string]$Name,
+        [int]$Attempts = 3,
+        [int]$RetryDelaySec = 4
+    )
     <#
       Structured diagnosis for Windows-sees-GPU / WSL-dark cases.
-      Always returns a hashtable so Setup can log + decide soft fixes.
+      probe_status: ok | empty | error | unknown
+      Empty/errored WSL output is NOT treated as "GPU absent" (Docker churn race).
     #>
     $d = [ordered]@{
-        windows_name        = "not visible"
-        windows_vram_gb     = 0
-        wsl_name            = "not visible in WSL"
-        wsl_lib_present     = $false
-        wsl_smi_present     = $false
-        wsl_passthrough     = $false
-        apt_nvidia_conflict = $false
+        windows_name         = "not visible"
+        windows_vram_gb      = 0
+        wsl_name             = "not visible in WSL"
+        wsl_lib_present      = $false
+        wsl_smi_present      = $false
+        wsl_passthrough      = $false
+        apt_nvidia_conflict  = $false
         gpu_support_disabled = $false
-        driver_hint         = ""
-        can_continue_hinted = $false
-        next_action         = "none"
+        probe_status         = "unknown"
+        probe_raw            = ""
+        driver_hint          = ""
+        can_continue_hinted  = $false
+        next_action          = "none"
     }
     try { $d.windows_name = Get-WindowsNvidiaName } catch {}
     try { $d.windows_vram_gb = Get-WindowsNvidiaVramGb } catch {}
-    try { $d.wsl_name = Get-WslNvidiaName -Name $Name } catch {}
+    try { $d.wsl_name = Get-WslNvidiaName -Name $Name -Attempts 2 } catch {}
     $d.gpu_support_disabled = [bool](Test-WslGpuConfigDisabled)
 
     $probe = @'
@@ -2742,32 +2827,61 @@ echo "WSL_SMI=$([ -x /usr/lib/wsl/lib/nvidia-smi ] && echo 1 || echo 0)"
 echo "WSL_DXG=$([ -e /dev/dxg ] && echo 1 || echo 0)"
 echo "WSL_NVIDIA0=$([ -e /dev/nvidia0 ] && echo 1 || echo 0)"
 echo "WSL_PROC=$([ -d /proc/driver/nvidia ] && echo 1 || echo 0)"
-echo "WSL_CUDA=$([ -e /usr/lib/wsl/lib/libcuda.so ] || ls /usr/lib/wsl/lib/libcuda.so* >/dev/null 2>&1 && echo 1 || echo 0)"
-# Linux NVIDIA packages fight Windows passthrough - common false "no GPU".
+if [ -e /usr/lib/wsl/lib/libcuda.so ] || ls /usr/lib/wsl/lib/libcuda.so* >/dev/null 2>&1; then echo "WSL_CUDA=1"; else echo "WSL_CUDA=0"; fi
 PKGS="$(dpkg-query -W -f='${Package}\n' 'nvidia-driver*' 'nvidia-utils*' 'cuda-drivers*' 2>/dev/null | head -n5 | tr '\n' ',')"
 echo "APT_NVIDIA=${PKGS:-}"
-# Windows nvidia-smi.exe sometimes works from WSL when Linux stub is missing.
 if [ -x /mnt/c/Windows/System32/nvidia-smi.exe ]; then
   WN="$(/mnt/c/Windows/System32/nvidia-smi.exe --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1 | tr -d '\r')"
   echo "EXE_NAME=${WN:-}"
 fi
 '@
-    try {
-        $o = & wsl.exe -d $Name -- bash -lc $probe 2>$null
-        $txt = ($o | Out-String)
-        if ($txt -match 'WSL_LIB=1') { $d.wsl_lib_present = $true }
-        if ($txt -match 'WSL_SMI=1') { $d.wsl_smi_present = $true }
-        if ($txt -match 'WSL_DXG=1' -or $txt -match 'WSL_NVIDIA0=1' -or $txt -match 'WSL_PROC=1' -or $txt -match 'WSL_CUDA=1') {
-            $d.wsl_passthrough = $true
+
+    $parsed = $false
+    for ($i = 1; $i -le [Math]::Max(1, $Attempts); $i++) {
+        $r = Invoke-WslGpuProbeScript -Name $Name -ScriptBody $probe -Label "otacon-gpu-diag"
+        $rawOneLine = (($r.Output -replace '\s+', ' ').Trim())
+        if ($rawOneLine.Length -gt 240) { $rawOneLine = $rawOneLine.Substring(0, 240) }
+        $errOne = (($r.ErrOut -replace '\s+', ' ').Trim())
+        if ($errOne.Length -gt 120) { $errOne = $errOne.Substring(0, 120) }
+        Write-KeepLog ("GPU diag probe attempt={0}/{1} ok={2} kind={3} exit={4} raw='{5}' err='{6}'" -f `
+            $i, $Attempts, $r.Ok, $r.FailureKind, $r.ExitCode, $rawOneLine, $errOne) -Stage "GPU"
+        $d.probe_raw = [string]$r.Output
+        $d.probe_status = [string]$r.FailureKind
+        if ($r.FailureKind -eq "none") { $d.probe_status = "ok" }
+
+        $txt = [string]$r.Output
+        if ($txt -match 'WSL_LIB=') {
+            $parsed = $true
+            if ($txt -match 'WSL_LIB=1') { $d.wsl_lib_present = $true }
+            if ($txt -match 'WSL_SMI=1') { $d.wsl_smi_present = $true }
+            if ($txt -match 'WSL_DXG=1' -or $txt -match 'WSL_NVIDIA0=1' -or $txt -match 'WSL_PROC=1' -or $txt -match 'WSL_CUDA=1') {
+                $d.wsl_passthrough = $true
+            }
+            if ($txt -match 'APT_NVIDIA=(\S+)' -and $Matches[1] -and $Matches[1] -ne '') {
+                $d.apt_nvidia_conflict = $true
+                $d.driver_hint = "Linux NVIDIA packages installed inside WSL ($($Matches[1])). Remove them; use Windows driver only."
+            }
+            if ($txt -match 'EXE_NAME=(.+)' -and $Matches[1].Trim() -and $d.windows_name -eq "not visible") {
+                $d.windows_name = $Matches[1].Trim()
+            }
+            if ($d.wsl_passthrough -or $d.wsl_lib_present -or $d.wsl_smi_present) {
+                $d.probe_status = "ok"
+                break
+            }
+            # Parsed a truthful "no passthrough" answer - stop retrying.
+            if ($txt -match 'WSL_DXG=0' -and $txt -match 'WSL_CUDA=0') {
+                $d.probe_status = "ok"
+                break
+            }
         }
-        if ($txt -match 'APT_NVIDIA=(\S+)' -and $Matches[1] -and $Matches[1] -ne '') {
-            $d.apt_nvidia_conflict = $true
-            $d.driver_hint = "Linux NVIDIA packages installed inside WSL ($($Matches[1])). Remove them; use Windows driver only."
-        }
-        if ($txt -match 'EXE_NAME=(.+)' -and $Matches[1].Trim() -and $d.windows_name -eq "not visible") {
-            $d.windows_name = $Matches[1].Trim()
-        }
-    } catch {}
+        if ($i -lt $Attempts) { Start-Sleep -Seconds $RetryDelaySec }
+    }
+
+    if (-not $parsed) {
+        # Probe failed or returned nothing - unknown, not absent.
+        if ($d.probe_status -eq "none" -or $d.probe_status -eq "ok") { $d.probe_status = "empty" }
+        Write-KeepLog ("GPU diag inconclusive status={0} (will not fire YOU MUST Fix-Otacon-GPU)" -f $d.probe_status) -Level "WARN" -Stage "GPU"
+    }
 
     # Name query can fail while passthrough is healthy (Ollama already on GPU).
     if ($d.wsl_passthrough -and ($d.wsl_name -eq "not visible in WSL" -or $d.wsl_name -match '(?i)^passthrough')) {
@@ -2781,19 +2895,30 @@ fi
     $winOk = ($d.windows_name -and $d.windows_name -ne "not visible")
     $wslOk = ($d.wsl_name -and $d.wsl_name -ne "not visible in WSL")
     $d.can_continue_hinted = [bool]($winOk)
+
+    # Inconclusive probe while Windows sees a GPU: soft-continue with hint, never YOU MUST.
+    if ($winOk -and -not $wslOk -and -not $d.wsl_passthrough -and $d.probe_status -ne "ok") {
+        $d.wsl_name = ("{0} (WSL probe inconclusive)" -f $d.windows_name)
+        $d.next_action = "soft_continue_probe_inconclusive"
+        $d.can_continue_hinted = $true
+        return $d
+    }
+
     if ($d.gpu_support_disabled) {
         $d.next_action = "edit_wslconfig_gpuSupport"
-    } elseif ($winOk -and -not $wslOk -and -not $d.wsl_lib_present -and -not $d.wsl_passthrough) {
+    } elseif ($winOk -and -not $wslOk -and -not $d.wsl_lib_present -and -not $d.wsl_passthrough -and $d.probe_status -eq "ok") {
         $d.next_action = "update_windows_nvidia_and_wsl"
         if (-not $d.driver_hint) {
             $d.driver_hint = "Missing /usr/lib/wsl/lib - update Windows NVIDIA driver, then: wsl --update && wsl --shutdown"
         }
-    } elseif ($winOk -and -not $wslOk -and $d.apt_nvidia_conflict) {
+    } elseif ($winOk -and -not $wslOk -and $d.apt_nvidia_conflict -and $d.probe_status -eq "ok") {
         $d.next_action = "purge_linux_nvidia_packages"
     } elseif ($wslOk -or $d.wsl_passthrough) {
         $d.next_action = "ok"
-    } elseif ($winOk -and -not $wslOk) {
+    } elseif ($winOk -and -not $wslOk -and $d.probe_status -eq "ok") {
         $d.next_action = "fix_otacon_gpu_bat"
+    } elseif ($winOk -and -not $wslOk) {
+        $d.next_action = "soft_continue_probe_inconclusive"
     } else {
         $d.next_action = "no_windows_nvidia"
     }
@@ -4074,18 +4199,19 @@ function Step-InstallOtacon {
     param([string]$Name)
     Save-InstallerState @{ stage = "installing_otacon"; step = 6; ubuntu_name = $Name }
     $started = Get-Date
-    Invoke-InstallRiskPreflight -Name $Name
+    # GPU BEFORE Docker preflight - launching Docker Desktop races WSL and made
+    # nvidia-smi / /dev/dxg probes return empty (false "NOT VISIBLE" + YOU MUST).
     Write-OtaconSay "Identifying GPU (Windows + Linux)..." -Mood "work" -NoType
     $gpuWin = "not visible"
     $gpuWsl = "not visible in WSL"
     $gpuWinVram = 0
     $gpuDiag = $null
-    try { $gpuDiag = Get-WslGpuDiagnosis -Name $Name } catch { Write-KeepLog "Get-WslGpuDiagnosis: $($_.Exception.Message)" -Level "WARN" -Stage "GPU" }
+    try { $gpuDiag = Get-WslGpuDiagnosis -Name $Name -Attempts 3 -RetryDelaySec 4 } catch { Write-KeepLog "Get-WslGpuDiagnosis: $($_.Exception.Message)" -Level "WARN" -Stage "GPU" }
     if ($gpuDiag) {
         $gpuWin = [string]$gpuDiag.windows_name
         $gpuWsl = [string]$gpuDiag.wsl_name
         $gpuWinVram = [double]$gpuDiag.windows_vram_gb
-        Write-KeepLog ("GPU diag next={0} lib={1} apt={2} disabled={3} passthrough={4}" -f $gpuDiag.next_action, $gpuDiag.wsl_lib_present, $gpuDiag.apt_nvidia_conflict, $gpuDiag.gpu_support_disabled, $gpuDiag.wsl_passthrough) -Stage "INSTALLING_OTACON"
+        Write-KeepLog ("GPU diag next={0} lib={1} apt={2} disabled={3} passthrough={4} probe={5}" -f $gpuDiag.next_action, $gpuDiag.wsl_lib_present, $gpuDiag.apt_nvidia_conflict, $gpuDiag.gpu_support_disabled, $gpuDiag.wsl_passthrough, $gpuDiag.probe_status) -Stage "INSTALLING_OTACON"
     } else {
         try { $gpuWin = Get-WindowsNvidiaName } catch { Write-KeepLog "Get-WindowsNvidiaName: $($_.Exception.Message)" -Level "WARN" -Stage "GPU" }
         try { $gpuWinVram = Get-WindowsNvidiaVramGb } catch { $gpuWinVram = 0 }
@@ -4094,11 +4220,11 @@ function Step-InstallOtacon {
     Write-KeepLog "GPU windows='$gpuWin' vram_gb=$gpuWinVram wsl='$gpuWsl'" -Stage "INSTALLING_OTACON"
 
     $winOk = ($gpuWin -and $gpuWin -ne "not visible")
-    $wslOk = ($gpuWsl -and $gpuWsl -ne "not visible in WSL")
-    if ($winOk -and -not $wslOk) {
+    $wslOk = ($gpuWsl -and $gpuWsl -ne "not visible in WSL" -and $gpuWsl -notmatch '(?i)probe inconclusive')
+    $probeInconclusive = ($gpuDiag -and [string]$gpuDiag.next_action -eq "soft_continue_probe_inconclusive")
+    if ($winOk -and -not $wslOk -and -not $probeInconclusive) {
         $gpuWsl = Repair-WslGpuVisibility -Name $Name -WindowsGpuName $gpuWin
         $wslOk = ($gpuWsl -and $gpuWsl -ne "not visible in WSL")
-        # Re-read diagnosis: passthrough may be healthy even when nvidia-smi name is empty.
         if (-not $wslOk -and $gpuDiag -and $gpuDiag.wsl_passthrough) {
             $gpuWsl = if ($gpuWin -ne "not visible") { ("{0} (WSL passthrough)" -f $gpuWin) } else { "passthrough (NVIDIA present)" }
             $wslOk = $true
@@ -4107,9 +4233,12 @@ function Step-InstallOtacon {
         }
         if (-not $wslOk) {
             $next = if ($gpuDiag) { [string]$gpuDiag.next_action } else { "fix_otacon_gpu_bat" }
-            if ($next -eq "ok") {
-                Write-KeepLog "GPU next_action=ok after repair path; skipping YOU MUST banner" -Stage "GPU"
+            if ($next -eq "ok" -or $next -eq "soft_continue_probe_inconclusive") {
+                Write-KeepLog "GPU next_action=$next; skipping YOU MUST Fix-Otacon-GPU banner" -Stage "GPU"
                 Write-OtaconSay ("Continuing with Windows GPU hint: {0}" -f $gpuWin) -Mood "ok" -NoType
+            } elseif ($gpuDiag -and [string]$gpuDiag.probe_status -ne "ok") {
+                Write-KeepLog ("GPU probe_status={0}; treating as unknown (no YOU MUST)" -f $gpuDiag.probe_status) -Level "WARN" -Stage "GPU"
+                Write-OtaconSay ("WSL GPU probe was inconclusive during setup. Continuing with Windows hint: {0}" -f $gpuWin) -Mood "warn" -NoType
             } else {
             $headline = "WINDOWS SEES GPU - LINUX DOES NOT"
             $must = "After setup: update NVIDIA Windows driver, run wsl --update && wsl --shutdown, then Fix-Otacon-GPU.bat"
@@ -4157,8 +4286,12 @@ function Step-InstallOtacon {
         } else {
             Write-OtaconSay ("Linux GPU visible after repair: {0}" -f $gpuWsl) -Mood "ok" -NoType
         }
-    } elseif ($winOk -and $wslOk) {
-        Write-OtaconSay ("GPU ready: {0}" -f $gpuWsl) -Mood "ok" -NoType
+    } elseif ($winOk -and ($wslOk -or $probeInconclusive)) {
+        if ($probeInconclusive) {
+            Write-OtaconSay ("WSL GPU probe inconclusive; continuing with Windows hint: {0}" -f $gpuWin) -Mood "warn" -NoType
+        } else {
+            Write-OtaconSay ("GPU ready: {0}" -f $gpuWsl) -Mood "ok" -NoType
+        }
     } elseif (-not $winOk) {
         Write-KeepLog "Windows nvidia-smi not visible - Core can still install (CPU path)" -Stage "GPU"
         Show-GpuActionRequired -Headline "NO NVIDIA GPU VISIBLE ON WINDOWS" -Lines @(
@@ -4172,6 +4305,9 @@ function Step-InstallOtacon {
             "  4) If still stuck: Fix-Otacon-GPU.bat"
         ) -MustDo "Install or repair the Windows NVIDIA driver if you expected a GPU" -Pause
     }
+
+    # Network / disk / Docker AFTER GPU probe (Docker Desktop WSL churn races probes).
+    Invoke-InstallRiskPreflight -Name $Name
 
     # Elevation architecture: never configure NOPASSWD:ALL.
     # privileged + finalize run as WSL root via wsl.exe -u root; user phase runs as the normal account.
