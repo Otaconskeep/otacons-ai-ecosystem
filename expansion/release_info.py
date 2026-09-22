@@ -1,4 +1,4 @@
-"""Expansion release / install identity — pin vs tip clarity."""
+"""Expansion release / install identity — tip is the soft-update truth."""
 from __future__ import annotations
 
 import json
@@ -24,11 +24,7 @@ def _git(*args: str) -> str:
 
 
 def release_identity() -> dict[str, Any]:
-    """Explain soft-update pin vs git tip so users are not confused by two SHAs.
-
-    Soft-update resets the working tree to ``release.json.commit`` (feature pin).
-    ``origin/main`` tip may be a later ``chore(release)`` that only refreshes that pin.
-    """
+    """Soft-update tracks origin/main tip. release.json.commit is provenance only."""
     root = _repo_root()
     release_path = root / 'release.json'
     release: dict[str, Any] = {}
@@ -37,36 +33,30 @@ def release_identity() -> dict[str, Any]:
             release = json.loads(release_path.read_text(encoding='utf-8'))
         except (OSError, json.JSONDecodeError):
             release = {}
-    pin = str(release.get('commit') or '').strip()
+    recorded = str(release.get('commit') or '').strip()
     head = _git('rev-parse', 'HEAD')
     head_short = head[:7] if head else ''
-    pin_short = pin[:7] if pin else ''
+    recorded_short = recorded[:7] if recorded else ''
     origin_tip = _git('rev-parse', 'origin/main')
     origin_short = origin_tip[:7] if origin_tip else ''
-    same = bool(pin and head and pin.startswith(head[: min(len(pin), len(head))]))
-    # Also treat equal full hashes
-    if pin and head and pin == head:
-        same = True
+    matches_tip = bool(
+        head and origin_tip and (head == origin_tip or head.startswith(origin_tip[:12]))
+    )
     return {
         'product': release.get('product') or 'Otacon',
         'installer_version': release.get('installer_version') or '',
         'channel': release.get('channel') or 'public',
-        'release_pin': pin,
-        'release_pin_short': pin_short,
+        'release_pin': recorded,
+        'release_pin_short': recorded_short,
         'repo_head': head,
         'repo_head_short': head_short,
         'origin_main_tip': origin_tip,
         'origin_main_tip_short': origin_short,
-        'matches_pin': same,
+        'matches_pin': matches_tip,
+        'soft_update_target': 'origin/main',
         'detail': (
-            f'Installed feature pin {pin_short or "unknown"}'
-            + (f' (repo HEAD {head_short})' if head_short and head_short != pin_short else '')
-            + (
-                f'; origin/main tip {origin_short} may be a later chore(release)'
-                if origin_short and origin_short != pin_short
-                else ''
-            )
-            + '. Soft-update follows release.json.commit (feature pin), not necessarily '
-              'the latest chore(release) tip on origin/main.'
+            f'Soft-update tracks origin/main tip ({origin_short or head_short or "unknown"}). '
+            f'release.json.commit={recorded_short or "unset"} is provenance only — '
+            f'not an archived install checkout.'
         ),
     }

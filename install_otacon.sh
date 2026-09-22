@@ -1331,29 +1331,19 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
   CURRENT_BRANCH="$(git -C "$INSTALL_DIR" branch --show-current || true)"
 
   # Always hard-sync public installs so GPU/Codec/Genome fixes land.
-  # Prefer release.json.commit from origin/main when present (strict pin); else tip.
-  # ff-only alone left friends stuck on diverged trees (exit 128) with no Repair path.
+  # Soft-update target is ALWAYS origin/main tip (latest everything).
+  # release.json.commit is informational / installer-hash provenance — never
+  # leave friends on an archived feature pin while tip moved on.
   if [[ "$CURRENT_BRANCH" == "main" || -z "$CURRENT_BRANCH" ]]; then
     if ! run_watched 300 "git pull ff-only" -- git -C "$INSTALL_DIR" pull --ff-only; then
-      warn "Fast-forward pull failed — recovering to release pin / origin/main."
+      warn "Fast-forward pull failed — recovering to origin/main tip."
     fi
-    RELEASE_PIN="$(
-      git -C "$INSTALL_DIR" show origin/main:release.json 2>/dev/null \
-        | python3 -c 'import sys,json; print((json.load(sys.stdin).get("commit") or "").strip())' 2>/dev/null \
-        || true
-    )"
     ORIGIN_TIP="$(git -C "$INSTALL_DIR" rev-parse origin/main 2>/dev/null || true)"
     SYNC_TARGET="origin/main"
-    if [[ -n "${RELEASE_PIN:-}" ]] && git -C "$INSTALL_DIR" cat-file -e "${RELEASE_PIN}^{commit}" 2>/dev/null; then
-      SYNC_TARGET="$RELEASE_PIN"
-      log "Soft-update feature pin (release.json.commit)=${RELEASE_PIN}"
-      if [[ -n "${ORIGIN_TIP:-}" && "${ORIGIN_TIP}" != "${RELEASE_PIN}" ]]; then
-        log "origin/main tip=${ORIGIN_TIP} (often a chore(release) that only refreshes the pin — not the install target)"
-      fi
-    else
-      warn "No usable release.json.commit — syncing to origin/main tip"
+    if [[ -n "${ORIGIN_TIP:-}" ]]; then
+      log "Soft-update → origin/main tip=${ORIGIN_TIP}"
     fi
-    run_watched 120 "git reset hard pin" -- git -C "$INSTALL_DIR" reset --hard "$SYNC_TARGET"
+    run_watched 120 "git reset hard tip" -- git -C "$INSTALL_DIR" reset --hard "$SYNC_TARGET"
   else
     warn "Repository is on branch '${CURRENT_BRANCH:-detached}'."
     warn "Leaving local branch selection untouched; fetched origin only."
