@@ -53,7 +53,9 @@ class LearningEngineCase(unittest.TestCase):
             scope='shared', actor='ledger',
         )
         self.assertTrue(obs.observation_id)
-        claims = self.eng.store.list_claims(scope='shared')
+        claims = self.eng.store.list_claims(
+            scope='shared', learning_type='owner_preference',
+        )
         self.assertEqual(len(claims), 0)
 
     def test_pattern_graduation_and_reinforce(self):
@@ -76,7 +78,9 @@ class LearningEngineCase(unittest.TestCase):
             ingest_owner_message(
                 self.eng, text='brief please', event_id=f'ev_b_{i}', actor='ledger',
             )
-        claim = self.eng.store.list_claims(scope='shared')[0]
+        claim = self.eng.store.list_claims(
+            scope='shared', learning_type='owner_preference',
+        )[0]
         hit = self.eng.contradict(claim.claim_id, 'ev_contra', actor='ledger')
         self.assertIn('ev_contra', hit.negative_evidence)
         self.assertGreater(hit.contradiction_count, 0)
@@ -95,7 +99,9 @@ class LearningEngineCase(unittest.TestCase):
             ingest_owner_message(
                 self.eng, text='concise bullets', event_id=f'ev_d_{i}', actor='ledger',
             )
-        claim = self.eng.store.list_claims(scope='shared', include_decayed=False)[0]
+        claim = self.eng.store.list_claims(
+            scope='shared', learning_type='owner_preference', include_decayed=False,
+        )[0]
         claim.last_reinforced = time.time() - (claim.half_life_s * 2)
         claim.last_updated = claim.last_reinforced
         self.eng._write_claim(claim)
@@ -109,7 +115,9 @@ class LearningEngineCase(unittest.TestCase):
             ingest_owner_message(
                 self.eng, text='short summary please', event_id=f'ev_w_{i}', actor='ledger',
             )
-        claim = self.eng.store.list_claims(scope='shared')[0]
+        claim = self.eng.store.list_claims(
+            scope='shared', learning_type='owner_preference',
+        )[0]
         why = self.eng.why(claim.claim_id)
         self.assertEqual(why['claim_id'], claim.claim_id)
         self.assertIn('positive_evidence', why)

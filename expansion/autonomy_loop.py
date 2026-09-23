@@ -758,6 +758,12 @@ def autonomy_tick(
         processed.append(process_job(layout, job))
 
     board = build_rex_board(layout)
+    culture = {}
+    try:
+        from expansion.culture_learning import culture_tick
+        culture = culture_tick(layout, fetch_news=True)
+    except Exception as exc:
+        culture = {'ok': False, 'error': type(exc).__name__}
     return {
         'ok': True,
         'model': 'full_autonomy_loop',
@@ -768,8 +774,10 @@ def autonomy_tick(
         'metrics': board.get('metrics') or {},
         'tool_actions': ToolGateway(layout).recent(limit=20),
         'pilot': pilot,
+        'culture': culture,
         'note': (
             'Autonomy tick executed policy-gated research/execution/verify/close. '
-            'Controlled pilot gates implementation domains; escalation on HARD_BLOCKED.'
+            'Controlled pilot gates implementation domains; escalation on HARD_BLOCKED. '
+            'Culture tick advances Aria social craft from pack + public headlines.'
         ),
     }

@@ -578,18 +578,26 @@ class LearningEngine:
 
     def context_lines(self, agent_id: str, *, limit: int = 8) -> list[str]:
         lines = []
-        private = self.store.list_claims(agent_id=agent_id, scope='private', min_confidence=0.35)[: limit // 2 + 1]
-        shared = self.store.list_claims(scope='shared', min_confidence=0.4)[: limit // 2 + 1]
-        for c in private + shared:
-            if c.status == 'retired':
-                continue
+        private = self.store.list_claims(agent_id=agent_id, scope='private', min_confidence=0.35)
+        shared = self.store.list_claims(scope='shared', min_confidence=0.4)
+        pool = [c for c in list(private) + list(shared) if c.status != 'retired']
+        social = sorted(
+            [c for c in pool if c.learning_type == 'social'],
+            key=lambda c: -float(c.confidence or 0),
+        )
+        other = sorted(
+            [c for c in pool if c.learning_type != 'social'],
+            key=lambda c: -float(c.confidence or 0),
+        )
+        # Reserve room for culture/social craft AND owner/ops claims
+        social_budget = max(2, limit // 2)
+        picked = social[:social_budget] + other[: max(0, limit - min(len(social), social_budget))]
+        for c in picked[:limit]:
             tag = 'shared' if c.scope == 'shared' else 'private'
             lines.append(
                 f"- [{c.learning_type}/{tag}] {c.claim} (conf={c.confidence:.2f}, "
                 f"+ev={len(c.positive_evidence)} -ev={len(c.negative_evidence)})"
             )
-            if len(lines) >= limit:
-                break
         return lines
 
     def summary(self) -> dict:

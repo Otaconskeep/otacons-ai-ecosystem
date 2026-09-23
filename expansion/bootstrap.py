@@ -150,11 +150,24 @@ def bootstrap_runtime_state(layout: Optional[StateLayout] = None) -> dict:
         scrub_poisoned_pilot_closes(layout)
     except Exception:
         pass
+    # Day-one culture pack — Aria learns social craft and teaches the roster
+    # (offline seed only; news RSS runs on autonomy_tick when networked).
+    culture = {}
+    try:
+        from expansion.culture_learning import culture_tick
+        culture = culture_tick(layout, fetch_news=False)
+    except Exception as exc:
+        culture = {'ok': False, 'error': type(exc).__name__}
     return {
         'agents': agent_ids,
         'emotions': emotions.list_agent_ids(),
         'relationship_files': len(list(layout.user_relationships.glob('*.json'))),
         'entitlement': entitled,
+        'culture': {
+            'ok': bool(culture.get('ok')),
+            'seed_lessons': (culture.get('seed') or {}).get('lessons'),
+            'skipped': (culture.get('seed') or {}).get('skipped'),
+        },
     }
 
 
