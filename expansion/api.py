@@ -459,6 +459,14 @@ def handle_expansion_get(path: str, send_json, send_bytes=None) -> bool:
             return True
         send_json(build_rex_board())
         return True
+    if path == '/api/expansion/rex/business':
+        from expansion.entitlement import EntitlementGate
+        from expansion.business_growth import business_status
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        send_json(business_status())
+        return True
     if path == '/api/expansion/rex/autonomy':
         from expansion.entitlement import EntitlementGate
         from expansion.rex import build_autonomy_dashboard
@@ -1213,6 +1221,17 @@ def handle_expansion_post(path: str, data: dict, send_json) -> bool:
             (data.get('capability') or '').strip(),
         )
         send_json({'ok': True, 'decision': _asdict(decision)})
+        return True
+    if path == '/api/expansion/rex/business':
+        from expansion.entitlement import EntitlementGate
+        from expansion.business_growth import business_tick
+        if not EntitlementGate().expansion_surfaces_allowed():
+            send_json({'enabled': False, 'message': 'Expansion not entitled'}, 403)
+            return True
+        try:
+            send_json(business_tick(max_advance=int((data or {}).get('max_advance') or 1)))
+        except Exception as exc:
+            send_json({'error': {'code': 'BUSINESS_TICK_FAILED', 'message': str(exc)}}, 500)
         return True
     if path == '/api/expansion/rex/tick':
         from expansion.entitlement import EntitlementGate

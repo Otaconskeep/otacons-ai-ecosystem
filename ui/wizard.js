@@ -2001,7 +2001,7 @@ function rexRenderColumns(board){
     const body=cards.length
       ? cards.map(c=>`<button type="button" class="rex-card tone-${escapeHtml(c.tone||'muted')}" data-job="${escapeHtml(c.job_id)}" role="listitem">
           <div class="rex-card-title">${escapeHtml(c.title||c.job_id)}</div>
-          <div class="rex-card-meta">${escapeHtml(c.owner||'unassigned')} · ${escapeHtml(c.domain||'')}${c.attempt?` · try ${c.attempt}/${c.retry_budget}`:''}</div>
+          <div class="rex-card-meta">${escapeHtml(c.owner||'unassigned')} · ${escapeHtml(c.domain||'')}${c.business_stream?` · ${escapeHtml(c.business_stream)}`:''}${c.attempt?` · try ${c.attempt}/${c.retry_budget}`:''}${c.business_stall?` · stalled`:''}</div>
         </button>`).join('')
       : `<div class="rex-empty">Empty — ${escapeHtml(col.label)}</div>`;
     const oversight=col.oversight_only?' oversight':'';
@@ -2040,11 +2040,21 @@ function rexRenderSignals(board){
   return `<div class="rex-signals">${block('Hard blockers (oversight)', vs.hard_blockers)}${block('Rework / retry', vs.rework)}${block('Verifying (peer)', vs.verifying)}${block('Newly discovered', vs.discovered)}</div>`;
 }
 
+function rexBusinessNote(board){
+  const b=board.business||{};
+  if(!b.enabled) return '';
+  const n=(b.workstreams||[]).length;
+  return `<p class="rex-autonomy-note">Standing business cycle for ${escapeHtml(b.owner||'the owner')}: ${n} streams`
+    + (b.website_url?` · ${escapeHtml(b.website_url)}`:'')
+    + '. Agents draft, review each other, and leave local files. Nothing here is deployed or manufactured.</p>';
+}
+
 function rexRenderAutonomy(board){
   const m=(board.autonomy&&board.autonomy.metrics)||board.metrics||{};
   return `<section class="rex-autonomy">
     <h2>Keep Autonomy</h2>
     <p class="rex-autonomy-note">Observe outcomes — agents move cards under policy. No routine approve queue.</p>
+    ${rexBusinessNote(board)}
     <div class="rex-metrics">
       <div class="rex-metric"><span class="n">${m.completed_overnight||m.completed_today||0}</span><span class="l">Completed overnight</span></div>
       <div class="rex-metric"><span class="n">${m.in_progress||0}</span><span class="l">In progress</span></div>
@@ -2095,6 +2105,9 @@ function rexOpenJob(jobId){
   const plan=(c.coordination_plan||[]).length
     ? `<ol class="rex-plan">${c.coordination_plan.map(s=>`<li>${escapeHtml(typeof s==='string'?s:JSON.stringify(s))}</li>`).join('')}</ol>`
     : '<p class="muted">No Aria coordination plan yet.</p>';
+  const talk=(c.agent_discussion||[]).slice(-6).map(m=>
+    `<div class="muted">${escapeHtml(m.from)} → ${escapeHtml(m.to)} · ${escapeHtml(m.kind)} — ${escapeHtml(m.text||'')}</div>`
+  ).join('')||'<p class="muted">No agent discussion yet.</p>';
   const reviews=(c.peer_reviews||[]).slice(-5).map(r=>
     `<div class="muted">${escapeHtml(r.reviewer)} · ${escapeHtml(r.verdict)} — ${escapeHtml(r.note||'')}</div>`
   ).join('')||'<p class="muted">No peer reviews yet.</p>';
@@ -2108,6 +2121,7 @@ function rexOpenJob(jobId){
     <p class="rex-modal-meta">Actor moving as: <b>${escapeHtml(REX_STATE.actor||'aria')}</b> (policy-gated)</p>
     <div class="rex-actions">${transitions}</div>
     <h4>Coordination plan</h4>${plan}
+    <h4>Agent discussion</h4>${talk}
     <h4>Peer review</h4>${reviews}
     <div class="rex-actions">
       <button type="button" onclick="rexPeerReview('${escapeHtml(c.job_id)}','pass')">Peer pass</button>

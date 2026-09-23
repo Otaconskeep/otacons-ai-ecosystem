@@ -158,6 +158,12 @@ def bootstrap_runtime_state(layout: Optional[StateLayout] = None) -> dict:
         culture = culture_tick(layout, fetch_news=False)
     except Exception as exc:
         culture = {'ok': False, 'error': type(exc).__name__}
+    business = {}
+    try:
+        from expansion.business_growth import ensure_business_mission
+        business = ensure_business_mission(layout)
+    except Exception as exc:
+        business = {'enabled': False, 'error': type(exc).__name__}
     return {
         'agents': agent_ids,
         'emotions': emotions.list_agent_ids(),
@@ -167,6 +173,10 @@ def bootstrap_runtime_state(layout: Optional[StateLayout] = None) -> dict:
             'ok': bool(culture.get('ok')),
             'seed_lessons': (culture.get('seed') or {}).get('lessons'),
             'skipped': (culture.get('seed') or {}).get('skipped'),
+        },
+        'business': {
+            'enabled': bool(business.get('enabled')),
+            'website_url': business.get('website_url') or '',
         },
     }
 

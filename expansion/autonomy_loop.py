@@ -740,6 +740,13 @@ def autonomy_tick(
     PolicyEngine(layout).seed_defaults()
     started = time.time()
     discovered = detect_work(layout) if detect else []
+    business = {'skipped': True}
+    if detect:
+        try:
+            from expansion.business_growth import business_tick
+            business = business_tick(layout, max_advance=1)
+        except Exception as exc:
+            business = {'ok': False, 'error': type(exc).__name__}
     prio = prioritize_backlog(layout)
     store = JobStore(layout)
     # Pick work: READY/ASSIGNED/IN_PROGRESS/VERIFYING/REWORK/RESEARCHING/PLANNING first
@@ -755,6 +762,8 @@ def autonomy_tick(
     candidates.sort(key=lambda t: (t[0], t[1], t[2]))
     processed = []
     for _, _, _, job in candidates[:max_jobs]:
+        if get_item(job.job_id, layout).get('business_stream'):
+            continue
         processed.append(process_job(layout, job))
 
     board = build_rex_board(layout)
@@ -775,6 +784,7 @@ def autonomy_tick(
         'tool_actions': ToolGateway(layout).recent(limit=20),
         'pilot': pilot,
         'culture': culture,
+        'business': business,
         'note': (
             'Autonomy tick executed policy-gated research/execution/verify/close. '
             'Controlled pilot gates implementation domains; escalation on HARD_BLOCKED. '

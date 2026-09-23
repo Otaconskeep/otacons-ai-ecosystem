@@ -171,7 +171,7 @@ def job_to_card(job: Job, layout: Optional[StateLayout] = None) -> dict:
     allowed = list(REX_STAGE_TRANSITIONS.get(stage, ()))
     return {
         'job_id': job.job_id,
-        'title': job.request,
+        'title': item.get('business_title') or job.request,
         'status': stage,  # board column key
         'stage': stage,
         'job_status': job.status,
@@ -203,6 +203,10 @@ def job_to_card(job: Job, layout: Optional[StateLayout] = None) -> dict:
         'decision_trace': list(item.get('decision_trace') or [])[-12:],
         'follow_up_of': item.get('follow_up_of') or '',
         'follow_ups': list(item.get('follow_ups') or []),
+        'business_stream': item.get('business_stream') or '',
+        'business_cycle': item.get('business_cycle') or 0,
+        'business_stall': item.get('business_stall') or '',
+        'agent_discussion': list(item.get('agent_discussion') or [])[-4:],
         'awaiting_user_approval': False,
     }
 
@@ -312,6 +316,14 @@ def build_autonomy_dashboard(layout: Optional[StateLayout] = None, *, limit: int
     }
 
 
+def _business_board_status(layout: StateLayout) -> dict:
+    try:
+        from expansion.business_growth import business_status
+        return business_status(layout)
+    except Exception as exc:
+        return {'enabled': False, 'error': type(exc).__name__}
+
+
 def build_rex_board(layout: Optional[StateLayout] = None, *, limit: int = 200) -> dict:
     layout = layout or resolve_layout()
     store = JobStore(layout)
@@ -375,6 +387,7 @@ def build_rex_board(layout: Optional[StateLayout] = None, *, limit: int = 200) -
             HARD_BLOCK_STAGE, 'ALL', 'ACTIVE', 'ARCHIVE',
         ],
         'roles': PolicyEngine(layout).summary()['roles'],
+        'business': _business_board_status(layout),
     }
 
 

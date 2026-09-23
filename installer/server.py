@@ -1353,6 +1353,11 @@ def main():
         LAN_TOKEN = load_lan_token()
         print(f'Otacon local mode: http://127.0.0.1:{port} (not reachable from LAN)')
     # Threading so a hung GPU probe (WSL nvidia-smi D-state) cannot freeze Codec/UI.
+    try:
+        from expansion.business_growth import start_business_worker
+        start_business_worker()
+    except Exception as exc:
+        print(f'[business] worker not started: {type(exc).__name__}')
     httpd = OtaconHTTPServer((BIND_HOST, port), Handler)
     httpd.serve_forever()
 
